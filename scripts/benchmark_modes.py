@@ -14,7 +14,7 @@ console = Console()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark single-agent, sub-agent, and multi-agent graph modes.")
+    parser = argparse.ArgumentParser(description="Benchmark single-agent, sub-agent, graph, and team modes.")
     parser.add_argument("--config", default="easy-agent.yml", help="Base config path")
     parser.add_argument("--repeat", type=int, default=2, help="Runs per mode")
     parser.add_argument("--output", default=".easy-agent/benchmark-report.json", help="Output JSON report path")
@@ -52,4 +52,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

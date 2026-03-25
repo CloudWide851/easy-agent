@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-from agent_common.models import NodeType, Protocol
+from agent_common.models import NodeType, Protocol, TeamMode
 from agent_integrations.sandbox import SandboxMode, SandboxTarget
 
 
@@ -22,11 +22,11 @@ def _expand_env(value: Any) -> Any:
 
 
 class ModelConfig(BaseModel):
-    provider: str = "deepseek"
+    provider: str = 'deepseek'
     protocol: Protocol = Protocol.AUTO
-    model: str = "deepseek-chat"
-    base_url: str = "https://api.deepseek.com"
-    api_key_env: str = "DEEPSEEK_API_KEY"
+    model: str = 'deepseek-chat'
+    base_url: str = 'https://api.deepseek.com'
+    api_key_env: str = 'DEEPSEEK_API_KEY'
     timeout_seconds: float = 60.0
     max_tokens: int = 2048
     temperature: float = 0.1
@@ -35,10 +35,21 @@ class ModelConfig(BaseModel):
 
 class AgentConfig(BaseModel):
     name: str
-    system_prompt: str = ""
+    description: str = ''
+    system_prompt: str = ''
     tools: list[str] = Field(default_factory=list)
     sub_agents: list[str] = Field(default_factory=list)
     max_iterations: int = 6
+
+
+class TeamConfig(BaseModel):
+    name: str
+    mode: TeamMode
+    members: list[str] = Field(default_factory=list)
+    max_turns: int = 8
+    termination_text: str = 'TERMINATE'
+    allow_repeated_speaker: bool = False
+    selector_prompt: str | None = None
 
 
 class GraphNodeConfig(BaseModel):
@@ -46,24 +57,44 @@ class GraphNodeConfig(BaseModel):
     type: NodeType
     target: str | None = None
     deps: list[str] = Field(default_factory=list)
-    input_template: str = "{input}"
+    input_template: str = '{input}'
     retries: int = 0
     timeout_seconds: float = 30.0
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphConfig(BaseModel):
-    name: str = "default"
+    name: str = 'default'
     entrypoint: str
     agents: list[AgentConfig] = Field(default_factory=list)
+    teams: list[TeamConfig] = Field(default_factory=list)
     nodes: list[GraphNodeConfig] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def validate_entrypoint(self) -> GraphConfig:
+    @model_validator(mode='after')
+    def validate_graph(self) -> GraphConfig:
         node_ids = {node.id for node in self.nodes}
-        agent_names = {agent.name for agent in self.agents}
-        if self.entrypoint not in node_ids and self.entrypoint not in agent_names:
-            raise ValueError("graph.entrypoint must match a node id or agent name")
+        agent_names = [agent.name for agent in self.agents]
+        team_names = [team.name for team in self.teams]
+        all_names = agent_names + team_names + list(node_ids)
+        if len(all_names) != len(set(all_names)):
+            raise ValueError('agent names, team names, and node ids must be unique')
+        agent_name_set = set(agent_names)
+        for team in self.teams:
+            if not team.members:
+                raise ValueError(f"team '{team.name}' must declare at least one member")
+            for member in team.members:
+                if member not in agent_name_set:
+                    raise ValueError(f"team '{team.name}' references unknown member '{member}'")
+            if team.mode in (TeamMode.SELECTOR, TeamMode.SWARM):
+                missing = [agent.name for agent in self.agents if agent.name in team.members and not agent.description.strip()]
+                if missing:
+                    joined = ', '.join(sorted(missing))
+                    raise ValueError(
+                        f"team '{team.name}' requires non-empty agent descriptions for selector/swarm members: {joined}"
+                    )
+        valid_entrypoints = node_ids | agent_name_set | set(team_names)
+        if self.entrypoint not in valid_entrypoints:
+            raise ValueError('graph.entrypoint must match a node id, agent name, or team name')
         return self
 
 
@@ -82,12 +113,12 @@ class McpServerConfig(BaseModel):
 
 
 class StorageConfig(BaseModel):
-    path: str = ".easy-agent"
-    database: str = "state.db"
+    path: str = '.easy-agent'
+    database: str = 'state.db'
 
 
 class LoggingConfig(BaseModel):
-    level: str = "INFO"
+    level: str = 'INFO'
 
 
 class SandboxConfig(BaseModel):
@@ -97,14 +128,14 @@ class SandboxConfig(BaseModel):
     )
     env_allowlist: list[str] = Field(
         default_factory=lambda: [
-            "PATH",
-            "PATHEXT",
-            "SYSTEMROOT",
-            "WINDIR",
-            "COMSPEC",
-            "TEMP",
-            "TMP",
-            "DEEPSEEK_API_KEY",
+            'PATH',
+            'PATHEXT',
+            'SYSTEMROOT',
+            'WINDIR',
+            'COMSPEC',
+            'TEMP',
+            'TMP',
+            'DEEPSEEK_API_KEY',
         ]
     )
     working_root: str | None = None
@@ -130,15 +161,16 @@ class AppConfig(BaseModel):
     def agent_map(self) -> dict[str, AgentConfig]:
         return {agent.name: agent for agent in self.graph.agents}
 
+    @property
+    def team_map(self) -> dict[str, TeamConfig]:
+        return {team.name: team for team in self.graph.teams}
 
 
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path)
-    with config_path.open("r", encoding="utf-8") as handle:
+    with config_path.open('r', encoding='utf-8') as handle:
         raw = yaml.safe_load(handle) or {}
     expanded = _expand_env(raw)
+    graph = expanded.setdefault('graph', {})
+    graph.setdefault('teams', [])
     return AppConfig.model_validate(expanded)
-
-
-
-

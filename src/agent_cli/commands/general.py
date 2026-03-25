@@ -34,6 +34,7 @@ def register(app: typer.Typer) -> None:
             table.add_row('Platform', platform.platform())
             table.add_row('Protocol', adapter.protocol.value)
             table.add_row('Skills', str(len(runtime.skills)))
+            table.add_row('Teams', str(len(runtime.config.graph.teams)))
             table.add_row('MCP Servers', str(len(runtime.mcp_manager._clients)))
             table.add_row('Loaded Sources', str(len(runtime.loaded_sources)))
             table.add_row('Sandbox Mode', sandbox['mode'])
@@ -42,21 +43,28 @@ def register(app: typer.Typer) -> None:
             table.add_row('Storage', str(runtime.store.base_path.resolve()))
             console.print(table)
             if smoke:
-                if runtime.config.graph.entrypoint not in runtime.config.agent_map:
-                    raise typer.BadParameter('Smoke test requires graph.entrypoint to be an agent.')
                 context = RunContext(run_id='doctor_smoke', workdir=Path.cwd(), node_id=None, shared_state={'input': 'smoke'})
-                result = await runtime.orchestrator.run_agent(
-                    runtime.config.graph.entrypoint,
-                    'Respond with a short confirmation.',
-                    context,
-                )
+                if runtime.config.graph.entrypoint in runtime.config.agent_map:
+                    result = await runtime.orchestrator.run_agent(
+                        runtime.config.graph.entrypoint,
+                        'Respond with a short confirmation.',
+                        context,
+                    )
+                elif runtime.config.graph.entrypoint in runtime.config.team_map:
+                    result = await runtime.orchestrator.run_team(
+                        runtime.config.graph.entrypoint,
+                        'Respond with a short confirmation and include TERMINATE.',
+                        context,
+                    )
+                else:
+                    raise typer.BadParameter('Smoke test requires graph.entrypoint to be an agent or team.')
                 console.print(f'[bold green]Smoke response:[/bold green] {result}')
 
         asyncio.run(with_runtime(config, _run))
 
     @app.command()
     def run(
-        input_text: str = typer.Argument(..., help='Input text for the graph or entry agent.'),
+        input_text: str = typer.Argument(..., help='Input text for the graph, entry agent, or entry team.'),
         config: str = typer.Option('easy-agent.yml', '-c', '--config'),
     ) -> None:
         async def _run(runtime: EasyAgentRuntime) -> None:
@@ -73,4 +81,3 @@ def register(app: typer.Typer) -> None:
             console.print_json(json.dumps(payload, ensure_ascii=False))
         finally:
             asyncio.run(runtime.aclose())
-

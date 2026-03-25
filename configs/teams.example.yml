@@ -1,0 +1,112 @@
+model:
+  provider: deepseek
+  protocol: auto
+  model: deepseek-chat
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  timeout_seconds: 60
+  max_tokens: 2048
+  temperature: 0.1
+
+graph:
+  name: teams-example
+  entrypoint: round_robin_team
+  agents:
+    - name: planner
+      description: Create an initial plan or outline for a task.
+      system_prompt: |
+        You are the planner. Use python_echo exactly once to restate the task,
+        then reply with a short planning note without TERMINATE.
+      tools:
+        - python_echo
+      sub_agents: []
+      max_iterations: 4
+    - name: researcher
+      description: Produce a focused research note before closure.
+      system_prompt: |
+        You are the researcher. Use python_echo exactly once, mention "research ready",
+        and do not terminate.
+      tools:
+        - python_echo
+      sub_agents: []
+      max_iterations: 4
+    - name: closer
+      description: Finish the task after planning or research is complete.
+      system_prompt: |
+        You are the closer. Use python_echo exactly once and end with TERMINATE.
+      tools:
+        - python_echo
+      sub_agents: []
+      max_iterations: 4
+    - name: dispatcher
+      description: Route work to the most suitable teammate using a handoff.
+      system_prompt: |
+        You are the dispatcher. Immediately hand off the turn to the closer with a short message.
+      tools: []
+      sub_agents: []
+      max_iterations: 4
+  teams:
+    - name: round_robin_team
+      mode: round_robin
+      members:
+        - planner
+        - closer
+      max_turns: 4
+      termination_text: TERMINATE
+    - name: selector_team
+      mode: selector
+      members:
+        - researcher
+        - closer
+      max_turns: 4
+      termination_text: TERMINATE
+      selector_prompt: |
+        Choose exactly one agent name from the team members.
+        Choose researcher if the transcript does not yet include "research ready".
+        Otherwise choose closer.
+    - name: swarm_team
+      mode: swarm
+      members:
+        - dispatcher
+        - closer
+      max_turns: 4
+      termination_text: TERMINATE
+  nodes: []
+
+plugins: []
+
+skills:
+  - path: skills/examples
+
+mcp: []
+
+storage:
+  path: .easy-agent/teams
+  database: state.db
+
+logging:
+  level: INFO
+
+security:
+  allowed_commands:
+    - ["cmd", "/c", "echo"]
+  sandbox:
+    mode: auto
+    targets:
+      - command_skill
+      - stdio_mcp
+    env_allowlist:
+      - PATH
+      - PATHEXT
+      - SYSTEMROOT
+      - WINDIR
+      - COMSPEC
+      - TEMP
+      - TMP
+      - USERPROFILE
+      - HOME
+      - APPDATA
+      - LOCALAPPDATA
+      - DEEPSEEK_API_KEY
+    working_root: .
+    windows_sandbox_fallback: process

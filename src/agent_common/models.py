@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 
 
 class Protocol(StrEnum):
-    AUTO = "auto"
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-    GEMINI = "gemini"
+    AUTO = 'auto'
+    OPENAI = 'openai'
+    ANTHROPIC = 'anthropic'
+    GEMINI = 'gemini'
 
 
 class ToolSpec(BaseModel):
@@ -28,34 +28,41 @@ class ToolCall(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant", "tool"]
-    content: str = ""
+    role: Literal['system', 'user', 'assistant', 'tool']
+    content: str = ''
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
 
 class AssistantResponse(BaseModel):
-    text: str = ""
+    text: str = ''
     tool_calls: list[ToolCall] = Field(default_factory=list)
     protocol: Protocol
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class NodeType(StrEnum):
-    AGENT = "agent"
-    TOOL = "tool"
-    SKILL = "skill"
-    MCP_TOOL = "mcp_tool"
-    JOIN = "join"
+    AGENT = 'agent'
+    TEAM = 'team'
+    TOOL = 'tool'
+    SKILL = 'skill'
+    MCP_TOOL = 'mcp_tool'
+    JOIN = 'join'
+
+
+class TeamMode(StrEnum):
+    ROUND_ROBIN = 'round_robin'
+    SELECTOR = 'selector'
+    SWARM = 'swarm'
 
 
 class NodeStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    SKIPPED = "skipped"
+    PENDING = 'pending'
+    RUNNING = 'running'
+    SUCCEEDED = 'succeeded'
+    FAILED = 'failed'
+    SKIPPED = 'skipped'
 
 
 @dataclass(slots=True)
@@ -65,5 +72,3 @@ class RunContext:
     node_id: str | None
     shared_state: dict[str, Any] = field(default_factory=dict)
     depth: int = 0
-
-
