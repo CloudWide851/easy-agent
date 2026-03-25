@@ -10,6 +10,48 @@ from pydantic import BaseModel, Field, model_validator
 from agent_common.models import NodeType, Protocol, TeamMode
 from agent_integrations.sandbox import SandboxMode, SandboxTarget
 
+_LOADED_ENV_FILES: set[Path] = set()
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export ') :].strip()
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = os.path.expandvars(value)
+    return values
+
+
+def load_local_env(config_path: str | Path | None = None) -> None:
+    candidates: list[Path] = [Path.cwd() / '.env.local']
+    if config_path is not None:
+        resolved = Path(config_path).resolve()
+        candidates.append(resolved.parent / '.env.local')
+        candidates.append(resolved.parent / f'.env.{resolved.stem}.local')
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved in seen or resolved in _LOADED_ENV_FILES or not resolved.is_file():
+            continue
+        for key, value in _parse_env_file(resolved).items():
+            os.environ.setdefault(key, value)
+        _LOADED_ENV_FILES.add(resolved)
+        seen.add(resolved)
+
 
 def _expand_env(value: Any) -> Any:
     if isinstance(value, str):
@@ -167,6 +209,7 @@ class AppConfig(BaseModel):
 
 
 def load_config(path: str | Path) -> AppConfig:
+    load_local_env(path)
     config_path = Path(path)
     with config_path.open('r', encoding='utf-8') as handle:
         raw = yaml.safe_load(handle) or {}
@@ -174,3 +217,6 @@ def load_config(path: str | Path) -> AppConfig:
     graph = expanded.setdefault('graph', {})
     graph.setdefault('teams', [])
     return AppConfig.model_validate(expanded)
+
+
+load_local_env()

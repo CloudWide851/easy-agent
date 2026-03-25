@@ -1,10 +1,11 @@
+import os
 from pathlib import Path
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
 from agent_common.models import Protocol
-from agent_config.app import AppConfig, load_config
+from agent_config.app import AppConfig, load_config, load_local_env
 
 
 def test_load_config_expands_environment_variables(
@@ -19,9 +20,9 @@ model:
   provider: deepseek
   protocol: auto
 graph:
-  entrypoint: coordinator
+  entrypoint: agent-a
   agents:
-    - name: coordinator
+    - name: agent-a
   nodes: []
 storage:
   path: ${EA_STORAGE}
@@ -102,3 +103,32 @@ def test_graph_rejects_duplicate_agent_team_and_node_names() -> None:
                 }
             }
         )
+
+
+def test_load_local_env_reads_repo_local_file_once(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    env_path = tmp_path / '.env.local'
+    config_path = tmp_path / 'easy-agent.yml'
+    env_path.write_text(
+        '\n'.join(
+            [
+                '# local only',
+                'DEEPSEEK_API_KEY=test-local-key',
+                'PG_HOST=127.0.0.1',
+                'PG_PORT=5432',
+            ]
+        ),
+        encoding='utf-8',
+    )
+    config_path.write_text('graph:\n  entrypoint: noop\n  agents:\n    - name: noop\n', encoding='utf-8')
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    monkeypatch.delenv('PG_HOST', raising=False)
+    monkeypatch.delenv('PG_PORT', raising=False)
+
+    load_local_env(config_path)
+    load_local_env(config_path)
+
+    assert os.environ['DEEPSEEK_API_KEY'] == 'test-local-key'
+    assert os.environ['PG_HOST'] == '127.0.0.1'
+    assert os.environ['PG_PORT'] == '5432'

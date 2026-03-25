@@ -4,14 +4,14 @@
 
 [![Linux.do](https://linux.do/logo-128.svg)](https://linux.do/)
 
-`easy-agent` is a white-box, business-agnostic, extensible agent engineering foundation for Python. It focuses on the runtime layer instead of domain logic, so teams, sub-agents, skills, MCP servers, plugins, and future protocol changes can be mounted without coupling the framework to a specific product.
+`easy-agent` 是一个白板化、业务无关、可工程化扩展的 Python Agent 开发底座。它聚焦在运行时层，而不是某个具体业务域，因此可以把 teams、sub-agents、skills、MCP servers、plugins 以及后续协议演进挂载到同一个框架中，而不把仓库绑死在单一场景上。
 
-## Tech Stack
+## 技术栈
 
 <table>
   <tr>
     <td valign="top" width="25%">
-      <strong>Runtime</strong><br>
+      <strong>运行时</strong><br>
       <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"><br>
       <img alt="uv" src="https://img.shields.io/badge/uv-managed-4B5563"><br>
       <img alt="AnyIO" src="https://img.shields.io/badge/AnyIO-async-0F766E"><br>
@@ -25,14 +25,14 @@
       <img alt="Tools" src="https://img.shields.io/badge/Tools-tool%20calling%202.0-1D4ED8">
     </td>
     <td valign="top" width="25%">
-      <strong>Integration</strong><br>
+      <strong>集成层</strong><br>
       <img alt="Skills" src="https://img.shields.io/badge/Skills-Python%20hook%20%7C%20command-F59E0B"><br>
       <img alt="MCP" src="https://img.shields.io/badge/MCP-stdio%20%7C%20HTTP%2FSSE-DC2626"><br>
       <img alt="Plugins" src="https://img.shields.io/badge/Plugins-path%20%7C%20manifest%20%7C%20entry%20point-0891B2"><br>
       <img alt="Sandbox" src="https://img.shields.io/badge/Sandbox-process%20%7C%20windows__sandbox-374151">
     </td>
     <td valign="top" width="25%">
-      <strong>Storage & Quality</strong><br>
+      <strong>存储与质量</strong><br>
       <img alt="SQLite" src="https://img.shields.io/badge/Storage-SQLite%20%2B%20JSONL-0EA5E9"><br>
       <img alt="Pydantic" src="https://img.shields.io/badge/Pydantic-v2-E11D48"><br>
       <img alt="Pytest" src="https://img.shields.io/badge/Tests-pytest-14B8A6"><br>
@@ -41,16 +41,18 @@
   </tr>
 </table>
 
-## Why This Project Exists
+## 项目目标
 
-- Keep the framework white-box and easy to extend.
-- Separate agent engineering concerns from business logic.
-- Provide one runtime that can host direct tools, skills, MCP, plugins, teams, and graph workflows.
-- Keep the design easy to evolve as protocols and agent patterns improve.
+- 保持框架白板化、透明、易扩展。
+- 把 Agent 工程问题和业务逻辑解耦。
+- 用一个运行时承接 direct tools、skills、MCP、plugins、teams 和 graph workflows。
+- 在协议、编排模式、工具边界继续演进时，尽量减少重构成本。
 
-## Current Architecture
+## 当前架构
 
-### Runtime Topology
+### 运行时拓扑
+
+说明：Mermaid 节点全部使用英文，是为了规避中文节点在部分 Mermaid 渲染器中的解析问题。
 
 ```mermaid
 flowchart LR
@@ -74,7 +76,7 @@ flowchart LR
     Sandbox -. isolates .-> Stdio
 ```
 
-### Communication Flow
+### 通信流程
 
 ```mermaid
 sequenceDiagram
@@ -96,15 +98,15 @@ sequenceDiagram
     Orchestrator-->>Scheduler: final result
 ```
 
-### Current Communication Model
+### 当前通信模型
 
-- Model calls go through `HttpModelClient`, then through a protocol adapter for `OpenAI`, `Anthropic`, or `Gemini` style payloads.
-- Skills register as runtime tools through Python hooks or local command wrappers.
-- MCP communication currently supports `stdio` and `HTTP/SSE` in the implemented codebase.
-- Runtime traces and node results are persisted into SQLite plus JSONL trace files.
-- Sandboxing is applied around command skills and `stdio` MCP where configured.
+- 模型调用统一经过 `HttpModelClient`，再由协议适配层转换为 `OpenAI`、`Anthropic` 或 `Gemini` 风格的请求载荷。
+- Skills 通过 Python hook 或本地命令包装后注册为运行时工具。
+- 当前代码中 MCP 远程通信实现是 `stdio` 和 `HTTP/SSE`。
+- 运行结果、节点状态和轨迹数据会写入 SQLite 与 JSONL trace 文件。
+- 命令型 skill 和 `stdio` MCP 可以被沙盒隔离层包裹。
 
-## Project Layout
+## 项目结构
 
 ```text
 src/
@@ -129,17 +131,17 @@ tests/
   integration/         live-service integration tests
 ```
 
-## Collaboration Modes
+## 协作模式
 
-- `single_agent`: one agent uses tools directly.
-- `sub_agent`: one coordinator delegates focused work through `subagent__*` tools.
-- `multi_agent_graph`: graph nodes schedule multiple agents and join outputs.
-- `Agent Teams`:
+- `single_agent`：单 Agent 直接调用工具。
+- `sub_agent`：协调者通过 `subagent__*` 工具把任务委托给子 Agent。
+- `multi_agent_graph`：用 graph nodes 调度多个 Agent 并聚合结果。
+- `Agent Teams`：
   - `round_robin`
   - `selector`
   - `swarm`
 
-## Plugins, Skills, and MCP
+## Plugins、Skills 与 MCP
 
 ```python
 from pathlib import Path
@@ -151,27 +153,27 @@ runtime.load(Path('skills/examples'))
 runtime.load('third_party_plugin')
 ```
 
-Supported mounting paths:
+支持的挂载方式：
 
-- local skill directories
-- plugin manifests such as `plugin.yaml` or `easy-agent-plugin.yaml`
-- Python package entry points in `agent_runtime.plugins`
-- configured MCP servers from YAML config
+- 本地 skill 目录
+- `plugin.yaml` 或 `easy-agent-plugin.yaml` 这类 plugin manifest
+- `agent_runtime.plugins` 中暴露的 Python package entry point
+- 在 YAML 配置中声明的 MCP server
 
-## Quick Start
+## 快速开始
 
-### Environment
+### 环境准备
 
 ```powershell
 uv venv --python 3.12
 uv sync --dev
 ```
 
-### Local Credentials
+### 本地凭据
 
-The runtime now supports a local-only `.env.local` file. Use it for machine-specific secrets so you do not need to export environment variables every time.
+运行时现在支持本地 `.env.local` 文件。可以把机器专属凭据放进去，避免每次手动导出环境变量。
 
-Example keys:
+示例键：
 
 ```dotenv
 DEEPSEEK_API_KEY=your-key
@@ -183,7 +185,7 @@ PG_DATABASE=postgres
 REDIS_URL=redis://127.0.0.1:6379/0
 ```
 
-### Common Commands
+### 常用命令
 
 ```powershell
 uv run easy-agent doctor -c easy-agent.yml
@@ -193,18 +195,18 @@ uv run easy-agent teams list -c configs/teams.example.yml
 uv run python scripts/benchmark_modes.py --config easy-agent.yml --repeat 1
 ```
 
-### Windows Launchers
+### Windows 快捷入口
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/windows/easy-agent.ps1 --help
 cmd /c scripts/windows/easy-agent.bat --help
 ```
 
-## Real Usage Results
+## 真实使用效果
 
-The current live benchmark baseline comes from `.easy-agent/benchmark-report.json` using DeepSeek through the OpenAI-compatible path.
+当前真实基准来自 `.easy-agent/benchmark-report.json`，底座模型是通过 OpenAI-compatible 路径访问的 DeepSeek。
 
-| Mode | Success | Avg Seconds | Avg Tool Calls | Avg SubAgent Calls |
+| 模式 | 成功率 | 平均耗时 | 平均工具调用 | 平均子 Agent 调用 |
 | --- | --- | ---: | ---: | ---: |
 | `single_agent` | 1/1 | 6.1493 | 1 | 0 |
 | `sub_agent` | 1/1 | 20.6691 | 1 | 1 |
@@ -213,18 +215,18 @@ The current live benchmark baseline comes from `.easy-agent/benchmark-report.jso
 | `team_selector` | 1/1 | 15.1416 | 1 | 0 |
 | `team_swarm` | 1/1 | 11.0792 | 2 | 0 |
 
-## Design Improvements Inspired by Official Agent Frameworks
+## 参考官方 Agent 框架后可继续补强的方向
 
-The current implementation is intentionally pragmatic, but the next useful upgrades are clear when compared with official agent framework documentation:
+当前实现是偏务实的工程底座，但参考主流官方文档后，可以很清楚地看到下一步值得补强的点：
 
-- Add session-oriented memory so a run can keep durable conversational state instead of only storing traces.
-- Add resumable checkpoints for long-running graph and team workflows.
-- Add explicit guardrail hooks before tool execution and before final output emission.
-- Add richer tracing and event streaming across agent, team, tool, and MCP boundaries.
-- Keep team orchestration patterns explicit and typed, instead of hiding them behind one generic loop.
-- Modernize remote MCP transport in a future round while keeping the current implementation truthful in docs today.
+- 增加 session-oriented memory，让运行时不仅保存 trace，还能保存可恢复的会话状态。
+- 为长流程 graph 和 team workflow 增加 resumable checkpoints。
+- 在工具调用前和最终输出前增加显式 guardrail hooks。
+- 增强 tracing 与 event streaming，覆盖 agent、team、tool、MCP 边界。
+- 继续保持 team orchestration 的显式建模，不把 round robin、selector、swarm 全都折叠成一个模糊循环。
+- 在未来版本中升级远程 MCP transport，但当前文档仍然只描述仓库已经实现的通信方式。
 
-Reference material:
+参考资料：
 
 - OpenAI Agents SDK Sessions: <https://openai.github.io/openai-agents-python/sessions/>
 - OpenAI Agents SDK Handoffs: <https://openai.github.io/openai-agents-python/handoffs/>
@@ -237,7 +239,7 @@ Reference material:
 - LangGraph Memory: <https://docs.langchain.com/oss/python/langgraph/memory>
 - MCP Transports: <https://modelcontextprotocol.io/docs/concepts/transports>
 
-## Testing
+## 测试
 
 ```powershell
 uv run ruff check src tests scripts
@@ -246,12 +248,12 @@ uv run python -m pytest tests/unit -q
 uv run python -m pytest tests/integration/test_teams_real.py -m real -q
 ```
 
-For the full long-run live suite, local PostgreSQL and Redis credentials must be available in `.env.local` or environment variables.
+如果要执行完整 long-run live suite，本地 `.env.local` 或环境变量中还需要提供 PostgreSQL 与 Redis 的真实凭据。
 
-## Acknowledgements
+## 致谢
 
-- [Linux.do](https://linux.do/) for community discussion and open knowledge sharing.
-- DeepSeek for the model endpoint used in real verification.
+- [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
+- DeepSeek 提供了本仓库真实验证流程使用的模型端点。
 
 ## License
 

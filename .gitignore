@@ -137,6 +137,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.*.local
 .envrc
 .venv
 env/
@@ -212,3 +214,4 @@ MEMORY.md
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
