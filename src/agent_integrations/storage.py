@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from agent_common.models import ChatMessage
+import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+
+from agent_common.models import ChatMessage, RuntimeEvent
 
 
 class SQLiteRunStore:
@@ -17,6 +21,8 @@ class SQLiteRunStore:
         self.trace_path = self.base_path / 'traces'
         self.trace_path.mkdir(parents=True, exist_ok=True)
         self.db_path = self.base_path / database_name
+        self._event_sequences: dict[str, int] = {}
+        self._subscribers: list[MemoryObjectSendStream[dict[str, Any]]] = []
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -92,6 +98,7 @@ class SQLiteRunStore:
             connection.execute(f'ALTER TABLE runs ADD COLUMN {column_name} {column_type}')
 
     def create_run(self, run_id: str, graph_name: str, input_payload: Any, session_id: str | None = None) -> None:
+        self._event_sequences.setdefault(run_id, 0)
         with closing(self._connect()) as connection:
             connection.execute(
                 'INSERT INTO runs(run_id, graph_name, status, input_payload, created_at, session_id) VALUES (?, ?, ?, ?, ?, ?)',
@@ -152,17 +159,54 @@ class SQLiteRunStore:
             )
             connection.commit()
 
-    def record_event(self, run_id: str, kind: str, payload: Any) -> None:
-        encoded = self._encode(payload)
-        created_at = self._now()
+    def subscribe_events(self, max_buffer: int = 2048) -> MemoryObjectReceiveStream[dict[str, Any]]:
+        send, receive = anyio.create_memory_object_stream[dict[str, Any]](max_buffer)
+        self._subscribers.append(send)
+        return receive
+
+    def record_event(
+        self,
+        run_id: str,
+        kind: str,
+        payload: Any,
+        *,
+        scope: str = 'runtime',
+        node_id: str | None = None,
+        span_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> dict[str, Any]:
+        event = self._build_event(
+            run_id,
+            kind,
+            payload,
+            scope=scope,
+            node_id=node_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+        )
+        encoded = self._encode(
+            {
+                'event_id': event.event_id,
+                'sequence': event.sequence,
+                'run_id': event.run_id,
+                'scope': event.scope,
+                'span_id': event.span_id,
+                'parent_span_id': event.parent_span_id,
+                'node_id': event.node_id,
+                'payload': event.payload,
+            }
+        )
         with closing(self._connect()) as connection:
             connection.execute(
                 'INSERT INTO events(run_id, kind, payload, created_at) VALUES (?, ?, ?, ?)',
-                (run_id, kind, encoded, created_at),
+                (run_id, kind, encoded, event.timestamp),
             )
             connection.commit()
+        envelope = event.model_dump()
         with (self.trace_path / f'{run_id}.jsonl').open('a', encoding='utf-8') as handle:
-            handle.write(self._encode({'kind': kind, 'payload': payload, 'created_at': created_at}) + '\n')
+            handle.write(self._encode(envelope) + '\n')
+        self._broadcast_event(envelope)
+        return envelope
 
     def save_session_messages(self, session_id: str, graph_name: str, messages: list[ChatMessage]) -> None:
         created_at = self._now()
@@ -248,6 +292,10 @@ class SQLiteRunStore:
                 'SELECT checkpoint_id, kind, payload, created_at FROM checkpoints WHERE run_id = ? ORDER BY checkpoint_id ASC',
                 (run_id,),
             ).fetchall()
+        events = []
+        for row in event_rows:
+            body = cast(dict[str, Any], self._decode(row[1]))
+            events.append({'kind': row[0], 'created_at': row[2], **body})
         return {
             'graph_name': run_row['graph_name'],
             'status': run_row['status'],
@@ -266,9 +314,7 @@ class SQLiteRunStore:
                 }
                 for row in node_rows
             ],
-            'events': [
-                {'kind': row[0], 'payload': self._decode(row[1]), 'created_at': row[2]} for row in event_rows
-            ],
+            'events': events,
             'checkpoints': [
                 {
                     'checkpoint_id': row[0],
@@ -279,6 +325,43 @@ class SQLiteRunStore:
                 for row in checkpoint_rows
             ],
         }
+
+    def _build_event(
+        self,
+        run_id: str,
+        kind: str,
+        payload: Any,
+        *,
+        scope: str,
+        node_id: str | None,
+        span_id: str | None,
+        parent_span_id: str | None,
+    ) -> RuntimeEvent:
+        sequence = self._event_sequences.get(run_id, 0) + 1
+        self._event_sequences[run_id] = sequence
+        body = payload if isinstance(payload, dict) else {'value': payload}
+        return RuntimeEvent(
+            event_id=uuid.uuid4().hex,
+            sequence=sequence,
+            run_id=run_id,
+            timestamp=self._now(),
+            kind=kind,
+            scope=scope,
+            payload=body,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            node_id=node_id,
+        )
+
+    def _broadcast_event(self, event: dict[str, Any]) -> None:
+        active: list[MemoryObjectSendStream[dict[str, Any]]] = []
+        for stream in self._subscribers:
+            try:
+                stream.send_nowait(event)
+                active.append(stream)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError, anyio.WouldBlock):
+                continue
+        self._subscribers = active
 
     @staticmethod
     def _encode(payload: Any) -> str:
@@ -310,5 +393,3 @@ class SQLiteRunStore:
             'UPDATE sessions SET graph_name = ?, updated_at = ? WHERE session_id = ?',
             (graph_name, updated_at, session_id),
         )
-
-

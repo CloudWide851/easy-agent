@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -163,6 +163,18 @@ class LoggingConfig(BaseModel):
     level: str = 'INFO'
 
 
+class GuardrailConfig(BaseModel):
+    tool_input_hooks: list[str] = Field(default_factory=lambda: ['block_shell_metacharacters'])
+    final_output_hooks: list[str] = Field(
+        default_factory=lambda: ['require_non_empty_output', 'block_secret_leaks']
+    )
+
+
+class ObservabilityConfig(BaseModel):
+    enable_event_stream: bool = True
+    stream_format: Literal['pretty', 'ndjson'] = 'pretty'
+
+
 class SandboxConfig(BaseModel):
     mode: SandboxMode = SandboxMode.AUTO
     targets: list[SandboxTarget] = Field(
@@ -197,6 +209,8 @@ class AppConfig(BaseModel):
     mcp: list[McpServerConfig] = Field(default_factory=list)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @property

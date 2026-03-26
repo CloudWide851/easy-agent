@@ -16,6 +16,7 @@ from agent_common.models import (
 from agent_common.tools import ToolRegistry
 from agent_config.app import AppConfig, ModelConfig
 from agent_graph import AgentOrchestrator, GraphScheduler
+from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.storage import SQLiteRunStore
 
 
@@ -50,8 +51,42 @@ class SessionAwareModelClient:
         return None
 
 
+class RepairModelClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages: list[ChatMessage], tools: list[ToolSpec]) -> AssistantResponse:
+        del tools
+        self.calls += 1
+        if self.calls == 1:
+            return AssistantResponse(
+                text='',
+                tool_calls=[ToolCall(id='repair-1', name='math.gcd', arguments={'num1': 12})],
+                protocol=Protocol.OPENAI,
+            )
+        if self.calls == 2:
+            assert 'ValidationError' in messages[-1].content
+            return AssistantResponse(
+                text='',
+                tool_calls=[ToolCall(id='repair-2', name='math.gcd', arguments={'num1': 12, 'num2': 18})],
+                protocol=Protocol.OPENAI,
+            )
+        assert messages[-1].name == 'math.gcd'
+        return AssistantResponse(text='repaired', protocol=Protocol.OPENAI)
+
+    async def aclose(self) -> None:
+        return None
+
+
 class DummyMcpManager:
-    async def call_tool(self, server_name: str, tool_name: str, arguments: dict[str, str]) -> dict[str, str]:
+    async def call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, str],
+        context: RunContext | None = None,
+    ) -> dict[str, str]:
+        del context
         return {'server': server_name, 'tool': tool_name, **arguments}
 
 
@@ -85,12 +120,65 @@ async def test_graph_scheduler_runs_agent_with_tool_loop(tmp_path: Path) -> None
     )
     store = SQLiteRunStore(tmp_path, 'state.db')
     model_client = StubModelClient()
-    orchestrator = AgentOrchestrator(config, model_client, registry, store)
-    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager())
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
 
     result = await scheduler.run('hello')
+    trace = store.load_trace(result['run_id'])
 
     assert result['result'] == 'done'
+    assert any(event['kind'] == 'tool_call_succeeded' for event in trace['events'])
+    assert any(event['kind'] == 'run_succeeded' for event in trace['events'])
+
+
+@pytest.mark.asyncio
+async def test_graph_scheduler_repairs_invalid_tool_arguments(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'model': ModelConfig().model_dump(),
+            'graph': {
+                'entrypoint': 'coordinator',
+                'agents': [
+                    {
+                        'name': 'coordinator',
+                        'system_prompt': 'system',
+                        'tools': ['math.gcd'],
+                        'sub_agents': [],
+                    }
+                ],
+                'nodes': [],
+            },
+            'skills': [],
+            'mcp': [],
+            'storage': {'path': str(tmp_path), 'database': 'state.db'},
+            'security': {'allowed_commands': []},
+        }
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name='math.gcd',
+            description='gcd',
+            input_schema={
+                'type': 'object',
+                'properties': {'num1': {'type': 'integer'}, 'num2': {'type': 'integer'}},
+                'required': ['num1', 'num2'],
+            },
+        ),
+        lambda arguments, context: {'gcd': 6, 'arguments': arguments, 'run_id': context.run_id},
+    )
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    model_client = RepairModelClient()
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
+
+    result = await scheduler.run('calculate gcd')
+    trace = store.load_trace(result['run_id'])
+
+    assert result['result'] == 'repaired'
+    assert any(event['kind'] == 'tool_validation_failed' for event in trace['events'])
+    successful = [event for event in trace['events'] if event['kind'] == 'tool_call_succeeded']
+    assert successful[-1]['payload']['arguments'] == {'num1': 12, 'num2': 18}
 
 
 @pytest.mark.asyncio
@@ -130,8 +218,8 @@ async def test_graph_scheduler_retries_failed_nodes(tmp_path: Path) -> None:
     registry.register(ToolSpec(name='flaky', description='Retry me', input_schema={'type': 'object'}), flaky)
     store = SQLiteRunStore(tmp_path, 'state.db')
     model_client = StubModelClient()
-    orchestrator = AgentOrchestrator(config, model_client, registry, store)
-    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager())
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
 
     result = await scheduler.run('hello')
 
@@ -159,8 +247,8 @@ async def test_direct_agent_run_reuses_explicit_session_memory(tmp_path: Path) -
     registry = ToolRegistry()
     store = SQLiteRunStore(tmp_path, 'state.db')
     model_client = SessionAwareModelClient()
-    orchestrator = AgentOrchestrator(config, model_client, registry, store)
-    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager())
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
 
     first = await scheduler.run('first-session-input', session_id='session-a')
     second = await scheduler.run('second-session-input', session_id='session-a')
@@ -225,8 +313,8 @@ async def test_graph_scheduler_resumes_from_checkpoint_without_rerunning_complet
     registry.register(ToolSpec(name='review', description='review', input_schema={'type': 'object'}), review)
     store = SQLiteRunStore(tmp_path, 'state.db')
     model_client = StubModelClient()
-    orchestrator = AgentOrchestrator(config, model_client, registry, store)
-    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager())
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
     monkeypatch.setattr('agent_graph.scheduler.uuid.uuid4', lambda: SimpleNamespace(hex='graph-resume-run'))
 
     with pytest.raises(RuntimeError, match='Run graph-resume-run failed'):

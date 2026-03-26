@@ -51,6 +51,9 @@ def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
         ('Teams', str(len(runtime.config.graph.teams))),
         ('Configured MCP Servers', str(len(runtime.config.mcp))),
         ('MCP Transports', _mcp_transport_summary(runtime)),
+        ('Tool Guardrails', ', '.join(runtime.config.guardrails.tool_input_hooks)),
+        ('Output Guardrails', ', '.join(runtime.config.guardrails.final_output_hooks)),
+        ('Event Stream', str(runtime.config.observability.enable_event_stream)),
         ('Loaded Sources', str(len(runtime.loaded_sources))),
         ('Sandbox Mode', sandbox['mode']),
         ('Sandbox Targets', ', '.join(sandbox['targets'])),
@@ -58,6 +61,17 @@ def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
         ('Sandbox Fallback', sandbox['windows_sandbox_fallback']),
         ('Storage', str(runtime.store.base_path.resolve())),
     ]
+
+
+def _render_event(event: dict[str, Any], mode: str) -> None:
+    if mode == 'ndjson':
+        console.print(json.dumps(event, ensure_ascii=False))
+        return
+    summary = event.get('payload', {})
+    console.print(
+        f"[{event['sequence']:03d}] {event['scope']}::{event['kind']} "
+        f"run={event['run_id']} node={event.get('node_id') or '-'} payload={json.dumps(summary, ensure_ascii=False)}"
+    )
 
 
 def register(app: typer.Typer) -> None:
@@ -98,8 +112,13 @@ def register(app: typer.Typer) -> None:
         input_text: str = typer.Argument(..., help='Input text for the graph, entry agent, or entry team.'),
         config: str = typer.Option('easy-agent.yml', '-c', '--config'),
         session_id: str | None = typer.Option(None, '--session-id', help='Optional explicit session id for persistent memory.'),
+        stream: str | None = typer.Option(None, '--stream', help='Optional stream format: pretty or ndjson.'),
     ) -> None:
         async def _run(runtime: EasyAgentRuntime) -> None:
+            if stream:
+                async for event in runtime.stream(input_text, session_id=session_id):
+                    _render_event(event, stream)
+                return
             result = await runtime.run(input_text, session_id=session_id)
             console.print_json(json.dumps(result, ensure_ascii=False))
 
@@ -109,8 +128,13 @@ def register(app: typer.Typer) -> None:
     def resume(
         run_id: str = typer.Argument(..., help='Existing run id to resume from the latest checkpoint.'),
         config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+        stream: str | None = typer.Option(None, '--stream', help='Optional stream format: pretty or ndjson.'),
     ) -> None:
         async def _run(runtime: EasyAgentRuntime) -> None:
+            if stream:
+                async for event in runtime.resume_stream(run_id):
+                    _render_event(event, stream)
+                return
             result = await runtime.resume(run_id)
             console.print_json(json.dumps(result, ensure_ascii=False))
 

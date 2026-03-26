@@ -96,4 +96,7 @@ def test_doctor_rows_include_runtime_stack_details() -> None:
     assert rows['Entrypoint Type'] == 'team'
     assert rows['Configured MCP Servers'] == '1'
     assert rows['MCP Transports'] == 'filesystem:stdio'
+    assert rows['Tool Guardrails'] == 'block_shell_metacharacters'
+    assert rows['Output Guardrails'] == 'require_non_empty_output, block_secret_leaks'
+    assert rows['Event Stream'] == 'True'
     assert rows['Sandbox Fallback'] == 'process'

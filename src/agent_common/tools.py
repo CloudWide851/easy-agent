@@ -19,6 +19,11 @@ class ToolRegistry:
     def has(self, name: str) -> bool:
         return name in self._tools
 
+    def get_spec(self, name: str) -> ToolSpec:
+        if name not in self._tools:
+            raise KeyError(f"Tool not found: {name}")
+        return self._tools[name][0]
+
     def list_specs(self, names: list[str] | None = None) -> list[ToolSpec]:
         if names is None:
             return [item[0] for item in self._tools.values()]
@@ -32,5 +37,3 @@ class ToolRegistry:
         if inspect.isawaitable(result):
             return await result
         return result
-
-

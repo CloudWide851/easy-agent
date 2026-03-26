@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+
+import anyio
 
 from agent_common.models import ToolSpec
 from agent_common.tools import ToolHandler, ToolRegistry
 from agent_config.app import AppConfig, McpServerConfig, load_config
 from agent_graph import AgentOrchestrator, GraphScheduler
+from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.mcp import McpClientManager, build_mcp_tool_name
 from agent_integrations.plugins import InlineRuntimePlugin, RuntimePlugin, RuntimePluginHost
 from agent_integrations.sandbox import SandboxManager, SandboxMode
@@ -24,6 +28,7 @@ class EasyAgentRuntime:
         store: SQLiteRunStore,
         sandbox_manager: SandboxManager,
         mcp_manager: McpClientManager,
+        guardrail_engine: GuardrailEngine,
         orchestrator: AgentOrchestrator,
         scheduler: GraphScheduler,
         skills: list[SkillMetadata] | None = None,
@@ -34,6 +39,7 @@ class EasyAgentRuntime:
         self.store = store
         self.sandbox_manager = sandbox_manager
         self.mcp_manager = mcp_manager
+        self.guardrail_engine = guardrail_engine
         self.orchestrator = orchestrator
         self.scheduler = scheduler
         self.skills = skills or []
@@ -92,8 +98,7 @@ class EasyAgentRuntime:
                     bound_server: str = server_name,
                     bound_tool: str = tool.name,
                 ) -> Any:
-                    del context
-                    return await self.mcp_manager.call_tool(bound_server, bound_tool, arguments)
+                    return await self.mcp_manager.call_tool(bound_server, bound_tool, arguments, context=context)
 
                 self.registry.register(
                     ToolSpec(
@@ -110,10 +115,64 @@ class EasyAgentRuntime:
             await self.start()
         return await self.scheduler.run(input_text, session_id=session_id)
 
+    async def stream(self, input_text: str, session_id: str | None = None) -> AsyncIterator[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        stream = self.store.subscribe_events()
+        result: dict[str, Any] | None = None
+        error: Exception | None = None
+        selected_run_id: str | None = None
+
+        async def _runner() -> None:
+            nonlocal result, error
+            try:
+                result = await self.scheduler.run(input_text, session_id=session_id)
+            except Exception as exc:
+                error = exc
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(_runner)
+            async with stream:
+                async for event in stream:
+                    if selected_run_id is None and event['kind'] == 'run_started':
+                        selected_run_id = str(event['run_id'])
+                    if selected_run_id is None or event['run_id'] == selected_run_id:
+                        yield event
+                        if event['kind'] in {'run_succeeded', 'run_failed', 'run_interrupted'} and event['run_id'] == selected_run_id:
+                            break
+        if error is not None:
+            raise error
+        if result is not None:
+            return
+
     async def resume(self, run_id: str) -> dict[str, Any]:
         if not self._started:
             await self.start()
         return await self.scheduler.resume(run_id)
+
+    async def resume_stream(self, run_id: str) -> AsyncIterator[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        stream = self.store.subscribe_events()
+        error: Exception | None = None
+
+        async def _runner() -> None:
+            nonlocal error
+            try:
+                await self.scheduler.resume(run_id)
+            except Exception as exc:
+                error = exc
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(_runner)
+            async with stream:
+                async for event in stream:
+                    if event['run_id'] == run_id:
+                        yield event
+                        if event['kind'] in {'run_succeeded', 'run_failed', 'run_interrupted'}:
+                            break
+        if error is not None:
+            raise error
 
     async def aclose(self) -> None:
         await self.mcp_manager.aclose()
@@ -132,11 +191,25 @@ def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
     )
     registry = ToolRegistry()
     store = SQLiteRunStore(Path(config.storage.path), config.storage.database)
-    mcp_manager = McpClientManager([], sandbox_manager)
+    guardrail_engine = GuardrailEngine(
+        tool_input_hooks=config.guardrails.tool_input_hooks,
+        final_output_hooks=config.guardrails.final_output_hooks,
+    )
+    mcp_manager = McpClientManager([], sandbox_manager, store=store)
     model_client = HttpModelClient(config.model)
-    orchestrator = AgentOrchestrator(config, model_client, registry, store)
-    scheduler = GraphScheduler(config, registry, orchestrator, store, mcp_manager)
-    runtime = EasyAgentRuntime(config, model_client, registry, store, sandbox_manager, mcp_manager, orchestrator, scheduler)
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, guardrail_engine)
+    scheduler = GraphScheduler(config, registry, orchestrator, store, mcp_manager, guardrail_engine)
+    runtime = EasyAgentRuntime(
+        config,
+        model_client,
+        registry,
+        store,
+        sandbox_manager,
+        mcp_manager,
+        guardrail_engine,
+        orchestrator,
+        scheduler,
+    )
     for plugin_source in config.plugins:
         runtime.load(plugin_source)
     if config.skills:

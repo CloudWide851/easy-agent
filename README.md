@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-`easy-agent` is a white-box, business-agnostic, extensible agent engineering foundation for Python. It focuses on the runtime layer instead of domain logic, so teams, sub-agents, skills, MCP servers, plugins, session memory, and future protocol changes can be mounted without coupling the framework to a specific product.
+`easy-agent` is a white-box, business-agnostic, extensible Python foundation for building agents. It focuses on runtime engineering instead of domain logic, so teams, sub-agents, skills, MCP servers, plugins, session memory, and future protocol changes can be mounted without coupling the framework to a single product.
 
 ## Tech Stack
 
@@ -30,32 +30,35 @@
       <img alt="Sandbox" src="https://img.shields.io/badge/Sandbox-process%20%7C%20windows__sandbox-374151">
     </td>
     <td valign="top" width="25%">
-      <strong>State & Quality</strong><br>
+      <strong>State & Observability</strong><br>
       <img alt="Storage" src="https://img.shields.io/badge/Storage-SQLite%20%2B%20JSONL-0EA5E9"><br>
-      <img alt="Session Memory" src="https://img.shields.io/badge/Memory-session__messages%20%2B%20shared__state-0284C7"><br>
-      <img alt="Checkpoint" src="https://img.shields.io/badge/Recovery-resumable__checkpoints-16A34A"><br>
-      <img alt="Static checks" src="https://img.shields.io/badge/Checks-Ruff%20%2B%20mypy-111827">
+      <img alt="Guardrails" src="https://img.shields.io/badge/Guardrails-tool__input%20%2B%20final__output-DC2626"><br>
+      <img alt="Streaming" src="https://img.shields.io/badge/Streaming-runtime__events-0284C7"><br>
+      <img alt="Recovery" src="https://img.shields.io/badge/Recovery-session__memory%20%2B%20checkpoints-16A34A">
     </td>
   </tr>
 </table>
 
 ## Why This Project Exists
 
-- Keep the framework white-box and easy to extend.
+- Keep agent infrastructure white-box and easy to extend.
 - Separate agent engineering concerns from business logic.
 - Provide one runtime that can host direct tools, skills, MCP, plugins, teams, session memory, and graph workflows.
-- Keep the design easy to evolve as protocols and agent patterns improve.
+- Keep the runtime easy to evolve as protocols, tool schemas, and orchestration patterns improve.
 
 ## Features
 
-- White-box runtime assembly with explicit scheduler, orchestrator, registry, storage, and protocol layers.
+- White-box runtime assembly with explicit scheduler, orchestrator, registry, storage, guardrail, and protocol layers.
 - Protocol-adapted model requests for `OpenAI`, `Anthropic`, and `Gemini` style payloads.
 - Tool Calling 2.0 oriented runtime with direct tools, command skills, Python hook skills, MCP tools, and plugin mounting.
 - `single_agent`, `sub_agent`, `multi_agent_graph`, and `Agent Teams` collaboration modes.
-- Session-oriented memory with explicit `session_id` support for durable message history and shared graph state.
+- Explicit guardrail hooks before tool execution and before final output emission.
+- Schema-aware tool-call validation plus a self-repair loop when the model emits invalid arguments.
+- Session-oriented memory with durable `session_id` support for message history and shared graph state.
 - Resumable checkpoints for long-running graph workflows and top-level team workflows.
+- Enriched tracing and event streaming across run, agent, team, tool, guardrail, and MCP boundaries.
 - Sandboxed execution for command skills and `stdio` MCP with Windows fallback handling.
-- SQLite + JSONL trace persistence plus structured node and runtime events.
+- Public evaluation harnesses for BFCL subset cases and tau2 mock cases.
 
 ## Current Architecture
 
@@ -67,6 +70,7 @@ flowchart LR
     CLI --> Runtime[EasyAgentRuntime]
     Runtime --> Scheduler[GraphScheduler]
     Scheduler --> Orchestrator[AgentOrchestrator]
+    Scheduler --> Guardrails[GuardrailEngine]
     Orchestrator --> Registry[ToolRegistry]
     Orchestrator --> Model[HttpModelClient]
     Model --> Adapter[ProtocolAdapter]
@@ -75,10 +79,12 @@ flowchart LR
     Plugins --> Registry
     Runtime --> MCP[McpClientManager]
     MCP --> Stdio[stdio transport]
-    MCP --> Remote[HTTP/SSE transport]
+    MCP --> Remote[HTTP_SSE transport]
     Registry --> Skills[Skills and Local Tools]
-    Scheduler --> Store[SQLiteRunStore and JSONL traces]
+    Scheduler --> Store[SQLiteRunStore]
     Orchestrator --> Store
+    Runtime --> Stream[Event Stream]
+    Stream --> CLI
     Sandbox[SandboxManager] -. isolates .-> Skills
     Sandbox -. isolates .-> Stdio
 ```
@@ -89,20 +95,26 @@ flowchart LR
 sequenceDiagram
     participant CLI as CLI
     participant Scheduler as GraphScheduler
+    participant Guard as GuardrailEngine
     participant Orchestrator as AgentOrchestrator
     participant Model as HttpModelClient
     participant Provider as Provider API
     participant Tool as Tool or Skill or MCP
+    participant Store as SQLiteRunStore
     CLI->>Scheduler: run(input, session_id)
     Scheduler->>Orchestrator: dispatch entrypoint
     Orchestrator->>Model: complete(messages, tools)
     Model->>Provider: HTTP request
     Provider-->>Model: assistant text and tool calls
     Model-->>Orchestrator: normalized response
+    Orchestrator->>Guard: validate tool input
+    Guard-->>Orchestrator: allow or block
     Orchestrator->>Tool: invoke tool call
     Tool-->>Orchestrator: tool result
-    Orchestrator->>Model: continue with tool output
-    Orchestrator-->>Scheduler: final result
+    Orchestrator->>Store: record trace and events
+    Scheduler->>Guard: validate final output
+    Guard-->>Scheduler: allow or block
+    Scheduler->>Store: persist run, checkpoint, session state
     Scheduler-->>CLI: result or resumable failure state
 ```
 
@@ -111,8 +123,9 @@ sequenceDiagram
 - Model calls go through `HttpModelClient`, then through a protocol adapter for `OpenAI`, `Anthropic`, or `Gemini` style payloads.
 - Skills register as runtime tools through Python hooks or local command wrappers.
 - MCP communication currently supports `stdio` and `HTTP/SSE` in the implemented codebase.
-- Runtime traces, session messages, shared session state, and checkpoints are persisted into SQLite plus JSONL trace files.
-- Sandboxing is applied around command skills and `stdio` MCP where configured.
+- Guardrails run before tool execution and before final output emission.
+- Runtime traces, session messages, session state, checkpoints, and event envelopes are persisted into SQLite plus JSONL traces.
+- CLI streaming uses the same runtime event channel that records agent, team, tool, guardrail, and MCP transitions.
 
 ## State, Memory, and Recovery
 
@@ -130,15 +143,17 @@ src/
   agent_common/        shared models and tool abstractions
   agent_config/        typed config models and validation
   agent_graph/         orchestration, graph scheduling, team runtime
-  agent_integrations/  skills, MCP, plugins, sandbox, storage
+  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails
   agent_protocols/     protocol adapters and model client
-  agent_runtime/       runtime assembly, benchmarks, long-run flows
+  agent_runtime/       runtime assembly, benchmarks, long-run flows, public eval
 skills/
   examples/            local demo skills
   real/                real validation skills
 configs/
   longrun.example.yml  real MCP + skill validation
   teams.example.yml    Agent Teams examples
+public_evals/
+  fixtures/            vendored BFCL and tau2 public subsets
 scripts/
   benchmark_modes.py   live benchmark for six execution modes
   windows/             easy-agent.ps1 / easy-agent.bat
@@ -211,6 +226,8 @@ uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent run "summarize the repository" --session-id demo-session -c easy-agent.yml
 uv run easy-agent resume <run_id> -c configs/teams.example.yml
 uv run python scripts/benchmark_modes.py --config easy-agent.yml --repeat 1
+uv run easy-agent integration public-eval -c easy-agent.yml --output .easy-agent/public-eval-report.json
+uv run easy-agent integration longrun -c configs/longrun.example.yml --cycles 1 --output-root .easy-agent/longrun
 ```
 
 ### Windows Launchers
@@ -222,27 +239,41 @@ cmd /c scripts/windows/easy-agent.bat --help
 
 ## Real Usage Results
 
-The current live benchmark baseline comes from `.easy-agent/benchmark-report.json` using DeepSeek through the OpenAI-compatible path.
+### Live Benchmark Snapshot
+
+The latest local benchmark snapshot comes from `.easy-agent/benchmark-report.json` on March 26, 2026 using DeepSeek through the OpenAI-compatible path.
 
 | Mode | Success | Avg Seconds | Avg Tool Calls | Avg SubAgent Calls |
 | --- | --- | ---: | ---: | ---: |
-| `single_agent` | 1/1 | 6.1493 | 1 | 0 |
-| `sub_agent` | 1/1 | 20.6691 | 1 | 1 |
-| `multi_agent_graph` | 1/1 | 14.4803 | 2 | 0 |
-| `team_round_robin` | 1/1 | 11.2187 | 1 | 0 |
-| `team_selector` | 1/1 | 15.1416 | 1 | 0 |
-| `team_swarm` | 1/1 | 11.0792 | 2 | 0 |
+| `single_agent` | 1/1 | 4.9189 | 1 | 0 |
+| `sub_agent` | 1/1 | 15.9533 | 1 | 1 |
+| `multi_agent_graph` | 1/1 | 13.4902 | 2 | 0 |
+| `team_round_robin` | 1/1 | 7.7634 | 1 | 0 |
+| `team_selector` | 1/1 | 26.4179 | 1 | 0 |
+| `team_swarm` | 1/1 | 10.5093 | 2 | 0 |
 
-## Future Engineering Improvements
+### Public Eval Snapshot
 
-The current implementation now includes durable session memory and resumable checkpoints. The next useful upgrades are:
+The latest local public-eval snapshot comes from `.easy-agent/public-eval-report.json` on March 26, 2026.
 
-- Add explicit guardrail hooks before tool execution and before final output emission.
-- Add richer tracing and event streaming across agent, team, tool, and MCP boundaries.
-- Keep team orchestration patterns explicit and typed instead of hiding them behind one generic loop.
-- Modernize remote MCP transport in a future round while keeping the current implementation truthful in docs today.
+| Suite | Success | Pass Rate | Tool Match | Arg Match | Avg Seconds |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `bfcl_simple` | 6/8 | 0.7500 | 0.7500 | 0.7500 | 10.6425 |
+| `bfcl_multiple` | 2/8 | 0.2500 | 0.2500 | 0.2500 | 4.5149 |
+| `bfcl_parallel_multiple` | 0/4 | 0.0000 | 0.0000 | 0.0000 | 13.7242 |
+| `bfcl_irrelevance` | 0/4 | 0.0000 | 0.0000 | 0.0000 | 2.3965 |
+| `tau2_mock` | 3/3 | 1.0000 | 1.0000 | 1.0000 | 5.9955 |
+| `overall_bfcl` | 8/24 | 0.3333 | 0.3333 | 0.3333 | - |
 
-Reference material:
+Observed in this DeepSeek baseline:
+
+- The tau2 mock subset is stable and fully passing after adding session-history prompt fallback.
+- The BFCL subset is partially passing after normalizing tool schemas and sanitizing function names for OpenAI-compatible tool calling.
+- The remaining BFCL failures are concentrated in multi-tool and irrelevance cases. In this March 26, 2026 run, several of those cases still triggered provider-side `400 Bad Request` responses from `https://api.deepseek.com/chat/completions`, so BFCL should currently be treated as a compatibility baseline, not a finished leaderboard score.
+
+## Design References
+
+The current runtime borrows explicit ideas from production-facing agent systems without hiding them behind opaque abstractions.
 
 - OpenAI Agents SDK Sessions: <https://openai.github.io/openai-agents-python/sessions/>
 - OpenAI Agents SDK Handoffs: <https://openai.github.io/openai-agents-python/handoffs/>
@@ -262,13 +293,16 @@ uv run ruff check src tests scripts
 uv run mypy src tests scripts
 uv run python -m pytest tests/unit -q
 uv run python -m pytest tests/integration -m real -q
+uv run easy-agent --help
+uv run easy-agent doctor -c easy-agent.yml
+uv run easy-agent teams list -c configs/teams.example.yml
 ```
 
 For the full live suite, local PostgreSQL and Redis credentials must be available in `.env.local` or environment variables.
 
 ## Acknowledgements
 
-- <a href="https://linux.do/"><img alt="Linux.do" src="https://linux.do/logo-128.svg" width="20"></a> [Linux.do](https://linux.do/) for community discussion and open knowledge sharing.
+- [Linux.do](https://linux.do/) for community discussion and open knowledge sharing.
 - [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) for the real verification baseline and model endpoint.
 
 ## License

@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agent_common.models import ChatMessage, RunContext, ToolSpec
+from agent_common.models import ChatMessage, RunContext, ToolCall, ToolSpec
 from agent_common.tools import ToolHandler, ToolRegistry
 from agent_config.app import AgentConfig, AppConfig, TeamConfig
+from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.storage import SQLiteRunStore
+from agent_integrations.tool_validation import normalize_and_validate_tool_arguments
 
 
 @dataclass(slots=True)
@@ -37,11 +39,13 @@ class AgentOrchestrator:
         model_client: Any,
         registry: ToolRegistry,
         store: SQLiteRunStore,
+        guardrail_engine: GuardrailEngine,
     ) -> None:
         self.config = config
         self.model_client = model_client
         self.registry = registry
         self.store = store
+        self.guardrail_engine = guardrail_engine
         self.agents: dict[str, AgentConfig] = config.agent_map
         self.teams: dict[str, TeamConfig] = config.team_map
 
@@ -139,6 +143,9 @@ class AgentOrchestrator:
                 context.run_id,
                 'team_start',
                 {'team': name, 'mode': team.mode.value, 'members': team.members, 'prompt': prompt},
+                scope='team',
+                node_id=context.node_id,
+                span_id=f'team:{name}',
             )
             self._checkpoint_team(name, prompt, context, shared_messages, turns, current_speaker, start_turn, checkpointing)
         for turn_index in range(start_turn, team.max_turns + 1):
@@ -152,6 +159,10 @@ class AgentOrchestrator:
                 context.run_id,
                 'team_turn',
                 {'team': name, 'mode': team.mode.value, 'turn': turn_index, 'speaker': speaker},
+                scope='team',
+                node_id=context.node_id,
+                span_id=f'team:{name}:turn:{turn_index}',
+                parent_span_id=f'team:{name}',
             )
             handoff_targets = [member for member in team.members if member != speaker] if team.mode.value == 'swarm' else []
             result = await self._run_agent_turn(speaker, shared_messages, context, handoff_targets)
@@ -184,6 +195,10 @@ class AgentOrchestrator:
                         'to': result.handoff_target,
                         'message': handoff_message,
                     },
+                    scope='team',
+                    node_id=context.node_id,
+                    span_id=f'team:{name}:handoff:{turn_index}',
+                    parent_span_id=f'team:{name}',
                 )
             if team.termination_text and team.termination_text in result.text:
                 payload = {
@@ -193,7 +208,15 @@ class AgentOrchestrator:
                     'result': result.text,
                     'terminated_by': speaker,
                 }
-                self.store.record_event(context.run_id, 'team_finish', payload)
+                self.store.record_event(
+                    context.run_id,
+                    'team_finish',
+                    payload,
+                    scope='team',
+                    node_id=context.node_id,
+                    span_id=f'team:{name}:finish',
+                    parent_span_id=f'team:{name}',
+                )
                 return TeamRunResult(payload=payload, shared_messages=shared_messages)
             self._checkpoint_team(name, prompt, context, shared_messages, turns, current_speaker, turn_index + 1, checkpointing)
         raise RuntimeError(f"Team '{name}' exceeded max_turns")
@@ -234,6 +257,10 @@ class AgentOrchestrator:
             context.run_id,
             'team_select_speaker',
             {'team': team.name, 'response': response.text, 'speaker': selected},
+            scope='team',
+            node_id=context.node_id,
+            span_id=f'team:{team.name}:selector',
+            parent_span_id=f'team:{team.name}',
         )
         return selected
 
@@ -274,10 +301,22 @@ class AgentOrchestrator:
         tool_specs.extend(self._handoff_spec(target) for target in handoff_targets)
         messages = [ChatMessage(role='system', content=agent.system_prompt), *shared_messages]
         for iteration in range(agent.max_iterations):
+            agent_span = f'agent:{name}:iter:{iteration + 1}'
+            self.store.record_event(
+                context.run_id,
+                'agent_iteration_started',
+                {'agent': name, 'iteration': iteration + 1},
+                scope='agent',
+                node_id=context.node_id,
+                span_id=agent_span,
+            )
             self.store.record_event(
                 context.run_id,
                 'agent_request',
                 {'agent': name, 'iteration': iteration + 1, 'prompt': messages[-1].content if messages else ''},
+                scope='agent',
+                node_id=context.node_id,
+                span_id=agent_span,
             )
             response = await self.model_client.complete(messages, tool_specs)
             self.store.record_event(
@@ -288,10 +327,21 @@ class AgentOrchestrator:
                     'text': response.text,
                     'tool_calls': [item.model_dump() for item in response.tool_calls],
                 },
+                scope='agent',
+                node_id=context.node_id,
+                span_id=agent_span,
             )
             if not response.tool_calls:
                 if response.text:
                     messages.append(ChatMessage(role='assistant', content=response.text))
+                self.store.record_event(
+                    context.run_id,
+                    'agent_final_answer',
+                    {'agent': name, 'text': response.text},
+                    scope='agent',
+                    node_id=context.node_id,
+                    span_id=agent_span,
+                )
                 return TeamTurnResult(
                     speaker=name,
                     text=response.text,
@@ -317,17 +367,124 @@ class AgentOrchestrator:
                     handoff_target=target_name,
                     handoff_message=handoff_message,
                 )
+            validation_repaired = False
             for tool_call in response.tool_calls:
-                output = await self.registry.call(tool_call.name, tool_call.arguments, context)
+                executed = await self._execute_tool_call(tool_call, context, agent_span)
+                if isinstance(executed, ChatMessage):
+                    validation_repaired = True
+                    messages.append(executed)
+                    break
                 messages.append(
                     ChatMessage(
                         role='tool',
-                        content=str(output),
+                        content=str(executed),
                         name=tool_call.name,
                         tool_call_id=tool_call.id,
                     )
                 )
+            if validation_repaired:
+                continue
         raise RuntimeError(f"Agent '{name}' exceeded max_iterations")
+
+    async def _execute_tool_call(self, tool_call: ToolCall, context: RunContext, parent_span_id: str) -> Any | ChatMessage:
+        tool_spec = self.registry.get_spec(tool_call.name)
+        validation = normalize_and_validate_tool_arguments(tool_spec.input_schema, tool_call.arguments)
+        if validation.errors:
+            error_message = '; '.join(validation.errors)
+            self.store.record_event(
+                context.run_id,
+                'tool_validation_failed',
+                {
+                    'tool_name': tool_call.name,
+                    'tool_call_id': tool_call.id,
+                    'arguments': tool_call.arguments,
+                    'normalized_arguments': validation.normalized,
+                    'errors': validation.errors,
+                },
+                scope='tool',
+                node_id=context.node_id,
+                span_id=f'tool:{tool_call.name}',
+                parent_span_id=parent_span_id,
+            )
+            self.store.record_event(
+                context.run_id,
+                'tool_validation_repair_requested',
+                {'tool_name': tool_call.name, 'tool_call_id': tool_call.id, 'errors': validation.errors},
+                scope='agent',
+                node_id=context.node_id,
+                span_id=f'tool:{tool_call.name}',
+                parent_span_id=parent_span_id,
+            )
+            return ChatMessage(
+                role='tool',
+                content=(
+                    f"ValidationError for tool '{tool_call.name}': {error_message}. "
+                    f'Call the same tool again with corrected arguments only.'
+                ),
+                name=tool_call.name,
+                tool_call_id=tool_call.id,
+            )
+        decisions = self.guardrail_engine.check_tool_input(tool_call.name, validation.normalized, context)
+        for decision in decisions:
+            self.store.record_event(
+                context.run_id,
+                'tool_guardrail_result',
+                {
+                    'tool_name': tool_call.name,
+                    'tool_call_id': tool_call.id,
+                    'guardrail': decision.guardrail,
+                    'outcome': decision.outcome,
+                    'reason': decision.reason,
+                    'payload': decision.payload,
+                },
+                scope='guardrail',
+                node_id=context.node_id,
+                span_id=f'guardrail:{decision.guardrail}',
+                parent_span_id=parent_span_id,
+            )
+        self.guardrail_engine.ensure_allowed('tool_input', decisions)
+        self.store.record_event(
+            context.run_id,
+            'tool_call_started',
+            {'tool_name': tool_call.name, 'tool_call_id': tool_call.id, 'arguments': validation.normalized},
+            scope='tool',
+            node_id=context.node_id,
+            span_id=f'tool:{tool_call.name}',
+            parent_span_id=parent_span_id,
+        )
+        try:
+            output = await self.registry.call(tool_call.name, validation.normalized, context)
+        except Exception as exc:
+            self.store.record_event(
+                context.run_id,
+                'tool_call_failed',
+                {
+                    'tool_name': tool_call.name,
+                    'tool_call_id': tool_call.id,
+                    'arguments': validation.normalized,
+                    'error': str(exc),
+                },
+                scope='tool',
+                node_id=context.node_id,
+                span_id=f'tool:{tool_call.name}',
+                parent_span_id=parent_span_id,
+            )
+            raise
+        self.store.record_event(
+            context.run_id,
+            'tool_call_succeeded',
+            {
+                'tool_name': tool_call.name,
+                'tool_call_id': tool_call.id,
+                'arguments': validation.normalized,
+                'result': output,
+            },
+            scope='tool',
+            node_id=context.node_id,
+            span_id=f'tool:{tool_call.name}',
+            parent_span_id=parent_span_id,
+        )
+        return output
 
     def _checkpoint_team(
         self,
@@ -359,4 +516,3 @@ class AgentOrchestrator:
     @staticmethod
     def _restore_messages(payloads: list[dict[str, Any]]) -> list[ChatMessage]:
         return [ChatMessage.model_validate(item) for item in payloads]
-

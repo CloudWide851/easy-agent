@@ -202,10 +202,10 @@ def build_longrun_cases(base_config: AppConfig) -> list[LongRunCase]:
                 '2. Call {fs_read} with path "{artifact_ref}". '
                 '3. Call {redis_set} with key "{redis_key}" and value "{marker}|{artifact_ref}". '
                 '4. Call {redis_get} with key "{redis_key}". '
-                '5. Call {pg_execute} with SQL "INSERT INTO {audit_table} (run_key, scenario, cycle, artifact_path, note) '
-                'VALUES (''{run_key}'', ''single_agent'', {cycle}, ''{artifact_ref}'', ''single-agent-ok:{marker}'')". '
-                '6. Call {pg_query} with SQL "SELECT run_key, scenario, cycle, artifact_path, note FROM {audit_table} '
-                'WHERE run_key = ''{run_key}''". '
+                "5. Call {pg_execute} with SQL \"INSERT INTO {audit_table} (run_key, scenario, cycle, artifact_path, note) "
+                "VALUES ('{run_key}', 'single_agent', {cycle}, '{artifact_ref}', 'single-agent-ok:{marker}')\". "
+                "6. Call {pg_query} with SQL \"SELECT run_key, scenario, cycle, artifact_path, note FROM {audit_table} "
+                "WHERE run_key = '{run_key}'\". "
                 'Return a compact verification summary.'
             ),
         ),
@@ -218,8 +218,8 @@ def build_longrun_cases(base_config: AppConfig) -> list[LongRunCase]:
                 'call html_page_builder with output_path "{artifact_ref}", title "Sub Agent Cycle {cycle}", '
                 'headline "Sub Agent Cycle {cycle}", prompt "{marker}", sections ["{marker}", "sub-agent-verification"], '
                 'footer "{run_key}"; call {redis_set} with key "{redis_key}" and value "{marker}|builder"; '
-                'call {pg_execute} with SQL "INSERT INTO {audit_table} (run_key, scenario, cycle, artifact_path, note) '
-                'VALUES (''{run_key}'', ''sub_agent'', {cycle}, ''{artifact_ref}'', ''sub-agent-ok:{marker}'')". '
+                "call {pg_execute} with SQL \"INSERT INTO {audit_table} (run_key, scenario, cycle, artifact_path, note) "
+                "VALUES ('{run_key}', 'sub_agent', {cycle}, '{artifact_ref}', 'sub-agent-ok:{marker}')\". "
                 'After delegation, verify with {redis_get} and {fs_read}, then return a compact cross-agent summary.'
             ),
         ),
@@ -235,8 +235,8 @@ def build_longrun_cases(base_config: AppConfig) -> list[LongRunCase]:
                 '"{artifact_ref}", title "Multi Agent Graph Cycle {cycle}", headline "Multi Agent Graph Cycle {cycle}", '
                 'prompt "{marker}", sections ["{marker}", "graph-verification"], and footer "{run_key}". '
                 'Reviewer must call {fs_read} with path "{artifact_ref}", then call {pg_execute} with SQL '
-                '"INSERT INTO {audit_table} (run_key, scenario, cycle, artifact_path, note) VALUES '
-                '(''{run_key}'', ''multi_agent_graph'', {cycle}, ''{artifact_ref}'', ''graph-review-ok:{marker}'')". '
+                "\"INSERT INTO {audit_table} (run_key, scenario, cycle, artifact_path, note) VALUES "
+                "('{run_key}', 'multi_agent_graph', {cycle}, '{artifact_ref}', 'graph-review-ok:{marker}')\". "
                 'Every agent response should mention the marker and stop once its own work is complete.'
             ),
         ),

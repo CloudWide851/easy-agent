@@ -42,6 +42,26 @@ class AssistantResponse(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class RuntimeEvent(BaseModel):
+    event_id: str
+    sequence: int
+    run_id: str
+    timestamp: str
+    kind: str
+    scope: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    node_id: str | None = None
+
+
+class GuardrailDecision(BaseModel):
+    outcome: Literal['allow', 'block']
+    guardrail: str
+    reason: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class NodeType(StrEnum):
     AGENT = 'agent'
     TEAM = 'team'

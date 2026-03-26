@@ -22,9 +22,10 @@ from mcp.os.win32.utilities import (
 )
 from mcp.shared.message import SessionMessage
 
-from agent_common.models import ToolSpec
+from agent_common.models import RunContext, ToolSpec
 from agent_config.app import McpServerConfig
 from agent_integrations.sandbox import SandboxManager, SandboxRequest, SandboxTarget
+from agent_integrations.storage import SQLiteRunStore
 
 
 def build_mcp_tool_name(server_name: str, tool_name: str) -> str:
@@ -315,8 +316,9 @@ class HttpSseMcpClient(BaseMcpClient):
 
 
 class McpClientManager:
-    def __init__(self, configs: list[McpServerConfig], sandbox_manager: SandboxManager) -> None:
+    def __init__(self, configs: list[McpServerConfig], sandbox_manager: SandboxManager, store: SQLiteRunStore | None = None) -> None:
         self._sandbox_manager = sandbox_manager
+        self._store = store
         self._clients: dict[str, BaseMcpClient] = {}
         self._started = False
         self._tool_cache: dict[str, list[ToolSpec]] = {}
@@ -353,8 +355,45 @@ class McpClientManager:
             return await self.refresh_tools()
         return self._tool_cache
 
-    async def call_tool(self, server_name: str, tool_name: str, arguments: dict[str, Any]) -> Any:
-        return await self._clients[server_name].call_tool(tool_name, arguments)
+    async def call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: RunContext | None = None,
+    ) -> Any:
+        if context is not None and self._store is not None:
+            self._store.record_event(
+                context.run_id,
+                'mcp_call_started',
+                {'server': server_name, 'tool': tool_name, 'arguments': arguments},
+                scope='mcp',
+                node_id=context.node_id,
+                span_id=f'mcp:{server_name}:{tool_name}',
+            )
+        try:
+            result = await self._clients[server_name].call_tool(tool_name, arguments)
+        except Exception as exc:
+            if context is not None and self._store is not None:
+                self._store.record_event(
+                    context.run_id,
+                    'mcp_call_failed',
+                    {'server': server_name, 'tool': tool_name, 'arguments': arguments, 'error': str(exc)},
+                    scope='mcp',
+                    node_id=context.node_id,
+                    span_id=f'mcp:{server_name}:{tool_name}',
+                )
+            raise
+        if context is not None and self._store is not None:
+            self._store.record_event(
+                context.run_id,
+                'mcp_call_succeeded',
+                {'server': server_name, 'tool': tool_name, 'arguments': arguments, 'result': result},
+                scope='mcp',
+                node_id=context.node_id,
+                span_id=f'mcp:{server_name}:{tool_name}',
+            )
+        return result
 
     async def aclose(self) -> None:
         for client in self._clients.values():

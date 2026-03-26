@@ -1,0 +1,130 @@
+{
+  "dataset": "HuggingFaceH4/tau2-bench-data",
+  "snapshot_note": "Pinned local subset generated on 2026-03-26 from the public mock domain files.",
+  "source": {
+    "repo": "https://github.com/sierra-research/tau2-bench",
+    "dataset_url": "https://huggingface.co/datasets/HuggingFaceH4/tau2-bench-data",
+    "license": "mit",
+    "domain": "mock"
+  },
+  "cases": [
+    {
+      "id": "create_task_1",
+      "description": {
+        "purpose": "Test the create_task functionality",
+        "notes": "Basic task creation test with a simple title"
+      },
+      "user_scenario": {
+        "persona": "Professional and direct communicator who writes in a clear and concise style",
+        "instructions": "You are a team member who needs to create a task for an upcoming meeting. Your goal is to create a task to track this important meeting. Create a new task called 'Important Meeting' for user_1."
+      },
+      "ticket": "User needs to create a task for an upcoming meeting. Create a new task called 'Important Meeting' for user_1.",
+      "evaluation_criteria": {
+        "actions": [
+          {
+            "action_id": "create_1",
+            "name": "create_task",
+            "arguments": {
+              "user_id": "user_1",
+              "title": "Important Meeting"
+            },
+            "info": "Create a new task for the meeting"
+          }
+        ],
+        "communicate_info": [
+          "The agent confirmed the task was created successfully"
+        ]
+      }
+    },
+    {
+      "id": "update_task_1",
+      "description": {
+        "purpose": "Test the update_task_status functionality",
+        "notes": "Basic task status update test"
+      },
+      "user_scenario": {
+        "instructions": "You have completed the task and need to update its status. Your goal is to mark an existing task as completed. Request that task_1 be marked as completed."
+      },
+      "ticket": "User needs to update the status of task_1 to completed.",
+      "evaluation_criteria": {
+        "actions": [
+          {
+            "action_id": "update_1",
+            "name": "update_task_status",
+            "arguments": {
+              "task_id": "task_1",
+              "status": "completed"
+            },
+            "info": "Update the task status to completed"
+          }
+        ],
+        "communicate_info": [
+          "The agent confirmed the task status was updated successfully"
+        ]
+      }
+    },
+    {
+      "id": "update_task_with_message_history",
+      "description": {
+        "purpose": "Test the update_task_status functionality with pre-existing conversation history",
+        "notes": "Tests updating a task status with initial message history showing previous context"
+      },
+      "user_scenario": {
+        "persona": "Professional and direct communicator",
+        "instructions": "Continue the conversation about task management. The previous discussion was about creating a task. Now you want to mark the task as completed."
+      },
+      "initial_state": {
+        "message_history": [
+          {
+            "role": "user",
+            "content": "I need to create a task for the project review meeting.",
+            "turn_idx": 0
+          },
+          {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "name": "create_task",
+                "arguments": {
+                  "user_id": "user_1",
+                  "title": "Project Review",
+                  "description": "Review Q4 project status"
+                }
+              }
+            ],
+            "turn_idx": 0
+          },
+          {
+            "role": "tool",
+            "id": "call_1",
+            "content": "{\"task_id\":\"task_2\",\"title\":\"Project Review\",\"description\":\"Review Q4 project status\",\"status\":\"pending\"}",
+            "turn_idx": 0
+          },
+          {
+            "role": "assistant",
+            "content": "I've created a task titled 'Project Review' for you. The task has been created with ID task_2 and is currently in pending status.",
+            "turn_idx": 0
+          }
+        ]
+      },
+      "evaluation_criteria": {
+        "actions": [
+          {
+            "action_id": "update_1",
+            "name": "update_task_status",
+            "arguments": {
+              "task_id": "task_2",
+              "status": "completed"
+            },
+            "info": "Update the task status to completed"
+          }
+        ],
+        "communicate_info": [
+          "The agent acknowledged the previous context",
+          "The agent confirmed the task status was updated successfully"
+        ]
+      }
+    }
+  ]
+}

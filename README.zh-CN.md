@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-`easy-agent` 是一个白板化、业务无关、可工程化扩展的 Python Agent 开发底座。它聚焦在运行时层，而不是某个具体业务域，因此可以把 teams、sub-agents、skills、MCP servers、plugins、session memory 以及后续协议演进挂载到同一个框架中，而不把仓库绑死在单一场景上。
+`easy-agent` 是一个白板化、业务无关、可工程化扩展的 Python Agent 开发底座。它聚焦在运行时工程层，而不是某个具体业务域，因此可以把 teams、sub-agents、skills、MCP servers、plugins、session memory 以及后续协议演进挂载到同一个框架中，而不把仓库绑定到单一产品场景。
 
 ## 技术栈
 
@@ -30,32 +30,35 @@
       <img alt="Sandbox" src="https://img.shields.io/badge/Sandbox-process%20%7C%20windows__sandbox-374151">
     </td>
     <td valign="top" width="25%">
-      <strong>状态与质量</strong><br>
+      <strong>状态与观测</strong><br>
       <img alt="Storage" src="https://img.shields.io/badge/Storage-SQLite%20%2B%20JSONL-0EA5E9"><br>
-      <img alt="Session Memory" src="https://img.shields.io/badge/Memory-session__messages%20%2B%20shared__state-0284C7"><br>
-      <img alt="Checkpoint" src="https://img.shields.io/badge/Recovery-resumable__checkpoints-16A34A"><br>
-      <img alt="Static checks" src="https://img.shields.io/badge/Checks-Ruff%20%2B%20mypy-111827">
+      <img alt="Guardrails" src="https://img.shields.io/badge/Guardrails-tool__input%20%2B%20final__output-DC2626"><br>
+      <img alt="Streaming" src="https://img.shields.io/badge/Streaming-runtime__events-0284C7"><br>
+      <img alt="Recovery" src="https://img.shields.io/badge/Recovery-session__memory%20%2B%20checkpoints-16A34A">
     </td>
   </tr>
 </table>
 
 ## 项目目标
 
-- 保持框架白板化、透明、易扩展。
-- 把 Agent 工程问题和业务逻辑解耦。
+- 保持 Agent 基础设施白板化、透明、易扩展。
+- 把 Agent 工程问题和业务逻辑彻底解耦。
 - 用一个运行时承接 direct tools、skills、MCP、plugins、teams、session memory 和 graph workflows。
-- 在协议、编排模式、工具边界继续演进时，尽量减少重构成本。
+- 在协议、工具 schema、编排模式继续演进时，尽量减少重构成本。
 
 ## Features
 
-- 显式、白盒的运行时分层，核心由 scheduler、orchestrator、registry、storage 和 protocol adapter 组成。
+- 显式、白盒的运行时分层，核心由 scheduler、orchestrator、registry、storage、guardrails 和 protocol adapter 组成。
 - 面向 `OpenAI`、`Anthropic`、`Gemini` 风格载荷的统一协议适配模型调用。
 - 面向 Tool Calling 2.0 的运行时，支持 direct tools、command skills、Python hook skills、MCP tools 和 plugin mounting。
 - 支持 `single_agent`、`sub_agent`、`multi_agent_graph` 与 `Agent Teams` 协作模式。
+- 在工具执行前和最终输出前增加显式 guardrail hooks。
+- 对工具参数做 schema-aware validation，并在模型输出非法参数时触发 self-repair loop。
 - 支持带显式 `session_id` 的 session-oriented memory，持久化会话消息和 graph shared state。
 - 为长流程 graph workflow 与顶层 team workflow 提供 resumable checkpoints。
-- 对 command skills 与 `stdio` MCP 提供沙盒隔离，并支持 Windows 回退处理。
-- 使用 SQLite + JSONL 持久化 trace、节点状态、运行事件、会话状态和恢复点。
+- 提供覆盖 run、agent、team、tool、guardrail、MCP 边界的 enriched tracing 与 event streaming。
+- 对 command skills 与 `stdio` MCP 提供沙盒隔离，并支持 Windows fallback 处理。
+- 内置 BFCL 子集与 tau2 mock 子集的 public evaluation harness。
 
 ## 当前架构
 
@@ -67,6 +70,7 @@ flowchart LR
     CLI --> Runtime[EasyAgentRuntime]
     Runtime --> Scheduler[GraphScheduler]
     Scheduler --> Orchestrator[AgentOrchestrator]
+    Scheduler --> Guardrails[GuardrailEngine]
     Orchestrator --> Registry[ToolRegistry]
     Orchestrator --> Model[HttpModelClient]
     Model --> Adapter[ProtocolAdapter]
@@ -75,10 +79,12 @@ flowchart LR
     Plugins --> Registry
     Runtime --> MCP[McpClientManager]
     MCP --> Stdio[stdio transport]
-    MCP --> Remote[HTTP/SSE transport]
+    MCP --> Remote[HTTP_SSE transport]
     Registry --> Skills[Skills and Local Tools]
-    Scheduler --> Store[SQLiteRunStore and JSONL traces]
+    Scheduler --> Store[SQLiteRunStore]
     Orchestrator --> Store
+    Runtime --> Stream[Event Stream]
+    Stream --> CLI
     Sandbox[SandboxManager] -. isolates .-> Skills
     Sandbox -. isolates .-> Stdio
 ```
@@ -89,20 +95,26 @@ flowchart LR
 sequenceDiagram
     participant CLI as CLI
     participant Scheduler as GraphScheduler
+    participant Guard as GuardrailEngine
     participant Orchestrator as AgentOrchestrator
     participant Model as HttpModelClient
     participant Provider as Provider API
     participant Tool as Tool or Skill or MCP
+    participant Store as SQLiteRunStore
     CLI->>Scheduler: run(input, session_id)
     Scheduler->>Orchestrator: dispatch entrypoint
     Orchestrator->>Model: complete(messages, tools)
     Model->>Provider: HTTP request
     Provider-->>Model: assistant text and tool calls
     Model-->>Orchestrator: normalized response
+    Orchestrator->>Guard: validate tool input
+    Guard-->>Orchestrator: allow or block
     Orchestrator->>Tool: invoke tool call
     Tool-->>Orchestrator: tool result
-    Orchestrator->>Model: continue with tool output
-    Orchestrator-->>Scheduler: final result
+    Orchestrator->>Store: record trace and events
+    Scheduler->>Guard: validate final output
+    Guard-->>Scheduler: allow or block
+    Scheduler->>Store: persist run, checkpoint, session state
     Scheduler-->>CLI: result or resumable failure state
 ```
 
@@ -111,8 +123,9 @@ sequenceDiagram
 - 模型调用统一经过 `HttpModelClient`，再由协议适配层转换为 `OpenAI`、`Anthropic` 或 `Gemini` 风格的请求载荷。
 - Skills 通过 Python hook 或本地命令包装后注册为运行时工具。
 - 当前代码中 MCP 远程通信实现是 `stdio` 和 `HTTP/SSE`。
-- 运行轨迹、session messages、shared session state 与 checkpoints 会落到 SQLite 与 JSONL trace 文件。
-- 命令型 skill 和 `stdio` MCP 可以被沙盒隔离层包裹。
+- Guardrails 会在工具执行前和最终输出前运行。
+- 运行轨迹、session messages、session state、checkpoints 与事件 envelope 会落到 SQLite 与 JSONL traces。
+- CLI 的流式输出直接复用运行时事件通道，可观测 agent、team、tool、guardrail 与 MCP 状态切换。
 
 ## 状态、记忆与恢复
 
@@ -130,21 +143,23 @@ src/
   agent_common/        shared models and tool abstractions
   agent_config/        typed config models and validation
   agent_graph/         orchestration, graph scheduling, team runtime
-  agent_integrations/  skills, MCP, plugins, sandbox, storage
+  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails
   agent_protocols/     protocol adapters and model client
-  agent_runtime/       runtime assembly, benchmarks, long-run flows
+  agent_runtime/       runtime assembly, benchmarks, long-run flows, public eval
 skills/
-  examples/            local demo skills
-  real/                real validation skills
+  examples/            本地演示 skills
+  real/                真实验证 skills
 configs/
-  longrun.example.yml  real MCP + skill validation
-  teams.example.yml    Agent Teams examples
+  longrun.example.yml  真实 MCP + skill 验证
+  teams.example.yml    Agent Teams 示例
+public_evals/
+  fixtures/            vendored BFCL 与 tau2 公共子集
 scripts/
-  benchmark_modes.py   live benchmark for six execution modes
+  benchmark_modes.py   六种执行模式的 live benchmark
   windows/             easy-agent.ps1 / easy-agent.bat
 tests/
-  unit/                fast isolated unit tests
-  integration/         live-service integration tests
+  unit/                快速隔离单元测试
+  integration/         真实服务集成测试
 ```
 
 ## 协作模式
@@ -211,6 +226,8 @@ uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent run "summarize the repository" --session-id demo-session -c easy-agent.yml
 uv run easy-agent resume <run_id> -c configs/teams.example.yml
 uv run python scripts/benchmark_modes.py --config easy-agent.yml --repeat 1
+uv run easy-agent integration public-eval -c easy-agent.yml --output .easy-agent/public-eval-report.json
+uv run easy-agent integration longrun -c configs/longrun.example.yml --cycles 1 --output-root .easy-agent/longrun
 ```
 
 ### Windows 快捷入口
@@ -222,27 +239,41 @@ cmd /c scripts/windows/easy-agent.bat --help
 
 ## 真实使用效果
 
-当前真实基准来自 `.easy-agent/benchmark-report.json`，底座模型是通过 OpenAI-compatible 路径访问的 DeepSeek。
+### Live Benchmark 快照
+
+最新本地 benchmark 快照来自 2026-03-26 的 `.easy-agent/benchmark-report.json`，底座模型是通过 OpenAI-compatible 路径访问的 DeepSeek。
 
 | 模式 | 成功率 | 平均耗时 | 平均工具调用 | 平均子 Agent 调用 |
 | --- | --- | ---: | ---: | ---: |
-| `single_agent` | 1/1 | 6.1493 | 1 | 0 |
-| `sub_agent` | 1/1 | 20.6691 | 1 | 1 |
-| `multi_agent_graph` | 1/1 | 14.4803 | 2 | 0 |
-| `team_round_robin` | 1/1 | 11.2187 | 1 | 0 |
-| `team_selector` | 1/1 | 15.1416 | 1 | 0 |
-| `team_swarm` | 1/1 | 11.0792 | 2 | 0 |
+| `single_agent` | 1/1 | 4.9189 | 1 | 0 |
+| `sub_agent` | 1/1 | 15.9533 | 1 | 1 |
+| `multi_agent_graph` | 1/1 | 13.4902 | 2 | 0 |
+| `team_round_robin` | 1/1 | 7.7634 | 1 | 0 |
+| `team_selector` | 1/1 | 26.4179 | 1 | 0 |
+| `team_swarm` | 1/1 | 10.5093 | 2 | 0 |
 
-## 后续仍值得继续补强的工程点
+### Public Eval 快照
 
-当前实现已经包含 durable session memory 和 resumable checkpoints，下一步更值得补强的是：
+最新本地 public eval 快照来自 2026-03-26 的 `.easy-agent/public-eval-report.json`。
 
-- 在工具调用前和最终输出前增加显式 guardrail hooks。
-- 增强 tracing 与 event streaming，覆盖 agent、team、tool、MCP 边界。
-- 继续保持 team orchestration 的显式建模，而不是把多种模式折叠成一个模糊循环。
-- 在未来版本中升级远程 MCP transport，但当前文档仍然只描述仓库已经实现的通信方式。
+| 套件 | 成功数 | 通过率 | Tool Match | Arg Match | 平均耗时 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `bfcl_simple` | 6/8 | 0.7500 | 0.7500 | 0.7500 | 10.6425 |
+| `bfcl_multiple` | 2/8 | 0.2500 | 0.2500 | 0.2500 | 4.5149 |
+| `bfcl_parallel_multiple` | 0/4 | 0.0000 | 0.0000 | 0.0000 | 13.7242 |
+| `bfcl_irrelevance` | 0/4 | 0.0000 | 0.0000 | 0.0000 | 2.3965 |
+| `tau2_mock` | 3/3 | 1.0000 | 1.0000 | 1.0000 | 5.9955 |
+| `overall_bfcl` | 8/24 | 0.3333 | 0.3333 | 0.3333 | - |
 
-参考资料：
+这次 DeepSeek 基线里观察到的情况：
+
+- tau2 mock 子集在补上 session-history prompt fallback 后已经稳定全通过。
+- BFCL 子集在补上 tool schema 规范化和函数名清洗后，已经从“请求级失败”变成了可解释的真实结果。
+- 剩余 BFCL 失败主要集中在 multi-tool 和 irrelevance 场景。以 2026-03-26 这次运行为例，其中一部分 case 仍然会触发 `https://api.deepseek.com/chat/completions` 的 provider-side `400 Bad Request`，因此当前 BFCL 更适合作为兼容性基线，而不是最终排行榜分数。
+
+## 设计参考
+
+当前运行时借鉴了多个生产级 Agent 系统中的显式设计思路，但仍然保持本仓库自己的白盒实现。
 
 - OpenAI Agents SDK Sessions: <https://openai.github.io/openai-agents-python/sessions/>
 - OpenAI Agents SDK Handoffs: <https://openai.github.io/openai-agents-python/handoffs/>
@@ -262,13 +293,16 @@ uv run ruff check src tests scripts
 uv run mypy src tests scripts
 uv run python -m pytest tests/unit -q
 uv run python -m pytest tests/integration -m real -q
+uv run easy-agent --help
+uv run easy-agent doctor -c easy-agent.yml
+uv run easy-agent teams list -c configs/teams.example.yml
 ```
 
 如果要执行完整 live suite，本地 `.env.local` 或环境变量中还需要提供 PostgreSQL 与 Redis 的真实凭据。
 
 ## 致谢
 
-- <a href="https://linux.do/"><img alt="Linux.do" src="https://linux.do/logo-128.svg" width="20"></a> [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
+- [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
 - [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) 为本仓库真实验证流程提供了模型端点基线。
 
 ## License

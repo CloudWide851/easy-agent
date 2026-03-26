@@ -6,6 +6,7 @@ from agent_common.models import AssistantResponse, ChatMessage, Protocol, ToolCa
 from agent_common.tools import ToolRegistry
 from agent_config.app import AppConfig, ModelConfig
 from agent_graph import AgentOrchestrator, GraphScheduler
+from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.storage import SQLiteRunStore
 
 
@@ -112,9 +113,9 @@ def build_scheduler(
     )
     store = SQLiteRunStore(tmp_path, 'state.db')
     client = model_client or TeamModelClient()
-    orchestrator = AgentOrchestrator(config, client, registry, store)
+    orchestrator = AgentOrchestrator(config, client, registry, store, GuardrailEngine())
     orchestrator.register_subagent_tools()
-    return GraphScheduler(config, registry, orchestrator, store, DummyMcpManager())
+    return GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
 
 
 @pytest.mark.asyncio
