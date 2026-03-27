@@ -114,3 +114,34 @@ def test_sqlite_run_store_tracks_workbench_and_federated_tasks(tmp_path: Path) -
     assert federated['status'] == 'succeeded'
     assert federated['response_payload'] == {'result': 'done'}
     assert federated['local_run_id'] == 'run-4'
+
+
+def test_sqlite_run_store_tracks_federated_events_and_subscriptions(tmp_path: Path) -> None:
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    store.create_federated_task('task-2', 'agent_export', 'agent', 'queued', {'input': 'hello'})
+    event = store.create_federated_task_event('task-2', 'task_queued', {'task': {'task_id': 'task-2', 'status': 'queued'}})
+    store.create_federated_subscription(
+        subscription_id='sub-1',
+        task_id='task-2',
+        mode='webhook',
+        callback_url='http://127.0.0.1:9999/callback',
+        status='active',
+        lease_expires_at='2099-01-01T00:00:00+00:00',
+        from_sequence=event['sequence'],
+    )
+    store.update_federated_subscription(
+        'sub-1',
+        last_delivered_sequence=event['sequence'],
+        delivery_attempts=1,
+        last_error='temporary failure',
+        next_retry_at='2099-01-01T00:01:00+00:00',
+    )
+
+    events = store.list_federated_task_events('task-2')
+    subscription = store.load_federated_subscription('sub-1')
+
+    assert events[0]['event_kind'] == 'task_queued'
+    assert events[0]['payload']['task']['status'] == 'queued'
+    assert subscription['last_delivered_sequence'] == event['sequence']
+    assert subscription['delivery_attempts'] == 1
+    assert subscription['last_error'] == 'temporary failure'

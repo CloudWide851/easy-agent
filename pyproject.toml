@@ -1,6 +1,6 @@
 [project]
 name = "easy-agent"
-version = "0.2.0"
+version = "0.3.1"
 description = "A white-box, extensible agent engineering foundation for Python."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -72,3 +72,4 @@ files = ["src", "tests", "scripts"]
 [[tool.mypy.overrides]]
 module = ["yaml"]
 ignore_missing_imports = true
+

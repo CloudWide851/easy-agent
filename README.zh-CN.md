@@ -6,6 +6,8 @@
 
 它不是某个具体业务产品，而是产品下面的那层 Agent 基础设施。这个仓库关注的是如何稳定地运行单 Agent、sub-agent、多 Agent graph、teams、tools、skills、MCP、plugins，以及长时间运行的 harness，而不是把业务逻辑直接写死在框架里。
 
+当前发布线：`0.3.x`。这份快照对应当前补丁版本 `0.3.1`。
+
 ## 这个项目到底是什么
 
 很多 Agent 项目会直接从“调用模型”跳到“交付业务功能”。中间那层运行时工程往往会越来越乱：工具调用难以约束，长任务全靠超长 prompt，状态难恢复，协议变化还会渗透进业务代码。
@@ -97,13 +99,14 @@
 
 ## A2A Remote Agent Federation
 
-这一轮把 A2A 风格的 remote agent federation 做成了可实际使用的运行时能力。
+`easy-agent` 现在提供的是一个更耐用的 A2A 风格联邦层，而不只是轮询桥接。
 
 - `federation.server` 可以把本地 agent、team 或 harness 作为 exported target 对外发布。
-- `federation.remotes` 可以让运行时通过带鉴权感知的 HTTP client 探测远端 agent card 并发起远程任务。
-- 当前接口面已经覆盖 `agent-card`、`extended-agent-card`、`send`、`send-stream`、`get-task`、`list-tasks`、`cancel`、`subscribe` 这类核心流转。
-- 联邦任务状态会持久化到 SQLite，HTTP 请求结束后仍可继续检查远程执行状态。
-- CLI 新增了 `easy-agent federation list`、`easy-agent federation inspect`、`easy-agent federation serve`。
+- `federation.remotes` 可以探测远端 agent card，并通过 `push_preference = auto|sse|poll` 优先使用 SSE push，必要时回退到轮询。
+- 联邦投递现在已经包含持久化 task event log、SSE 事件流、webhook push delivery、带退避的重试、租约续期、取消，以及更完整的 `SubscribeToTask` 生命周期跟踪。
+- `agent-card` 与 `extended-agent-card` 现在会暴露 protocol version、card schema version、modalities、declared capabilities、auth hints、retry policy、subscribe policy 和 compatibility metadata。
+- 联邦任务状态与订阅状态都会持久化到 SQLite，初始请求结束后依然可以继续检查远程执行和 push 交付状态。
+- CLI 现在提供 `easy-agent federation list|inspect|tasks|events|subscriptions|renew-subscription|cancel-subscription|serve`。
 
 配置形态示例：
 
@@ -115,18 +118,24 @@ federation:
     port: 8787
     base_path: /a2a
     public_url: https://agent.example.com/a2a
+    protocol_version: "0.3"
+    card_schema_version: "1.0"
+    retry_max_attempts: 4
+    retry_initial_backoff_seconds: 0.5
   exports:
     - name: repo_delivery
       target_type: harness
       target: delivery_loop
+      modalities: [text]
+      capabilities: [streaming, interrupts]
   remotes:
     - name: partner
       base_url: https://partner.example.com/a2a
+      push_preference: auto
       auth:
         type: bearer_env
         token_env: PARTNER_AGENT_TOKEN
 ```
-
 ## Executor / Workbench Isolation
 
 运行时现在具备专门的 executor / workbench 隔离层，用来承接长生命周期代码执行、工具运行和环境任务。
@@ -321,18 +330,13 @@ runtime.load('third_party_plugin')
 当前仓库在这台机器上的主要验证路径是：
 
 ```powershell
-uv run ruff check src tests scripts
-uv run mypy src tests scripts
-uv run python -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-federation-workbench
-uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-federation-workbench
-uv run easy-agent --help
-uv run easy-agent doctor -c easy-agent.yml
-uv run easy-agent federation list -c easy-agent.yml
-uv run easy-agent workbench list -c easy-agent.yml
-uv run easy-agent harness list -c configs/harness.example.yml
-uv run easy-agent teams list -c configs/teams.example.yml
+.\.venv\Scripts\ruff.exe check src tests scripts
+.\.venv\Scripts\mypy.exe src tests scripts
+.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>
+.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-<timestamp>
 ```
 
+Python CLI smoke 也会通过 `CliRunner` 直接调用 `agent_cli.app:app` 验证 `--help`、`doctor`、`teams list`、`harness list`、`federation list`。
 ## 真实网络测试集结果
 
 快照日期：2026 年 3 月 27 日。
@@ -343,10 +347,10 @@ uv run easy-agent teams list -c configs/teams.example.yml
 
 | 套件 | 命令 | 结果 |
 | --- | --- | --- |
-| 静态检查 | `uv run python -m ruff check src tests scripts` | 通过 |
-| 类型检查 | `uv run python -m mypy src tests scripts` | 通过 |
-| 单元测试 | `uv run python -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-federation-workbench` | `63 passed`，耗时 `11.62s` |
-| 真实集成测试 | `uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-federation-workbench` | `4 passed`，耗时 `596.71s` |
+| 静态检查 | `.\.venv\Scripts\ruff.exe check src tests scripts` | 通过 |
+| 类型检查 | `.\.venv\Scripts\mypy.exe src tests scripts` | 通过 |
+| 单元测试 | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `65 passed`，耗时 `17.71s` |
+| 真实集成测试 | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-<timestamp>` | `4 passed`，耗时 `573.75s` |
 | Python CLI smoke | 通过 `CliRunner` 调用 `agent_cli.app:app` 执行 `--help`、`doctor`、`teams list`、`harness list`、`federation list` | 通过 |
 
 ### Live Benchmark 快照
@@ -360,33 +364,34 @@ uv run easy-agent teams list -c configs/teams.example.yml
 | `team_selector` | yes | `26.4179` |
 | `team_swarm` | yes | `10.5093` |
 
-来源：2026 年 3 月 27 日真实集成验证过程中重新生成的 `.easy-agent/benchmark-report.json`。
+来源：本次 2026-03-27 验证过程中复用的 `.easy-agent/benchmark-report.json`。
 
 ### Public Eval 快照
 
 | 套件 | 通过率 | 说明 |
 | --- | --- | --- |
-| `bfcl_simple` | `0.75` | 8 个用例通过 6 个 |
-| `bfcl_multiple` | `0.25` | 8 个用例通过 2 个 |
-| `bfcl_parallel_multiple` | `0.00` | 4 个用例通过 0 个 |
-| `bfcl_irrelevance` | `0.00` | 4 个用例通过 0 个 |
-| `tau2_mock` | `1.00` | 3 个用例通过 3 个 |
-| `overall.bfcl_pass_rate` | `0.3333` | 当前 DeepSeek 兼容性基线 |
+| `bfcl_simple` | `0.8750` | 8 个用例通过 7 个 |
+| `bfcl_multiple` | `0.2500` | 8 个用例通过 2 个 |
+| `bfcl_parallel_multiple` | `0.5000` | 4 个用例通过 2 个 |
+| `bfcl_irrelevance` | `0.0000` | 4 个用例通过 0 个 |
+| `tau2_mock` | `0.3333` | 3 个用例通过 1 个 |
+| `overall.bfcl_pass_rate` | `0.4583` | 相比上一轮本地 `0.3333` 快照已有提升 |
 
-来源：2026 年 3 月 27 日真实集成验证过程中重新生成的 `.easy-agent/public-eval-report.json`。
+来源：本次 2026-03-27 live verification 重新生成的 `.easy-agent/public-eval-report.json`。
 
-当前备注：真实套件执行结束后仍会出现 Windows `asyncio` 子进程清理 warning，但本轮真实测试和报告生成都已成功完成。
+当前备注：
 
+- 真实套件执行结束后仍会出现 Windows `asyncio` 子进程清理 warning，但本轮真实测试和报告生成都已成功完成。
+- DeepSeek 的 OpenAI-compatible endpoint 在 BFCL irrelevance 和 tau2 历史相关用例上仍有明显波动，所以这里的 public-eval 更适合作为 live compatibility snapshot，而不是稳定 leaderboard 声明。
 ## 下一步补强
 
-这一板块基于当前 A2A 与 MCP 公共协议面整理下一阶段的补强重点。
+这一板块基于当前公开的 A2A 与 MCP 协议面，而不是只写内部待办。
 
-- 把联邦能力从轮询加基础 callback 继续补强到更稳定的 push delivery、重试策略和更完整的 `SubscribeToTask` 生命周期管理。
-- 补强 agent-card / extended-agent-card 的模态、能力、鉴权提示和版本兼容元数据协商。
-- 把远程联邦鉴权从环境变量头部升级到更完整的 OAuth/OIDC，以及可选 mTLS 企业部署形态。
-- 在 workbench 接口后面补上 container 或 microVM 执行后端，提升隔离强度与长生命周期环境复用能力。
-- 扩展真实网络评测矩阵，覆盖跨进程联邦、长生命周期 workbench 复用，以及 replay / resume 失败注入验证。
-
+- 让联邦 discovery 和生命周期继续向 A2A 官方形态靠拢，包括 `/.well-known/agent-card.json`、更完整的 `pushNotification/set|get`、可恢复订阅，以及更适合断线重连的 `sendSubscribe` / resubscribe 行为。
+- 继续补强 card negotiation，覆盖更丰富的 transport 与 security metadata，例如 `preferredTransport`、OpenAPI 风格 auth scheme hints、artifact/part 级多模态声明，以及更清晰的 server-to-client compatibility negotiation。
+- 扩展 MCP client feature negotiation，补上 `roots/list_changed`、更细的 `elicitation` 结果处理，以及更严格的人工确认 `sampling` 策略，让敏感远程提示仍然保持 approval-aware。
+- 在现有 workbench 接口后面补上 container 或 microVM executor backend，继续提升隔离强度和长生命周期环境复用能力。
+- 继续扩展真实网络评测矩阵，覆盖跨进程联邦、断线重连/重试混沌场景、长生命周期 workbench 复用，以及 replay / resume 失败注入验证。
 ## 设计参考
 
 - Anthropic, [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
@@ -411,6 +416,11 @@ uv run easy-agent teams list -c configs/teams.example.yml
 ## License
 
 [Apache-2.0](https://github.com/CloudWide851/easy-agent?tab=Apache-2.0-1-ov-file#)
+
+
+
+
+
 
 
 

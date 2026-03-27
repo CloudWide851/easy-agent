@@ -381,6 +381,53 @@ class EasyAgentRuntime:
             await self.start()
         return await self.federation_manager.inspect_remote(remote_name)
 
+    async def list_remote_tasks(self, remote_name: str) -> list[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.list_tasks(remote_name)
+
+    async def list_remote_task_events(
+        self,
+        remote_name: str,
+        task_id: str,
+        after_sequence: int = 0,
+    ) -> list[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.list_task_events(remote_name, task_id, after_sequence)
+
+    async def list_remote_subscriptions(self, remote_name: str, task_id: str) -> list[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.list_subscriptions(remote_name, task_id)
+
+    async def renew_remote_subscription(
+        self,
+        remote_name: str,
+        task_id: str,
+        subscription_id: str,
+        *,
+        lease_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.renew_subscription(
+            remote_name,
+            task_id,
+            subscription_id,
+            lease_seconds=lease_seconds,
+        )
+
+    async def cancel_remote_subscription(
+        self,
+        remote_name: str,
+        task_id: str,
+        subscription_id: str,
+    ) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.cancel_subscription(remote_name, task_id, subscription_id)
+
     def serve_federation(self) -> dict[str, Any]:
         return self._federation_server.start()
 
@@ -500,3 +547,4 @@ def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
 
 def build_runtime(config_path: str | Path) -> EasyAgentRuntime:
     return build_runtime_from_config(load_config(config_path))
+

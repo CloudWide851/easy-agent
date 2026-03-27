@@ -33,6 +33,7 @@ graph:
       description: Decide whether the completion contract has been satisfied.
       system_prompt: |
         You are the harness evaluator. Follow the requested decision format exactly and be strict about the contract.
+        Mark COMPLETE as soon as the worker has already produced the requested deliverable with no real blocker; do not ask for extra cycles just to restate it.
       tools: []
       sub_agents: []
       max_iterations: 4
@@ -45,7 +46,7 @@ harnesses:
     evaluator_agent: evaluator
     completion_contract: Complete the requested task with a clear final status and no unresolved blockers.
     artifacts_dir: .easy-agent/harness-example
-    max_cycles: 4
+    max_cycles: 6
     max_replans: 1
 
 plugins: []
@@ -85,3 +86,4 @@ security:
       - DEEPSEEK_API_KEY
     working_root: .
     windows_sandbox_fallback: process
+

@@ -7,31 +7,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-27
+
 ### Added
 
 - Added human-loop controls across the runtime with approval gates for sensitive tools, swarm handoffs, harness resume, MCP sampling, and MCP elicitation.
 - Added interrupt requests, waiting/interrupted run states, durable approval storage, and CLI approval management through `easy-agent approvals *`.
 - Added checkpoint listing, historical replay, and branchable `resume --fork` support for graph and team workflows, plus lineage tracking in SQLite traces.
 - Added richer MCP support for explicit roots, backward-compatible filesystem-root inference for stdio servers, `streamable_http`, auth-aware remote transports, OAuth state persistence, and `easy-agent mcp roots/auth *` commands.
-- Added unit coverage for human approvals, interrupts, replay/fork lineage, MCP root inference, and the new storage lifecycle paths.
 - Added A2A-style remote agent federation with exported local targets, remote inspection, durable federated task tracking, and CLI federation commands.
 - Added executor/workbench isolation with per-run isolated roots, execution manifests, TTL cleanup, durable execution logs, and workbench CLI management.
+- Added durable push-oriented federation lifecycle support with task event logs, SSE task-event streaming, webhook retry with backoff, subscription leasing, renewal, and cancellation.
+- Added federation metadata negotiation through richer `agent-card` and `extended-agent-card` fields for protocol version, schema version, modalities, capabilities, auth hints, and compatibility metadata.
 
 ### Changed
 
-- Updated the harness runtime so approval-gated resume flows enter `waiting_approval` cleanly instead of failing outside the run-state wrapper.
-- Updated `configs/longrun.example.yml` to declare filesystem roots explicitly while keeping dynamic long-run output roots compatible with the new MCP root model.
-- Updated both READMEs to document the shipped human-loop, replay, branching resume, and richer MCP capabilities instead of leaving them in the roadmap.
-- Updated the scheduler, harness runtime, skills, MCP integration, and CLI surfaces so workbench manifests and federation flows participate in resume, fork, and operator inspection paths.
-- Updated the English and Chinese READMEs with dedicated `A2A Remote Agent Federation`, `Executor / Workbench Isolation`, `Real Network Test Set Results`, and `Next Reinforcement` sections.
+- Optimized tool-calling behavior with duplicate successful tool-call suppression and stronger BFCL prompt guidance in the public-eval harness.
+- Stabilized the harness worker/evaluator prompts and the public `configs/harness.example.yml` so the real harness integration converges more reliably within bounded cycles.
+- Updated runtime and CLI federation surfaces so operators can inspect remote tasks, task events, and subscription state, and renew or cancel remote subscriptions.
+- Updated both READMEs to stay synchronized, reflect the `0.3.x` release line, publish the March 27, 2026 real-network verification snapshot, and expand `Next Reinforcement` using current public A2A and MCP protocol references.
 
 ### Verified
 
-- `python -m pytest tests/unit -q` with `54 passed`
-- `python -m pytest tests/integration -m real -q` with `4 passed`
-- `python -m pytest tests/unit -q --basetemp=%TEMP%\\easy-agent-pytest\\unit-federation-workbench` with `63 passed`
-- `python -m pytest tests/integration -m real -q --basetemp=%TEMP%\\easy-agent-pytest\\integration-real-federation-workbench` with `4 passed`
+- `.\.venv\Scripts\ruff.exe check src tests scripts`
+- `.\.venv\Scripts\mypy.exe src tests scripts`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `65 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-<timestamp>` with `4 passed`
 - Python CLI smoke via `CliRunner` for `--help`, `doctor`, `teams list`, `harness list`, and `federation list`
+- Fresh live public-eval snapshot written to `.easy-agent/public-eval-report.json` with `overall.bfcl_pass_rate = 0.4583`
 
 ## [0.3.0] - 2026-03-26
 
@@ -91,5 +94,3 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `easy-agent teams list -c configs/teams.example.yml`
 - `easy-agent doctor -c configs/teams.example.yml`
 - Windows launcher smoke via `easy-agent.ps1` and `easy-agent.bat`
-
-

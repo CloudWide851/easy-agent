@@ -13,6 +13,7 @@ from rich.table import Table
 
 from agent_cli.shared import build_cli_inline_resolver, with_runtime
 from agent_common.models import HumanLoopMode, RunContext
+from agent_common.version import runtime_version
 from agent_protocols import resolve_protocol
 from agent_runtime import EasyAgentRuntime, build_runtime
 
@@ -51,6 +52,7 @@ def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
         ('Provider', runtime.config.model.provider),
         ('Model', runtime.config.model.model),
         ('Protocol', adapter.protocol.value),
+        ('Runtime Version', runtime_version()),
         ('Entrypoint', runtime.config.graph.entrypoint),
         ('Entrypoint Type', _entrypoint_type(runtime)),
         ('Skills', str(len(runtime.skills))),
@@ -61,6 +63,7 @@ def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
         ('Federation Remotes', str(len(federation.remotes))),
         ('Federation Exports', str(len(federation.exports))),
         ('Federation Server', f"{federation.server.host}:{federation.server.port}{federation.server.base_path}"),
+        ('Federation Push', 'polling, webhook_subscribe, sse_events'),
         ('Human Loop Mode', human_loop.mode.value),
         ('Sensitive Tools', ', '.join(human_loop.sensitive_tools) if human_loop.sensitive_tools else 'none'),
         ('Tool Guardrails', ', '.join(runtime.config.guardrails.tool_input_hooks)),
@@ -228,3 +231,4 @@ def register(app: typer.Typer) -> None:
             console.print_json(json.dumps(payload, ensure_ascii=False))
         finally:
             asyncio.run(runtime.aclose())
+

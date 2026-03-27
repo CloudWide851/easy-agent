@@ -173,6 +173,30 @@ class SQLiteRunStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS federated_task_events (
+                    event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    event_kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS federated_subscriptions (
+                    subscription_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    callback_url TEXT,
+                    status TEXT NOT NULL,
+                    lease_expires_at TEXT,
+                    from_sequence INTEGER NOT NULL DEFAULT 0,
+                    last_delivered_sequence INTEGER NOT NULL DEFAULT 0,
+                    delivery_attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    next_retry_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_runs_column(connection, 'session_id', 'TEXT')
@@ -882,6 +906,135 @@ class SQLiteRunStore:
             )
             connection.commit()
 
+    def create_federated_task_event(self, task_id: str, event_kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        created_at = self._now()
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                'INSERT INTO federated_task_events(task_id, event_kind, payload, created_at) VALUES (?, ?, ?, ?)',
+                (task_id, event_kind, self._encode(payload), created_at),
+            )
+            connection.commit()
+        row_id = cursor.lastrowid
+        if row_id is None:
+            raise RuntimeError('failed to persist federated task event')
+        return {
+            'sequence': int(row_id),
+            'task_id': task_id,
+            'event_kind': event_kind,
+            'payload': payload,
+            'created_at': created_at,
+        }
+
+    def list_federated_task_events(self, task_id: str, after_sequence: int = 0) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                (
+                    'SELECT event_sequence, event_kind, payload, created_at '
+                    'FROM federated_task_events WHERE task_id = ? AND event_sequence > ? ORDER BY event_sequence ASC'
+                ),
+                (task_id, after_sequence),
+            ).fetchall()
+        return [
+            {
+                'sequence': int(row[0]),
+                'task_id': task_id,
+                'event_kind': row[1],
+                'payload': cast(dict[str, Any], self._decode(row[2]) or {}),
+                'created_at': row[3],
+            }
+            for row in rows
+        ]
+
+    def create_federated_subscription(
+        self,
+        *,
+        subscription_id: str,
+        task_id: str,
+        mode: str,
+        callback_url: str | None,
+        status: str,
+        lease_expires_at: str | None,
+        from_sequence: int,
+    ) -> None:
+        now = self._now()
+        with closing(self._connect()) as connection:
+            connection.execute(
+                (
+                    'INSERT INTO federated_subscriptions('
+                    'subscription_id, task_id, mode, callback_url, status, lease_expires_at, from_sequence, '
+                    'last_delivered_sequence, delivery_attempts, last_error, next_retry_at, created_at, updated_at'
+                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                ),
+                (subscription_id, task_id, mode, callback_url, status, lease_expires_at, from_sequence, 0, 0, None, None, now, now),
+            )
+            connection.commit()
+
+    def load_federated_subscription(self, subscription_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                (
+                    'SELECT task_id, mode, callback_url, status, lease_expires_at, from_sequence, '
+                    'last_delivered_sequence, delivery_attempts, last_error, next_retry_at, created_at, updated_at '
+                    'FROM federated_subscriptions WHERE subscription_id = ?'
+                ),
+                (subscription_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f'Federated subscription not found: {subscription_id}')
+        return {
+            'subscription_id': subscription_id,
+            'task_id': row[0],
+            'mode': row[1],
+            'callback_url': row[2],
+            'status': row[3],
+            'lease_expires_at': row[4],
+            'from_sequence': int(row[5]),
+            'last_delivered_sequence': int(row[6]),
+            'delivery_attempts': int(row[7]),
+            'last_error': row[8],
+            'next_retry_at': row[9],
+            'created_at': row[10],
+            'updated_at': row[11],
+        }
+
+    def list_federated_subscriptions(self, task_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                'SELECT subscription_id FROM federated_subscriptions WHERE task_id = ? ORDER BY created_at ASC',
+                (task_id,),
+            ).fetchall()
+        return [self.load_federated_subscription(str(row[0])) for row in rows]
+
+    def update_federated_subscription(self, subscription_id: str, **changes: Any) -> None:
+        mapping = {
+            'status': 'status',
+            'lease_expires_at': 'lease_expires_at',
+            'last_delivered_sequence': 'last_delivered_sequence',
+            'delivery_attempts': 'delivery_attempts',
+            'last_error': 'last_error',
+            'next_retry_at': 'next_retry_at',
+            'updated_at': 'updated_at',
+        }
+        assignments: list[str] = []
+        params: list[Any] = []
+        for key, column in mapping.items():
+            if key not in changes:
+                continue
+            assignments.append(f'{column} = ?')
+            params.append(changes[key])
+        if 'updated_at' not in changes:
+            assignments.append('updated_at = ?')
+            params.append(self._now())
+        if not assignments:
+            return
+        params.append(subscription_id)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                f'UPDATE federated_subscriptions SET {", ".join(assignments)} WHERE subscription_id = ?',
+                params,
+            )
+            connection.commit()
+
     def load_trace(self, run_id: str) -> dict[str, Any]:
         run_row = self.load_run(run_id)
         with closing(self._connect()) as connection:
@@ -1012,6 +1165,8 @@ class SQLiteRunStore:
             'UPDATE sessions SET graph_name = ?, updated_at = ? WHERE session_id = ?',
             (graph_name, updated_at, session_id),
         )
+
+
 
 
 

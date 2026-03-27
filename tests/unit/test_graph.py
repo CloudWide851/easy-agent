@@ -81,6 +81,25 @@ class RepairModelClient:
         return None
 
 
+class DuplicateToolModelClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages: list[ChatMessage], tools: list[ToolSpec]) -> AssistantResponse:
+        del messages, tools
+        self.calls += 1
+        if self.calls in {1, 2}:
+            return AssistantResponse(
+                text='',
+                tool_calls=[ToolCall(id=f'dup-{self.calls}', name='python_echo', arguments={'prompt': 'repeat'})],
+                protocol=Protocol.OPENAI,
+            )
+        return AssistantResponse(text='deduped', protocol=Protocol.OPENAI)
+
+    async def aclose(self) -> None:
+        return None
+
+
 class DummyMcpManager:
     async def call_tool(
         self,
@@ -541,5 +560,6 @@ async def test_graph_scheduler_runs_federated_node(tmp_path: Path) -> None:
 
     assert result['result']['remote'] == 'loopback'
     assert result['result']['target'] == 'local_echo'
+
 
 

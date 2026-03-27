@@ -226,3 +226,4 @@ def gc_workbench(
         console.print_json(json.dumps({'removed_sessions': removed}, ensure_ascii=False))
     finally:
         asyncio.run(runtime.aclose())
+

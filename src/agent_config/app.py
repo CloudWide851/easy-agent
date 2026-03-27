@@ -228,6 +228,7 @@ class FederationRemoteConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30.0
     poll_seconds: float = 0.2
+    push_preference: Literal['auto', 'sse', 'poll'] = 'auto'
 
 
 class FederationExportConfig(BaseModel):
@@ -238,6 +239,8 @@ class FederationExportConfig(BaseModel):
     tags: list[str] = Field(default_factory=list)
     input_modes: list[str] = Field(default_factory=lambda: ['text'])
     output_modes: list[str] = Field(default_factory=lambda: ['text'])
+    modalities: list[str] = Field(default_factory=lambda: ['text'])
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class FederationServerConfig(BaseModel):
@@ -246,6 +249,12 @@ class FederationServerConfig(BaseModel):
     port: int = 8787
     base_path: str = '/a2a'
     public_url: str | None = None
+    protocol_version: str = '0.3'
+    card_schema_version: str = '1.0'
+    subscription_lease_seconds: int = 300
+    retry_max_attempts: int = 4
+    retry_initial_backoff_seconds: float = 0.5
+    retry_backoff_multiplier: float = 2.0
 
 
 class FederationConfig(BaseModel):
@@ -447,5 +456,6 @@ def load_config(path: str | Path) -> AppConfig:
 
 
 load_local_env()
+
 
 

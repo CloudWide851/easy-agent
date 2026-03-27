@@ -6,6 +6,8 @@
 
 It is not a business-specific app. It is the runtime layer underneath one. The project gives you a stable place to run single agents, sub-agents, multi-agent graphs, teams, tools, skills, MCP servers, plugins, and now long-running harnesses without hard-coding product logic into the framework.
 
+Current release line: `0.3.x`. This snapshot documents patch release `0.3.1`.
+
 ## What This Project Is
 
 Many agent repositories jump straight from "call a model" to "ship a product". That makes the middle messy: tool calling drifts, long tasks become prompt soup, state is hard to resume, and protocol changes leak into business code.
@@ -97,13 +99,14 @@ The current runtime already ships the reliability controls that were previously 
 
 ## A2A Remote Agent Federation
 
-This round adds a first practical A2A-style federation layer to `easy-agent`.
+`easy-agent` now ships a more durable A2A-style federation layer instead of a polling-only bridge.
 
 - `federation.server` can publish local agents, teams, or harnesses as exported targets.
-- `federation.remotes` lets the runtime inspect remote agent cards and invoke remote tasks through auth-aware HTTP clients.
-- The current surface supports `agent-card`, `extended-agent-card`, `send`, `send-stream`, `get-task`, `list-tasks`, `cancel`, and `subscribe` style flows.
-- Federated task state is persisted in SQLite so remote execution can be inspected after the initial request completes.
-- The CLI now exposes `easy-agent federation list`, `easy-agent federation inspect`, and `easy-agent federation serve`.
+- `federation.remotes` can inspect remote cards and prefer SSE push or fall back to polling with `push_preference = auto|sse|poll`.
+- Federated delivery now includes persisted task event logs, SSE event streaming, webhook push delivery, retry with backoff, lease renewal, cancellation, and terminal delivery tracking for `SubscribeToTask` style lifecycles.
+- `agent-card` and `extended-agent-card` now expose protocol version, card schema version, modalities, declared capabilities, auth hints, retry policy, subscribe policy, and compatibility metadata.
+- Federated task state plus subscription state is persisted in SQLite so remote execution and push delivery can be inspected after the initial request completes.
+- The CLI now exposes `easy-agent federation list|inspect|tasks|events|subscriptions|renew-subscription|cancel-subscription|serve`.
 
 Example shape:
 
@@ -115,18 +118,24 @@ federation:
     port: 8787
     base_path: /a2a
     public_url: https://agent.example.com/a2a
+    protocol_version: "0.3"
+    card_schema_version: "1.0"
+    retry_max_attempts: 4
+    retry_initial_backoff_seconds: 0.5
   exports:
     - name: repo_delivery
       target_type: harness
       target: delivery_loop
+      modalities: [text]
+      capabilities: [streaming, interrupts]
   remotes:
     - name: partner
       base_url: https://partner.example.com/a2a
+      push_preference: auto
       auth:
         type: bearer_env
         token_env: PARTNER_AGENT_TOKEN
 ```
-
 ## Executor / Workbench Isolation
 
 The runtime now has a dedicated executor or workbench layer for long-lived code execution, tool runs, and environment tasks.
@@ -321,18 +330,13 @@ A successful harness run does more than return text.
 The repository currently uses these verification paths on this machine:
 
 ```powershell
-uv run ruff check src tests scripts
-uv run mypy src tests scripts
-uv run python -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-federation-workbench
-uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-federation-workbench
-uv run easy-agent --help
-uv run easy-agent doctor -c easy-agent.yml
-uv run easy-agent federation list -c easy-agent.yml
-uv run easy-agent workbench list -c easy-agent.yml
-uv run easy-agent harness list -c configs/harness.example.yml
-uv run easy-agent teams list -c configs/teams.example.yml
+.\.venv\Scripts\ruff.exe check src tests scripts
+.\.venv\Scripts\mypy.exe src tests scripts
+.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>
+.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-<timestamp>
 ```
 
+Python CLI smoke is also verified through `CliRunner` against `agent_cli.app:app` for `--help`, `doctor`, `teams list`, `harness list`, and `federation list`.
 ## Real Network Test Set Results
 
 Snapshot date: March 27, 2026.
@@ -343,10 +347,10 @@ This snapshot was produced with Python `3.12.11`, local `.env.local` credentials
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Static checks | `uv run python -m ruff check src tests scripts` | passed |
-| Typing | `uv run python -m mypy src tests scripts` | passed |
-| Unit tests | `uv run python -m pytest tests/unit -q --basetemp=%TEMP%\\easy-agent-pytest\\unit-federation-workbench` | `63 passed` in `11.62s` |
-| Real integration tests | `uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\\easy-agent-pytest\\integration-real-federation-workbench` | `4 passed` in `596.71s` |
+| Static checks | `.\.venv\Scripts\ruff.exe check src tests scripts` | passed |
+| Typing | `.\.venv\Scripts\mypy.exe src tests scripts` | passed |
+| Unit tests | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `65 passed` in `17.71s` |
+| Real integration tests | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-<timestamp>` | `4 passed` in `573.75s` |
 | Python CLI smoke | `CliRunner` against `agent_cli.app:app` for `--help`, `doctor`, `teams list`, `harness list`, `federation list` | passed |
 
 ### Live Benchmark Snapshot
@@ -360,33 +364,34 @@ This snapshot was produced with Python `3.12.11`, local `.env.local` credentials
 | `team_selector` | yes | `26.4179` |
 | `team_swarm` | yes | `10.5093` |
 
-Source: `.easy-agent/benchmark-report.json` regenerated during the March 27, 2026 live integration pass.
+Source: `.easy-agent/benchmark-report.json` reused in this March 27, 2026 verification pass.
 
 ### Public Eval Snapshot
 
 | Suite | Pass Rate | Notes |
 | --- | --- | --- |
-| `bfcl_simple` | `0.75` | 6 of 8 cases passed |
-| `bfcl_multiple` | `0.25` | 2 of 8 cases passed |
-| `bfcl_parallel_multiple` | `0.00` | 0 of 4 cases passed |
-| `bfcl_irrelevance` | `0.00` | 0 of 4 cases passed |
-| `tau2_mock` | `1.00` | 3 of 3 cases passed |
-| `overall.bfcl_pass_rate` | `0.3333` | current DeepSeek compatibility baseline |
+| `bfcl_simple` | `0.8750` | 7 of 8 cases passed |
+| `bfcl_multiple` | `0.2500` | 2 of 8 cases passed |
+| `bfcl_parallel_multiple` | `0.5000` | 2 of 4 cases passed |
+| `bfcl_irrelevance` | `0.0000` | 0 of 4 cases passed |
+| `tau2_mock` | `0.3333` | 1 of 3 cases passed |
+| `overall.bfcl_pass_rate` | `0.4583` | improved from the prior local `0.3333` snapshot |
 
-Source: `.easy-agent/public-eval-report.json` regenerated during the March 27, 2026 live integration pass.
+Source: `.easy-agent/public-eval-report.json` regenerated during the March 27, 2026 live verification pass.
 
-Current caveat: the live suite still emits Windows `asyncio` subprocess cleanup warnings after completion, but the real tests and generated reports completed successfully.
+Current caveats:
 
+- The live suite still emits Windows `asyncio` subprocess cleanup warnings after completion, but the real tests and generated reports completed successfully.
+- DeepSeek's OpenAI-compatible endpoint still shows provider-side variance across BFCL irrelevance and tau2 history-sensitive cases, so the public-eval snapshot should be treated as a live compatibility reading rather than a stable leaderboard claim.
 ## Next Reinforcement
 
-The next hardening targets are based on the current A2A and MCP public protocol surfaces.
+These next steps are based on the current public A2A and MCP protocol surfaces, not just internal backlog notes.
 
-- Extend federation from polling plus basic callbacks to stronger push delivery, retry policy, and richer `SubscribeToTask` lifecycle handling.
-- Enrich the agent-card model with stronger extended-card negotiation for modalities, capabilities, auth hints, and versioned compatibility metadata.
-- Upgrade remote federation auth from environment-backed headers to first-class OAuth/OIDC and optional mTLS for enterprise deployments.
-- Add container or microVM executor backends behind the workbench interface for stronger isolation and reusable long-lived environments.
-- Expand the real-network evaluation matrix to cover cross-process federation, long-lived workbench reuse, and replay or resume failure injection.
-
+- Align federation discovery and lifecycle more closely with A2A well-known discovery plus richer push flows such as `pushNotification/set|get`, resumable subscriptions, and reconnect-friendly `sendSubscribe` or resubscribe behavior.
+- Extend card negotiation toward richer transport and security metadata, including `preferredTransport`, OpenAPI-style auth scheme hints, artifact or part-level multimodal declarations, and clearer compatibility negotiation for server-to-client notifications.
+- Expand MCP client feature negotiation with `roots/list_changed`, richer `elicitation` outcome handling, and stricter human-confirmed `sampling` policy enforcement so sensitive remote prompts stay approval-aware.
+- Add container or microVM executor backends behind the existing workbench interface for stronger isolation and reusable long-lived environments.
+- Extend the real-network evaluation matrix to cover cross-process federation, reconnect or retry chaos cases, long-lived workbench reuse, and replay or resume failure injection.
 ## Design References
 
 - Anthropic, [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
@@ -411,6 +416,11 @@ The next hardening targets are based on the current A2A and MCP public protocol 
 ## License
 
 [Apache-2.0](https://github.com/CloudWide851/easy-agent?tab=Apache-2.0-1-ov-file#)
+
+
+
+
+
 
 
 

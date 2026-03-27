@@ -543,7 +543,8 @@ class HarnessRuntime:
     def _worker_prompt(self, harness: HarnessConfig, input_text: str, state: dict[str, Any], cycle: int) -> str:
         return (
             'You are the worker for a resumable long-running harness. Work on one meaningful increment only. '
-            'Use tools when they materially help. End with what changed and what remains.\n\n'
+            'Use tools when they materially help. If the task is fully solvable in this cycle, complete it now instead of deferring with generic remaining work. '
+            'Do not repeat the same successful tool call or the same finished step. End with what changed and what remains.\n\n'
             f'Harness: {harness.name}\n'
             f'Cycle: {cycle}\n'
             f'Goal: {input_text}\n'
@@ -562,6 +563,7 @@ class HarnessRuntime:
     ) -> str:
         return (
             'You are the evaluator for a long-running harness. Judge whether the work is complete against the contract. '
+            'Mark COMPLETE as soon as the worker output already satisfies the contract. Do not choose CONTINUE when the only remaining work is rewording or repeating the same completed result. '
             'Reply in exactly this shape:\n'
             'DECISION: COMPLETE|CONTINUE|REPLAN\n'
             'SUMMARY: one sentence\n'
@@ -650,3 +652,4 @@ class HarnessRuntime:
             return self.config.harness_map[name]
         except KeyError as exc:
             raise RuntimeError(f"Unknown harness '{name}'") from exc
+

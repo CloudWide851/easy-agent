@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -453,6 +454,23 @@ class AgentOrchestrator:
                 name=tool_call.name,
                 tool_call_id=tool_call.id,
             )
+        duplicate_hit, cached_output = self._lookup_successful_tool_result(tool_call.name, validation.normalized, context)
+        if duplicate_hit:
+            self.store.record_event(
+                context.run_id,
+                'tool_call_duplicate_blocked',
+                {
+                    'tool_name': tool_call.name,
+                    'tool_call_id': tool_call.id,
+                    'arguments': validation.normalized,
+                    'result': cached_output,
+                },
+                scope='tool',
+                node_id=context.node_id,
+                span_id=f'tool:{tool_call.name}',
+                parent_span_id=parent_span_id,
+            )
+            return cached_output
         if self.human_loop.is_sensitive_tool(tool_call.name):
             await self.human_loop.require_approval(
                 context,
@@ -531,7 +549,43 @@ class AgentOrchestrator:
             span_id=f'tool:{tool_call.name}',
             parent_span_id=parent_span_id,
         )
+        self._remember_successful_tool_result(tool_call.name, validation.normalized, output, context)
         return output
+
+    def _lookup_successful_tool_result(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: RunContext,
+    ) -> tuple[bool, Any]:
+        cache = self._successful_tool_cache(context)
+        cached = cache.get(self._tool_cache_key(tool_name, arguments))
+        if not isinstance(cached, dict) or 'result' not in cached:
+            return False, None
+        return True, cached['result']
+
+    def _remember_successful_tool_result(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        output: Any,
+        context: RunContext,
+    ) -> None:
+        cache = self._successful_tool_cache(context)
+        cache[self._tool_cache_key(tool_name, arguments)] = {'result': output}
+
+    @staticmethod
+    def _successful_tool_cache(context: RunContext) -> dict[str, Any]:
+        cache = context.shared_state.setdefault('_successful_tool_cache', {})
+        if isinstance(cache, dict):
+            return cache
+        fresh_cache: dict[str, Any] = {}
+        context.shared_state['_successful_tool_cache'] = fresh_cache
+        return fresh_cache
+
+    @staticmethod
+    def _tool_cache_key(tool_name: str, arguments: dict[str, Any]) -> str:
+        return f"{tool_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)}"
 
     def _checkpoint_team(
         self,
@@ -563,3 +617,9 @@ class AgentOrchestrator:
     @staticmethod
     def _restore_messages(payloads: list[dict[str, Any]]) -> list[ChatMessage]:
         return [ChatMessage.model_validate(item) for item in payloads]
+
+
+
+
+
+

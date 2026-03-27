@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +27,24 @@ class FakeRuntime:
                     'nodes': [],
                 },
                 'federation': {
-                    'server': {'enabled': True, 'host': '127.0.0.1', 'port': 0, 'base_path': '/a2a'},
+                    'server': {
+                        'enabled': True,
+                        'host': '127.0.0.1',
+                        'port': 0,
+                        'base_path': '/a2a',
+                        'retry_max_attempts': 3,
+                        'retry_initial_backoff_seconds': 0.1,
+                        'retry_backoff_multiplier': 1.0,
+                        'subscription_lease_seconds': 30,
+                    },
                     'exports': [
                         {
                             'name': 'local_echo',
                             'target_type': 'agent',
                             'target': 'coordinator',
                             'description': 'Echo target',
+                            'modalities': ['text'],
+                            'capabilities': ['streaming', 'interrupts'],
                         }
                     ],
                 },
@@ -53,17 +68,58 @@ class FakeRuntime:
         return None
 
 
+class CallbackCollector:
+    def __init__(self, fail_first: bool = False) -> None:
+        self.fail_first = fail_first
+        self.attempts = 0
+        self.deliveries: list[dict[str, Any]] = []
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> str:
+        collector = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
+                del format, args
+                return None
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get('Content-Length', '0') or '0')
+                payload = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+                collector.attempts += 1
+                collector.deliveries.append(payload)
+                status = HTTPStatus.INTERNAL_SERVER_ERROR if collector.fail_first and collector.attempts == 1 else HTTPStatus.OK
+                self.send_response(status)
+                self.end_headers()
+
+        self._server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        port = int(self._server.server_address[1])
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return f'http://127.0.0.1:{port}/callback'
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+        self._server = None
+        self._thread = None
+
+
 @pytest.mark.asyncio
 async def test_federation_loopback_server_and_client(tmp_path: Path) -> None:
     runtime = FakeRuntime(tmp_path)
     server = FederationServer(runtime)
     status = server.start()
-    base_url = f"http://127.0.0.1:{status['port']}"
+    base_url = f'http://127.0.0.1:{status["port"]}'
     manager = FederationClientManager(
         AppConfig.model_validate(
             {
                 'graph': {'entrypoint': 'noop', 'agents': [{'name': 'noop'}], 'teams': [], 'nodes': []},
-                'federation': {'remotes': [{'name': 'loopback', 'base_url': base_url}]},
+                'federation': {'remotes': [{'name': 'loopback', 'base_url': base_url, 'push_preference': 'sse'}]},
             }
         ).federation
     )
@@ -71,15 +127,24 @@ async def test_federation_loopback_server_and_client(tmp_path: Path) -> None:
     try:
         remote = await manager.inspect_remote('loopback')
         result = await manager.run_remote('loopback', 'local_echo', 'hello', session_id='demo-session')
-        events = await manager.stream_remote('loopback', 'local_echo', 'streamed')
+        stream_events = await manager.stream_remote('loopback', 'local_echo', 'streamed')
         tasks = await manager.list_tasks('loopback')
+        task_id = str(tasks[-1]['task_id'])
+        task_events = await manager.list_task_events('loopback', task_id)
+        streamed_task_events = await manager.stream_task_events('loopback', task_id)
     finally:
         await manager.aclose()
         server.stop()
 
     assert remote['card']['exports'][0]['name'] == 'local_echo'
+    assert remote['card']['protocol_version'] == '0.3'
+    assert remote['card']['exports'][0]['capabilities']['modalities'] == ['text']
+    assert remote['extended_card']['capabilities']['push_delivery']['sse_events'] is True
+    assert remote['extended_card']['retry_policy']['max_attempts'] == 3
     assert result['result']['echo'] == 'HELLO'
-    assert events[-1]['task']['status'] == 'succeeded'
+    assert stream_events[-1]['task']['status'] == 'succeeded'
+    assert task_events[-1]['event_kind'] == 'task_succeeded'
+    assert any(event['event_name'] == 'task_succeeded' for event in streamed_task_events)
     assert len(tasks) >= 2
 
 
@@ -88,7 +153,7 @@ async def test_federation_cancel_marks_task(tmp_path: Path) -> None:
     runtime = FakeRuntime(tmp_path)
     server = FederationServer(runtime)
     status = server.start()
-    base_url = f"http://127.0.0.1:{status['port']}"
+    base_url = f'http://127.0.0.1:{status["port"]}'
     manager = FederationClientManager(
         AppConfig.model_validate(
             {
@@ -108,3 +173,47 @@ async def test_federation_cancel_marks_task(tmp_path: Path) -> None:
         server.stop()
 
     assert cancelled['status'] == 'cancelled'
+
+
+@pytest.mark.asyncio
+async def test_federation_subscription_retry_and_lifecycle(tmp_path: Path) -> None:
+    runtime = FakeRuntime(tmp_path)
+    server = FederationServer(runtime)
+    status = server.start()
+    base_url = f'http://127.0.0.1:{status["port"]}'
+    callback = CallbackCollector(fail_first=True)
+    callback_url = callback.start()
+    manager = FederationClientManager(
+        AppConfig.model_validate(
+            {
+                'graph': {'entrypoint': 'noop', 'agents': [{'name': 'noop'}], 'teams': [], 'nodes': []},
+                'federation': {'remotes': [{'name': 'loopback', 'base_url': base_url}]},
+            }
+        ).federation
+    )
+    await manager.start()
+    try:
+        client = manager._client('loopback')
+        response = await client.post('/a2a/tasks/send', json={'target': 'local_echo', 'input': 'deliver-me'})
+        task_id = str(response.json()['task']['task_id'])
+        await asyncio.sleep(0.2)
+        subscription = await manager.subscribe_task('loopback', task_id, callback_url, from_sequence=0)
+        assert subscription['status'] in {'retrying', 'active', 'delivered'}
+        await asyncio.sleep(0.2)
+        subscriptions = await manager.list_subscriptions('loopback', task_id)
+        refreshed = subscriptions[0]
+        renewed = await manager.renew_subscription('loopback', task_id, str(refreshed['subscription_id']), lease_seconds=60)
+        cancelled = await manager.cancel_subscription('loopback', task_id, str(refreshed['subscription_id']))
+    finally:
+        await manager.aclose()
+        callback.stop()
+        server.stop()
+
+    assert callback.attempts >= 2
+    assert callback.deliveries[-1]['task_id'] == task_id
+    assert callback.deliveries[-1]['events'][-1]['event_kind'] == 'task_succeeded'
+    assert refreshed['status'] == 'delivered'
+    assert renewed['status'] == 'active'
+    assert cancelled['status'] == 'cancelled'
+
+
