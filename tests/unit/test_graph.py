@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -486,3 +487,59 @@ async def test_graph_scheduler_replay_and_fork_resume_preserve_lineage(tmp_path:
     assert original_trace['lineage']['child_runs'][0]['run_id'] == forked['run_id']
     assert fork_trace['lineage']['parent_run_id'] == 'graph-fork-run'
     assert fork_trace['lineage']['resume_strategy'] == 'fork'
+
+
+class DummyFederationManager:
+    async def run_remote(
+        self,
+        remote_name: str,
+        target: str,
+        input_text: str,
+        *,
+        session_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del session_id, metadata
+        return {'remote': remote_name, 'target': target, 'input': input_text}
+
+
+@pytest.mark.asyncio
+async def test_graph_scheduler_runs_federated_node(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'model': ModelConfig().model_dump(),
+            'graph': {
+                'entrypoint': 'remote_step',
+                'agents': [],
+                'nodes': [
+                    {
+                        'id': 'remote_step',
+                        'type': 'federated',
+                        'target': 'loopback/local_echo',
+                    }
+                ],
+            },
+            'storage': {'path': str(tmp_path), 'database': 'state.db'},
+            'security': {'allowed_commands': []},
+        }
+    )
+    registry = ToolRegistry()
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    model_client = StubModelClient()
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(
+        config,
+        registry,
+        orchestrator,
+        store,
+        DummyMcpManager(),
+        GuardrailEngine(),
+        federation_manager=cast(Any, DummyFederationManager()),
+    )
+
+    result = await scheduler.run('federated input')
+
+    assert result['result']['remote'] == 'loopback'
+    assert result['result']['target'] == 'local_echo'
+
+

@@ -19,6 +19,7 @@ from agent_runtime import EasyAgentRuntime, build_runtime
 console = Console()
 
 
+
 def _entrypoint_type(runtime: Any) -> str:
     entrypoint = runtime.config.graph.entrypoint
     if runtime.config.graph.nodes:
@@ -30,16 +31,20 @@ def _entrypoint_type(runtime: Any) -> str:
     return 'unknown'
 
 
+
 def _mcp_transport_summary(runtime: Any) -> str:
     if not runtime.config.mcp:
         return 'none'
     return ', '.join(f'{server.name}:{server.transport}' for server in runtime.config.mcp)
 
 
+
 def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
     adapter = resolve_protocol(runtime.config.model)
     sandbox = runtime.sandbox_manager.describe()
     human_loop = runtime.config.security.human_loop
+    workbench = runtime.workbench_manager.describe()
+    federation = runtime.config.federation
     return [
         ('Python', sys.version.split()[0]),
         ('Platform', platform.platform()),
@@ -53,6 +58,9 @@ def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
         ('Harnesses', str(len(runtime.config.harnesses))),
         ('Configured MCP Servers', str(len(runtime.config.mcp))),
         ('MCP Transports', _mcp_transport_summary(runtime)),
+        ('Federation Remotes', str(len(federation.remotes))),
+        ('Federation Exports', str(len(federation.exports))),
+        ('Federation Server', f"{federation.server.host}:{federation.server.port}{federation.server.base_path}"),
         ('Human Loop Mode', human_loop.mode.value),
         ('Sensitive Tools', ', '.join(human_loop.sensitive_tools) if human_loop.sensitive_tools else 'none'),
         ('Tool Guardrails', ', '.join(runtime.config.guardrails.tool_input_hooks)),
@@ -63,8 +71,12 @@ def _doctor_rows(runtime: Any) -> list[tuple[str, str]]:
         ('Sandbox Targets', ', '.join(sandbox['targets'])),
         ('Windows Sandbox', str(sandbox['windows_sandbox_available'])),
         ('Sandbox Fallback', sandbox['windows_sandbox_fallback']),
+        ('Workbench Root', workbench['base_root']),
+        ('Workbench Executor', workbench['default_executor']),
+        ('Workbench Sessions', str(workbench['active_sessions'])),
         ('Storage', str(runtime.store.base_path.resolve())),
     ]
+
 
 
 def _render_event(event: dict[str, Any], mode: str) -> None:
@@ -78,8 +90,10 @@ def _render_event(event: dict[str, Any], mode: str) -> None:
     )
 
 
+
 def _approval_mode(value: str) -> HumanLoopMode:
     return HumanLoopMode(value)
+
 
 
 def _configure_inline_resolver(runtime: EasyAgentRuntime, approval_mode: HumanLoopMode) -> None:
@@ -87,6 +101,7 @@ def _configure_inline_resolver(runtime: EasyAgentRuntime, approval_mode: HumanLo
         runtime.set_inline_approval_resolver(None)
         return
     runtime.set_inline_approval_resolver(build_cli_inline_resolver(console))
+
 
 
 def register(app: typer.Typer) -> None:

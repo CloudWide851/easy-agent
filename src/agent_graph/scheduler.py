@@ -18,10 +18,12 @@ from agent_common.models import (
 from agent_common.tools import ToolRegistry
 from agent_config.app import AppConfig, GraphNodeConfig
 from agent_graph.orchestrator import AgentOrchestrator
+from agent_integrations.federation import FederationClientManager
 from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.human_loop import ApprovalRequired, HumanLoopManager, RunInterrupted
 from agent_integrations.storage import SQLiteRunStore
 from agent_integrations.tool_validation import normalize_and_validate_tool_arguments
+from agent_integrations.workbench import WorkbenchManager
 
 
 class GraphScheduler:
@@ -34,6 +36,9 @@ class GraphScheduler:
         mcp_manager: Any,
         guardrail_engine: GuardrailEngine,
         human_loop: HumanLoopManager | None = None,
+        *,
+        workbench_manager: WorkbenchManager | None = None,
+        federation_manager: FederationClientManager | None = None,
     ) -> None:
         self.config = config
         self.registry = registry
@@ -42,6 +47,8 @@ class GraphScheduler:
         self.mcp_manager = mcp_manager
         self.guardrail_engine = guardrail_engine
         self.human_loop = human_loop or HumanLoopManager(store, config.security.human_loop)
+        self.workbench_manager = workbench_manager
+        self.federation_manager = federation_manager
 
     async def run(
         self,
@@ -63,6 +70,50 @@ class GraphScheduler:
             lambda target_run_id: self._run_internal(target_run_id, input_text, session_id, approval_mode),
         )
 
+    async def run_agent_target(
+        self,
+        agent_name: str,
+        input_text: str,
+        *,
+        session_id: str | None = None,
+        approval_mode: HumanLoopMode = HumanLoopMode.HYBRID,
+    ) -> dict[str, Any]:
+        run_id = uuid.uuid4().hex
+        self.store.create_run(run_id, agent_name, {'input': input_text}, session_id=session_id, run_kind='agent')
+        self.store.record_event(
+            run_id,
+            'run_started',
+            {'graph_name': agent_name, 'input': input_text, 'session_id': session_id, 'run_kind': 'agent'},
+            scope='run',
+            span_id=f'run:{run_id}',
+        )
+        return await self._execute_run(
+            run_id,
+            lambda target_run_id: self._run_named_agent(target_run_id, agent_name, input_text, session_id, approval_mode),
+        )
+
+    async def run_team_target(
+        self,
+        team_name: str,
+        input_text: str,
+        *,
+        session_id: str | None = None,
+        approval_mode: HumanLoopMode = HumanLoopMode.HYBRID,
+    ) -> dict[str, Any]:
+        run_id = uuid.uuid4().hex
+        self.store.create_run(run_id, team_name, {'input': input_text}, session_id=session_id, run_kind='team')
+        self.store.record_event(
+            run_id,
+            'run_started',
+            {'graph_name': team_name, 'input': input_text, 'session_id': session_id, 'run_kind': 'team'},
+            scope='run',
+            span_id=f'run:{run_id}',
+        )
+        return await self._execute_run(
+            run_id,
+            lambda target_run_id: self._run_named_team(target_run_id, team_name, input_text, session_id, approval_mode),
+        )
+
     async def resume(
         self,
         run_id: str,
@@ -78,6 +129,7 @@ class GraphScheduler:
         if not fork and run_payload['status'] == RunStatus.SUCCEEDED.value:
             raise RuntimeError(f"Run '{run_id}' has already succeeded")
         target_run_id = run_id
+        active_checkpoint = dict(checkpoint)
         if fork:
             target_run_id = uuid.uuid4().hex
             self.store.create_run(
@@ -91,6 +143,10 @@ class GraphScheduler:
                 source_checkpoint_id=checkpoint['checkpoint_id'],
                 resume_strategy='fork',
             )
+            payload = dict(active_checkpoint['payload'])
+            if self.workbench_manager is not None:
+                payload['workbench'] = self.workbench_manager.clone_manifest(target_run_id, dict(payload.get('workbench', {})))
+            active_checkpoint['payload'] = payload
             self.store.record_event(
                 target_run_id,
                 'run_started',
@@ -123,7 +179,7 @@ class GraphScheduler:
             target_run_id,
             lambda active_run_id: self._resume_from_checkpoint(
                 active_run_id,
-                checkpoint,
+                active_checkpoint,
                 input_text=input_text,
                 session_id=session_id,
                 approval_mode=approval_mode,
@@ -146,6 +202,7 @@ class GraphScheduler:
                 'results': payload.get('results', {}),
                 'remaining': payload.get('remaining', []),
                 'shared_state': payload.get('shared_state', {}),
+                'workbench': payload.get('workbench', {}),
             }
         elif checkpoint['kind'] == 'team':
             body['state'] = {
@@ -155,6 +212,7 @@ class GraphScheduler:
                 'current_speaker': payload.get('current_speaker'),
                 'next_turn_index': payload.get('next_turn_index'),
                 'shared_state': payload.get('shared_state', {}),
+                'workbench': payload.get('workbench', {}),
             }
         elif checkpoint['kind'] == 'agent':
             body['state'] = payload
@@ -286,9 +344,9 @@ class GraphScheduler:
         approval_mode: HumanLoopMode,
     ) -> dict[str, Any]:
         if self.config.graph.entrypoint in self.config.agent_map and not self.config.graph.nodes:
-            return await self._run_direct_agent(run_id, input_text, session_id, approval_mode)
+            return await self._run_named_agent(run_id, self.config.graph.entrypoint, input_text, session_id, approval_mode)
         if self.config.graph.entrypoint in self.config.team_map and not self.config.graph.nodes:
-            return await self._run_direct_team(run_id, input_text, session_id, approval_mode)
+            return await self._run_named_team(run_id, self.config.graph.entrypoint, input_text, session_id, approval_mode)
         shared_state = self.store.load_session_state(session_id) if session_id is not None else {}
         shared_state = dict(shared_state)
         shared_state['input'] = input_text
@@ -297,9 +355,10 @@ class GraphScheduler:
             self.store.save_session_state(session_id, self.config.graph.name, shared_state)
         return self._apply_final_output_guardrails(output, run_id)
 
-    async def _run_direct_agent(
+    async def _run_named_agent(
         self,
         run_id: str,
+        agent_name: str,
         input_text: str,
         session_id: str | None,
         approval_mode: HumanLoopMode,
@@ -312,9 +371,10 @@ class GraphScheduler:
             run_id,
             'agent',
             {
-                'agent': self.config.graph.entrypoint,
+                'agent': agent_name,
                 'shared_messages': [message.model_dump() for message in shared_messages],
                 'shared_state': {'input': input_text},
+                'workbench': self._workbench_manifest(run_id),
             },
         )
         context = RunContext(
@@ -325,14 +385,15 @@ class GraphScheduler:
             session_id=session_id,
             approval_mode=approval_mode,
         )
-        result = await self.orchestrator.run_agent_with_messages(self.config.graph.entrypoint, shared_messages, context)
+        result = await self.orchestrator.run_agent_with_messages(agent_name, shared_messages, context)
         if session_id is not None:
             self.store.save_session_messages(session_id, self.config.graph.name, result.shared_messages)
         return self._apply_final_output_guardrails(self._build_output(run_id, result.text, session_id=session_id), run_id)
 
-    async def _run_direct_team(
+    async def _run_named_team(
         self,
         run_id: str,
+        team_name: str,
         input_text: str,
         session_id: str | None,
         approval_mode: HumanLoopMode,
@@ -350,7 +411,7 @@ class GraphScheduler:
             approval_mode=approval_mode,
         )
         result = await self.orchestrator.run_team_stateful(
-            self.config.graph.entrypoint,
+            team_name,
             input_text,
             context,
             initial_messages=shared_messages,
@@ -390,6 +451,7 @@ class GraphScheduler:
                     'results': graph_results,
                     'remaining': sorted(graph_remaining),
                     'shared_state': context.shared_state,
+                    'workbench': self._workbench_manifest(run_id),
                 },
             )
         while graph_remaining:
@@ -409,6 +471,7 @@ class GraphScheduler:
                         'results': graph_results,
                         'remaining': sorted(graph_remaining),
                         'shared_state': context.shared_state,
+                        'workbench': self._workbench_manifest(run_id),
                     },
                 )
         final_output = graph_results[self.config.graph.entrypoint]
@@ -430,6 +493,7 @@ class GraphScheduler:
             depth=parent_context.depth,
             session_id=parent_context.session_id,
             approval_mode=parent_context.approval_mode,
+            workbench_session_id=parent_context.workbench_session_id,
         )
         last_error: Exception | None = None
         for attempt in range(node.retries + 1):
@@ -555,6 +619,19 @@ class GraphScheduler:
                 )
             self.guardrail_engine.ensure_allowed('tool_input', decisions)
             return await self.mcp_manager.call_tool(server_name, tool_name, payload, context=context)
+        if node.type is NodeType.FEDERATED:
+            if node.target is None or '/' not in node.target:
+                raise ValueError("federated target must be in the format 'remote/export'")
+            if self.federation_manager is None:
+                raise RuntimeError('Federation manager is not configured')
+            remote_name, export_name = node.target.split('/', 1)
+            return await self.federation_manager.run_remote(
+                remote_name,
+                export_name,
+                prompt,
+                session_id=context.session_id,
+                metadata={'node_id': node.id, 'arguments': node.arguments},
+            )
         if node.type is NodeType.JOIN:
             return {dep: context.shared_state[dep] for dep in node.deps}
         raise ValueError(f'Unsupported node type: {node.type}')
@@ -579,6 +656,11 @@ class GraphScheduler:
         self.guardrail_engine.ensure_allowed('final_output', decisions)
         return output
 
+    def _workbench_manifest(self, run_id: str) -> dict[str, Any]:
+        if self.workbench_manager is None:
+            return {'sessions': []}
+        return self.workbench_manager.snapshot_manifest(run_id)
+
     @staticmethod
     def _build_output(
         run_id: str,
@@ -586,7 +668,7 @@ class GraphScheduler:
         nodes: dict[str, Any] | None = None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {'run_id': run_id, 'result': result}
+        payload: dict[str, Any] = {'run_id': run_id, 'result': result, 'status': RunStatus.SUCCEEDED.value}
         if nodes is not None:
             payload['nodes'] = nodes
         if session_id is not None:

@@ -88,6 +88,7 @@ class NodeType(StrEnum):
     TOOL = 'tool'
     SKILL = 'skill'
     MCP_TOOL = 'mcp_tool'
+    FEDERATED = 'federated'
     JOIN = 'join'
 
 
@@ -121,6 +122,7 @@ class RunContext:
     depth: int = 0
     session_id: str | None = None
     approval_mode: HumanLoopMode = HumanLoopMode.HYBRID
+    workbench_session_id: str | None = None
 
 
 class HumanRequest(BaseModel):

@@ -3,9 +3,18 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+
 import pytest
 
-from agent_common.models import AssistantResponse, ChatMessage, HumanRequestStatus, Protocol, RunStatus, ToolCall, ToolSpec
+from agent_common.models import (
+    AssistantResponse,
+    ChatMessage,
+    HumanRequestStatus,
+    Protocol,
+    RunStatus,
+    ToolCall,
+    ToolSpec,
+)
 from agent_common.tools import ToolRegistry
 from agent_config.app import AppConfig, ModelConfig
 from agent_graph import AgentOrchestrator

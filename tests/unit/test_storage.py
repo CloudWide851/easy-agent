@@ -83,3 +83,34 @@ def test_sqlite_run_store_tracks_human_requests_interrupts_and_oauth_state(tmp_p
     assert store.load_oauth_client_info('remote') == {'client_id': 'abc'}
     assert store.load_oauth_tokens('remote') == {'access_token': 'secret-token'}
     assert trace['human_requests'][0]['status'] == HumanRequestStatus.APPROVED
+
+
+def test_sqlite_run_store_tracks_workbench_and_federated_tasks(tmp_path: Path) -> None:
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    store.create_workbench_session(
+        session_id='wb-1',
+        owner_run_id='run-4',
+        name='skill-echo',
+        root_path=str(tmp_path / 'workbench' / 'wb-1'),
+        executor_name='process',
+        metadata={'kind': 'skill'},
+        expires_at='2099-01-01T00:00:00+00:00',
+    )
+    store.record_workbench_execution(
+        session_id='wb-1',
+        command=['python', '-c', "print('ok')"],
+        returncode=0,
+        stdout='ok',
+        stderr='',
+    )
+    store.create_federated_task('task-1', 'agent_export', 'agent', 'queued', {'input': 'hello'})
+    store.update_federated_task('task-1', status='succeeded', response_payload={'result': 'done'}, local_run_id='run-4')
+
+    workbench = store.load_workbench_session('wb-1')
+    federated = store.load_federated_task('task-1')
+
+    assert workbench['name'] == 'skill-echo'
+    assert store.list_workbench_sessions(owner_run_id='run-4')[0]['session_id'] == 'wb-1'
+    assert federated['status'] == 'succeeded'
+    assert federated['response_payload'] == {'result': 'done'}
+    assert federated['local_run_id'] == 'run-4'

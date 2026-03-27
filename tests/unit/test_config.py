@@ -195,3 +195,56 @@ def test_load_local_env_reads_repo_local_file_once(tmp_path: Path, monkeypatch: 
     assert os.environ['DEEPSEEK_API_KEY'] == 'test-local-key'
     assert os.environ['PG_HOST'] == '127.0.0.1'
     assert os.environ['PG_PORT'] == '5432'
+
+
+def test_federation_export_validation_accepts_agent_team_and_harness() -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {
+                'entrypoint': 'planner',
+                'agents': [
+                    {'name': 'planner', 'description': 'Plans work.'},
+                    {'name': 'worker', 'description': 'Works tasks.'},
+                    {'name': 'evaluator', 'description': 'Evaluates work.'},
+                ],
+                'teams': [{'name': 'worker_team', 'mode': 'round_robin', 'members': ['planner', 'worker']}],
+                'nodes': [],
+            },
+            'harnesses': [
+                {
+                    'name': 'delivery_loop',
+                    'initializer_agent': 'planner',
+                    'worker_target': 'worker_team',
+                    'evaluator_agent': 'evaluator',
+                    'completion_contract': 'Finish the run.',
+                    'artifacts_dir': '.easy-agent/harness',
+                }
+            ],
+            'federation': {
+                'exports': [
+                    {'name': 'agent_export', 'target_type': 'agent', 'target': 'planner'},
+                    {'name': 'team_export', 'target_type': 'team', 'target': 'worker_team'},
+                    {'name': 'harness_export', 'target_type': 'harness', 'target': 'delivery_loop'},
+                ]
+            },
+        }
+    )
+
+    assert set(config.federation_export_map) == {'agent_export', 'team_export', 'harness_export'}
+
+
+
+def test_workbench_validation_rejects_unknown_executor() -> None:
+    with pytest.raises(ValueError, match='workbench.default_executor'):
+        AppConfig.model_validate(
+            {
+                'graph': {
+                    'entrypoint': 'planner',
+                    'agents': [{'name': 'planner'}],
+                    'teams': [],
+                    'nodes': [],
+                },
+                'executors': [{'name': 'process', 'kind': 'process'}],
+                'workbench': {'default_executor': 'missing-executor'},
+            }
+        )

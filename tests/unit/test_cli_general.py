@@ -7,6 +7,16 @@ from agent_config.app import AppConfig, ModelConfig
 from agent_integrations.sandbox import SandboxMode
 
 
+class FakeWorkbenchManager:
+    def describe(self) -> dict[str, object]:
+        return {
+            'base_root': 'H:/easy-agent/.easy-agent/workbench',
+            'default_executor': 'process',
+            'session_ttl_seconds': 3600,
+            'active_sessions': 0,
+        }
+
+
 class FakeSandboxManager:
     def describe(self) -> dict[str, object]:
         return {
@@ -24,6 +34,7 @@ def _runtime_from_config(config: AppConfig) -> SimpleNamespace:
         skills=[SimpleNamespace(name='python_echo')],
         loaded_sources=['InlineRuntimePlugin'],
         sandbox_manager=FakeSandboxManager(),
+        workbench_manager=FakeWorkbenchManager(),
         store=store,
     )
 
@@ -108,7 +119,10 @@ def test_doctor_rows_include_runtime_stack_details() -> None:
     assert rows['Harnesses'] == '1'
     assert rows['Configured MCP Servers'] == '1'
     assert rows['MCP Transports'] == 'filesystem:stdio'
+    assert rows['Federation Remotes'] == '0'
+    assert rows['Federation Exports'] == '0'
     assert rows['Tool Guardrails'] == 'block_shell_metacharacters'
     assert rows['Output Guardrails'] == 'require_non_empty_output, block_secret_leaks'
     assert rows['Event Stream'] == 'True'
     assert rows['Sandbox Fallback'] == 'process'
+

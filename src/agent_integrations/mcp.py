@@ -30,15 +30,18 @@ from agent_config.app import McpRootConfig, McpServerConfig
 from agent_integrations.human_loop import HumanLoopManager
 from agent_integrations.sandbox import SandboxManager, SandboxRequest, SandboxTarget
 from agent_integrations.storage import SQLiteRunStore
+from agent_integrations.workbench import WorkbenchManager
 
 RedirectHandler = Callable[[str], Awaitable[None]]
 CallbackHandler = Callable[[], Awaitable[tuple[str, str | None]]]
+
 
 class _DefaultSamplingModelClient:
     async def complete(self, messages: list[ChatMessage], tools: list[ToolSpec]) -> Any:
         del tools
         text = messages[-1].content if messages else ''
         return type('Response', (), {'text': text, 'tool_calls': []})()
+
 
 
 def build_mcp_tool_name(server_name: str, tool_name: str) -> str:
@@ -339,6 +342,7 @@ class StdioMcpClient(SessionBackedMcpClient):
         self,
         config: McpServerConfig,
         sandbox_manager: SandboxManager,
+        workbench_manager: WorkbenchManager | None,
         store: SQLiteRunStore | None,
         model_client: Any,
         human_loop: HumanLoopManager | None,
@@ -347,6 +351,7 @@ class StdioMcpClient(SessionBackedMcpClient):
     ) -> None:
         super().__init__(config, store, model_client, human_loop, redirect_handler, callback_handler)
         self._sandbox_manager = sandbox_manager
+        self._workbench_manager = workbench_manager
         self._process: Any = None
         self._task_group: Any = None
         self._read_stream: Any = None
@@ -357,20 +362,30 @@ class StdioMcpClient(SessionBackedMcpClient):
     async def _open_transport(self) -> tuple[Any, Any]:
         if not self.config.command:
             raise ValueError('stdio MCP transport requires a command')
-        prepared = self._sandbox_manager.prepare(
-            SandboxRequest(
-                command=self.config.command,
-                cwd=Path.cwd(),
+        if self._workbench_manager is not None:
+            session = self._workbench_manager.ensure_session(
+                f'mcp:{self.config.name}',
+                f'mcp-{self.config.name}',
+                metadata={'server': self.config.name, 'transport': self.config.transport},
+            )
+            prepared = self._workbench_manager.prepare_subprocess(
+                session.session_id,
+                self.config.command,
                 env=self.config.env,
                 timeout_seconds=self.config.timeout_seconds,
                 target=SandboxTarget.STDIO_MCP,
             )
-        )
-        environment = (
-            {**get_default_environment(), **prepared.env}
-            if prepared.env is not None
-            else get_default_environment()
-        )
+        else:
+            prepared = self._sandbox_manager.prepare(
+                SandboxRequest(
+                    command=self.config.command,
+                    cwd=Path.cwd(),
+                    env=self.config.env,
+                    timeout_seconds=self.config.timeout_seconds,
+                    target=SandboxTarget.STDIO_MCP,
+                )
+            )
+        environment = {**get_default_environment(), **prepared.env} if prepared.env is not None else get_default_environment()
         self._process = await self._open_process(
             command=prepared.command[0],
             args=prepared.command[1:],
@@ -494,7 +509,6 @@ class StdioMcpClient(SessionBackedMcpClient):
         await terminate_posix_process_tree(self._process, 2.0)
 
 
-
 class LegacyHttpSseRpcClient(BaseMcpClient):
     def __init__(
         self,
@@ -507,12 +521,9 @@ class LegacyHttpSseRpcClient(BaseMcpClient):
     ) -> None:
         super().__init__(config, store, model_client, human_loop, redirect_handler, callback_handler)
         self._client = httpx.AsyncClient(timeout=config.timeout_seconds, headers=self._build_headers(), auth=self._build_auth())
-        self.notifications: list[dict[str, Any]] = []
         self._sse_task: Any = None
 
     async def start(self) -> None:
-        if self.config.sse_url:
-            self._sse_task = None
         self.capabilities = {'legacy_http_sse': True}
 
     async def _rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -549,6 +560,7 @@ class LegacyHttpSseRpcClient(BaseMcpClient):
             self._sse_task.cancel()
         await self._client.aclose()
 
+
 class StreamableHttpMcpClient(SessionBackedMcpClient):
     async def _open_transport(self) -> tuple[Any, Any]:
         self._transport_cm = streamablehttp_client(
@@ -579,11 +591,13 @@ class McpClientManager:
         self,
         configs: list[McpServerConfig],
         sandbox_manager: SandboxManager,
+        workbench_manager: WorkbenchManager | None = None,
         store: SQLiteRunStore | None = None,
         model_client: Any | None = None,
         human_loop: HumanLoopManager | None = None,
     ) -> None:
         self._sandbox_manager = sandbox_manager
+        self._workbench_manager = workbench_manager
         self._store = store
         self._model_client = model_client or _DefaultSamplingModelClient()
         self._human_loop = human_loop
@@ -616,6 +630,7 @@ class McpClientManager:
             return StdioMcpClient(
                 config,
                 self._sandbox_manager,
+                self._workbench_manager,
                 self._store,
                 self._model_client,
                 self._human_loop,
@@ -725,6 +740,7 @@ class McpClientManager:
         self._tool_cache = {}
 
 
+
 def _sampling_message_to_text(message: mcp_types.SamplingMessage) -> str:
     content = message.content
     if isinstance(content, list):
@@ -734,6 +750,7 @@ def _sampling_message_to_text(message: mcp_types.SamplingMessage) -> str:
         return '\n'.join(part for part in parts if part)
     single = _content_block_to_text(content)
     return single or ''
+
 
 
 def _content_block_to_text(content: Any) -> str | None:
@@ -746,7 +763,6 @@ def _content_block_to_text(content: Any) -> str | None:
     return None
 
 
+
 def _root_to_uri(path: str) -> str:
     return Path(path).resolve().as_uri()
-
-

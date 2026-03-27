@@ -14,6 +14,7 @@ from agent_graph.orchestrator import AgentOrchestrator
 from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.human_loop import ApprovalRequired, HumanLoopManager, RunInterrupted
 from agent_integrations.storage import SQLiteRunStore
+from agent_integrations.workbench import WorkbenchManager
 
 
 def _now() -> str:
@@ -38,12 +39,14 @@ class HarnessRuntime:
         store: SQLiteRunStore,
         guardrail_engine: GuardrailEngine,
         human_loop: HumanLoopManager | None = None,
+        workbench_manager: WorkbenchManager | None = None,
     ) -> None:
         self.config = config
         self.orchestrator = orchestrator
         self.store = store
         self.guardrail_engine = guardrail_engine
         self.human_loop = human_loop or HumanLoopManager(store, config.security.human_loop)
+        self.workbench_manager = workbench_manager
 
     def list_harnesses(self) -> list[HarnessConfig]:
         return list(self.config.harnesses)
@@ -380,6 +383,7 @@ class HarnessRuntime:
                 'harness': harness.name,
                 'input': input_text,
                 'state': state,
+                'workbench': self._workbench_manifest(run_id),
             },
         )
 
@@ -631,10 +635,15 @@ class HarnessRuntime:
             'initializer_summary': state.get('initializer_summary', ''),
             'history': state.get('history', []),
         }
-        payload: dict[str, Any] = {'run_id': run_id, 'result': result}
+        payload: dict[str, Any] = {'run_id': run_id, 'result': result, 'status': RunStatus.SUCCEEDED.value}
         if session_id is not None:
             payload['session_id'] = session_id
         return payload
+
+    def _workbench_manifest(self, run_id: str) -> dict[str, Any]:
+        if self.workbench_manager is None:
+            return {'sessions': []}
+        return self.workbench_manager.snapshot_manifest(run_id)
 
     def _get_harness(self, name: str) -> HarnessConfig:
         try:

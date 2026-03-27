@@ -30,7 +30,7 @@
 - 一个真正的一等公民长任务 harness：`initializer -> worker -> evaluator`，支持可恢复 checkpoints 和持久化工件。
 - 面向 `OpenAI`、`Anthropic`、`Gemini` 风格载荷的统一模型调用适配层。
 - 面向 Tool Calling 2.0 的统一执行层，能承接 direct tools、command skills、Python hook skills、MCP tools 和 plugin mounting。
-- 内置 session memory、event streaming、tracing、guardrails、human approval、replay 工具和 public evaluation 能力。
+- 内置 session memory、event streaming、tracing、guardrails、human approval、replay 工具、A2A 风格联邦、隔离 workbench 执行层和 public evaluation 能力。
 
 ## 技术栈
 
@@ -81,6 +81,8 @@
 - tracing 与 event streaming 已覆盖 agent、team、tool、guardrail、harness、MCP 边界。
 - 使用 SQLite 与 JSONL 持久化 runs、traces、checkpoints、session state、harness state、approval requests、interrupts 和 resume lineage。
 - 为 graph 与 team workflow 提供历史 checkpoint 列表、time-travel replay，以及可分支的 `--fork` resume。
+- 增加了 A2A 风格的远程 Agent 联邦，可导出本地目标、探测远程 agent card、发送或流式跟踪任务，并持久化联邦任务状态。
+- 增加 executor / workbench 隔离层，用于长生命周期的 command skill、MCP 子进程、执行清单快照、TTL 清理和可分支恢复。
 - MCP 已支持 roots、sampling、elicitation、`streamable_http` 与带授权感知的远程传输，并持久化 OAuth state。
 - 内置 BFCL 子集与 tau2 mock 子集的 public evaluation 能力。
 
@@ -92,6 +94,48 @@
 - 运行时暴露 safe-point interrupt、approval queue、checkpoint list、历史 replay，以及可分支的 `resume --fork` 恢复路径。
 - MCP 集成已支持显式 roots、针对 stdio filesystem server 的后向兼容 roots 推断、sampling callback、elicitation callback、`streamable_http`，以及带 OAuth 持久化状态的授权感知远程传输。
 - CLI 已提供 `approvals`、`checkpoints`、`replay`、`interrupt`、`mcp roots`、`mcp auth` 等命令，无需额外写胶水代码。
+
+## A2A Remote Agent Federation
+
+这一轮把 A2A 风格的 remote agent federation 做成了可实际使用的运行时能力。
+
+- `federation.server` 可以把本地 agent、team 或 harness 作为 exported target 对外发布。
+- `federation.remotes` 可以让运行时通过带鉴权感知的 HTTP client 探测远端 agent card 并发起远程任务。
+- 当前接口面已经覆盖 `agent-card`、`extended-agent-card`、`send`、`send-stream`、`get-task`、`list-tasks`、`cancel`、`subscribe` 这类核心流转。
+- 联邦任务状态会持久化到 SQLite，HTTP 请求结束后仍可继续检查远程执行状态。
+- CLI 新增了 `easy-agent federation list`、`easy-agent federation inspect`、`easy-agent federation serve`。
+
+配置形态示例：
+
+```yaml
+federation:
+  server:
+    enabled: true
+    host: <LOCAL_HOST>
+    port: 8787
+    base_path: /a2a
+    public_url: https://agent.example.com/a2a
+  exports:
+    - name: repo_delivery
+      target_type: harness
+      target: delivery_loop
+  remotes:
+    - name: partner
+      base_url: https://partner.example.com/a2a
+      auth:
+        type: bearer_env
+        token_env: PARTNER_AGENT_TOKEN
+```
+
+## Executor / Workbench Isolation
+
+运行时现在具备专门的 executor / workbench 隔离层，用来承接长生命周期代码执行、工具运行和环境任务。
+
+- `WorkbenchManager` 会在 `.easy-agent/workbench` 下为每个 run 准备隔离根目录。
+- command skill 和 stdio MCP server 可以复用同一个长生命周期 workbench session，而不是每次重新初始化环境。
+- graph 与 harness checkpoint 现在都会记录 workbench manifest，`resume --fork` 会把这些 manifest 克隆到新的 session root。
+- SQLite 会持久化 `workbench_sessions`、`workbench_executions` 和联邦任务状态，便于事后追查。
+- CLI 新增了 `easy-agent workbench list` 和 `easy-agent workbench gc`。
 
 ## 架构说明
 
@@ -189,7 +233,7 @@ src/
   agent_common/        shared models and tool abstractions
   agent_config/        typed config models and validation
   agent_graph/         orchestration, graph scheduling, team runtime
-  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails
+  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails, federation, workbench
   agent_protocols/     protocol adapters and model client
   agent_runtime/       runtime assembly, harnesses, benchmarks, long-run flows, public eval
 skills/
@@ -221,12 +265,12 @@ uv sync --dev
 
 ```dotenv
 DEEPSEEK_API_KEY=your-key
-PG_HOST=127.0.0.1
+PG_HOST=<LOCAL_HOST>
 PG_PORT=5432
 PG_USER=postgres
 PG_PASSWORD=your-password
 PG_DATABASE=postgres
-REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_URL=redis://<LOCAL_HOST>:6379/0
 ```
 
 ### 常用命令
@@ -237,6 +281,8 @@ uv run easy-agent skills list -c easy-agent.yml
 uv run easy-agent plugins list -c easy-agent.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent harness list -c configs/harness.example.yml
+uv run easy-agent federation list -c easy-agent.yml
+uv run easy-agent workbench list -c easy-agent.yml
 uv run easy-agent run "summarize the repository" --session-id demo-session --approval-mode deferred -c easy-agent.yml
 uv run easy-agent approvals list --status pending -c easy-agent.yml
 uv run easy-agent checkpoints <run_id> -c configs/teams.example.yml
@@ -277,13 +323,69 @@ runtime.load('third_party_plugin')
 ```powershell
 uv run ruff check src tests scripts
 uv run mypy src tests scripts
-uv run python -m pytest tests/unit -q
-uv run python -m pytest tests/integration -m real -q
+uv run python -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-federation-workbench
+uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-federation-workbench
 uv run easy-agent --help
 uv run easy-agent doctor -c easy-agent.yml
+uv run easy-agent federation list -c easy-agent.yml
+uv run easy-agent workbench list -c easy-agent.yml
 uv run easy-agent harness list -c configs/harness.example.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 ```
+
+## 真实网络测试集结果
+
+快照日期：2026 年 3 月 27 日。
+
+这一轮结果基于 Python `3.12.11`、本地 `.env.local` 凭据、真实 DeepSeek 调用、本地 Redis/PostgreSQL 依赖，以及仓库里的 MCP 实网集成测试生成。
+
+### Python 验证快照
+
+| 套件 | 命令 | 结果 |
+| --- | --- | --- |
+| 静态检查 | `uv run python -m ruff check src tests scripts` | 通过 |
+| 类型检查 | `uv run python -m mypy src tests scripts` | 通过 |
+| 单元测试 | `uv run python -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-federation-workbench` | `63 passed`，耗时 `11.62s` |
+| 真实集成测试 | `uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-federation-workbench` | `4 passed`，耗时 `596.71s` |
+| Python CLI smoke | 通过 `CliRunner` 调用 `agent_cli.app:app` 执行 `--help`、`doctor`、`teams list`、`harness list`、`federation list` | 通过 |
+
+### Live Benchmark 快照
+
+| 模式 | Success | 平均耗时（秒） |
+| --- | --- | --- |
+| `single_agent` | yes | `4.9189` |
+| `sub_agent` | yes | `15.9533` |
+| `multi_agent_graph` | yes | `13.4902` |
+| `team_round_robin` | yes | `7.7634` |
+| `team_selector` | yes | `26.4179` |
+| `team_swarm` | yes | `10.5093` |
+
+来源：2026 年 3 月 27 日真实集成验证过程中重新生成的 `.easy-agent/benchmark-report.json`。
+
+### Public Eval 快照
+
+| 套件 | 通过率 | 说明 |
+| --- | --- | --- |
+| `bfcl_simple` | `0.75` | 8 个用例通过 6 个 |
+| `bfcl_multiple` | `0.25` | 8 个用例通过 2 个 |
+| `bfcl_parallel_multiple` | `0.00` | 4 个用例通过 0 个 |
+| `bfcl_irrelevance` | `0.00` | 4 个用例通过 0 个 |
+| `tau2_mock` | `1.00` | 3 个用例通过 3 个 |
+| `overall.bfcl_pass_rate` | `0.3333` | 当前 DeepSeek 兼容性基线 |
+
+来源：2026 年 3 月 27 日真实集成验证过程中重新生成的 `.easy-agent/public-eval-report.json`。
+
+当前备注：真实套件执行结束后仍会出现 Windows `asyncio` 子进程清理 warning，但本轮真实测试和报告生成都已成功完成。
+
+## 下一步补强
+
+这一板块基于当前 A2A 与 MCP 公共协议面整理下一阶段的补强重点。
+
+- 把联邦能力从轮询加基础 callback 继续补强到更稳定的 push delivery、重试策略和更完整的 `SubscribeToTask` 生命周期管理。
+- 补强 agent-card / extended-agent-card 的模态、能力、鉴权提示和版本兼容元数据协商。
+- 把远程联邦鉴权从环境变量头部升级到更完整的 OAuth/OIDC，以及可选 mTLS 企业部署形态。
+- 在 workbench 接口后面补上 container 或 microVM 执行后端，提升隔离强度与长生命周期环境复用能力。
+- 扩展真实网络评测矩阵，覆盖跨进程联邦、长生命周期 workbench 复用，以及 replay / resume 失败注入验证。
 
 ## 设计参考
 
@@ -294,6 +396,11 @@ uv run easy-agent teams list -c configs/teams.example.yml
 - OpenAI Agents SDK Tracing: [https://openai.github.io/openai-agents-python/tracing/](https://openai.github.io/openai-agents-python/tracing/)
 - AutoGen Teams: [https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html)
 - LangGraph Durable Execution: [https://docs.langchain.com/oss/python/langgraph/durable-execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)
+- A2A Protocol: [https://a2aprotocol.ai/](https://a2aprotocol.ai/)
+- A2A Reference Implementation: [https://github.com/a2aproject/A2A](https://github.com/a2aproject/A2A)
+- MCP Roots: [https://modelcontextprotocol.io/docs/concepts/roots](https://modelcontextprotocol.io/docs/concepts/roots)
+- MCP Sampling: [https://modelcontextprotocol.io/docs/concepts/sampling](https://modelcontextprotocol.io/docs/concepts/sampling)
+- MCP Elicitation: [https://modelcontextprotocol.io/docs/concepts/elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation)
 - MCP Transports: [https://modelcontextprotocol.io/docs/concepts/transports](https://modelcontextprotocol.io/docs/concepts/transports)
 
 ## 致谢
@@ -304,3 +411,6 @@ uv run easy-agent teams list -c configs/teams.example.yml
 ## License
 
 [Apache-2.0](https://github.com/CloudWide851/easy-agent?tab=Apache-2.0-1-ov-file#)
+
+
+

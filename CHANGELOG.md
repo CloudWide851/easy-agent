@@ -14,17 +14,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added checkpoint listing, historical replay, and branchable `resume --fork` support for graph and team workflows, plus lineage tracking in SQLite traces.
 - Added richer MCP support for explicit roots, backward-compatible filesystem-root inference for stdio servers, `streamable_http`, auth-aware remote transports, OAuth state persistence, and `easy-agent mcp roots/auth *` commands.
 - Added unit coverage for human approvals, interrupts, replay/fork lineage, MCP root inference, and the new storage lifecycle paths.
+- Added A2A-style remote agent federation with exported local targets, remote inspection, durable federated task tracking, and CLI federation commands.
+- Added executor/workbench isolation with per-run isolated roots, execution manifests, TTL cleanup, durable execution logs, and workbench CLI management.
 
 ### Changed
 
 - Updated the harness runtime so approval-gated resume flows enter `waiting_approval` cleanly instead of failing outside the run-state wrapper.
 - Updated `configs/longrun.example.yml` to declare filesystem roots explicitly while keeping dynamic long-run output roots compatible with the new MCP root model.
 - Updated both READMEs to document the shipped human-loop, replay, branching resume, and richer MCP capabilities instead of leaving them in the roadmap.
+- Updated the scheduler, harness runtime, skills, MCP integration, and CLI surfaces so workbench manifests and federation flows participate in resume, fork, and operator inspection paths.
+- Updated the English and Chinese READMEs with dedicated `A2A Remote Agent Federation`, `Executor / Workbench Isolation`, `Real Network Test Set Results`, and `Next Reinforcement` sections.
 
 ### Verified
 
 - `python -m pytest tests/unit -q` with `54 passed`
 - `python -m pytest tests/integration -m real -q` with `4 passed`
+- `python -m pytest tests/unit -q --basetemp=%TEMP%\\easy-agent-pytest\\unit-federation-workbench` with `63 passed`
+- `python -m pytest tests/integration -m real -q --basetemp=%TEMP%\\easy-agent-pytest\\integration-real-federation-workbench` with `4 passed`
+- Python CLI smoke via `CliRunner` for `--help`, `doctor`, `teams list`, `harness list`, and `federation list`
 
 ## [0.3.0] - 2026-03-26
 
@@ -84,3 +91,5 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `easy-agent teams list -c configs/teams.example.yml`
 - `easy-agent doctor -c configs/teams.example.yml`
 - Windows launcher smoke via `easy-agent.ps1` and `easy-agent.bat`
+
+

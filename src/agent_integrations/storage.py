@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from uuid import uuid4
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
@@ -132,6 +132,45 @@ class SQLiteRunStore:
                     server_name TEXT PRIMARY KEY,
                     tokens_payload TEXT,
                     client_info_payload TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS workbench_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    owner_run_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    root_path TEXT NOT NULL,
+                    executor_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    metadata_payload TEXT NOT NULL,
+                    branch_parent_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    expires_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS workbench_executions (
+                    execution_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    command_payload TEXT NOT NULL,
+                    returncode INTEGER NOT NULL,
+                    stdout TEXT NOT NULL,
+                    stderr TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS federated_tasks (
+                    task_id TEXT PRIMARY KEY,
+                    export_name TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    input_payload TEXT NOT NULL,
+                    response_payload TEXT,
+                    error_message TEXT,
+                    local_run_id TEXT,
+                    request_id TEXT,
+                    subscribers_payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
                 """
@@ -641,6 +680,208 @@ class SQLiteRunStore:
             connection.execute('DELETE FROM oauth_state WHERE server_name = ?', (server_name,))
             connection.commit()
 
+    def create_workbench_session(
+        self,
+        *,
+        session_id: str,
+        owner_run_id: str,
+        name: str,
+        root_path: str,
+        executor_name: str,
+        metadata: dict[str, Any] | None,
+        expires_at: str | None,
+        branch_parent_session_id: str | None = None,
+    ) -> None:
+        now = self._now()
+        with closing(self._connect()) as connection:
+            connection.execute(
+                (
+                    'INSERT INTO workbench_sessions('
+                    'session_id, owner_run_id, name, root_path, executor_name, status, metadata_payload, '
+                    'branch_parent_session_id, created_at, updated_at, expires_at'
+                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                ),
+                (
+                    session_id,
+                    owner_run_id,
+                    name,
+                    root_path,
+                    executor_name,
+                    'active',
+                    self._encode(metadata or {}),
+                    branch_parent_session_id,
+                    now,
+                    now,
+                    expires_at,
+                ),
+            )
+            connection.commit()
+
+    def load_workbench_session(self, session_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                (
+                    'SELECT owner_run_id, name, root_path, executor_name, status, metadata_payload, '
+                    'branch_parent_session_id, created_at, updated_at, expires_at '
+                    'FROM workbench_sessions WHERE session_id = ?'
+                ),
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f'Workbench session not found: {session_id}')
+        return {
+            'session_id': session_id,
+            'owner_run_id': row[0],
+            'name': row[1],
+            'root_path': row[2],
+            'executor_name': row[3],
+            'status': row[4],
+            'metadata': cast(dict[str, Any], self._decode(row[5]) or {}),
+            'branch_parent_session_id': row[6],
+            'created_at': row[7],
+            'updated_at': row[8],
+            'expires_at': row[9],
+        }
+
+    def load_workbench_session_by_owner(self, owner_run_id: str, name: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                'SELECT session_id FROM workbench_sessions WHERE owner_run_id = ? AND name = ?',
+                (owner_run_id, name),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.load_workbench_session(str(row[0]))
+
+    def list_workbench_sessions(self, owner_run_id: str | None = None) -> list[dict[str, Any]]:
+        query = 'SELECT session_id FROM workbench_sessions'
+        params: list[Any] = []
+        if owner_run_id is not None:
+            query += ' WHERE owner_run_id = ?'
+            params.append(owner_run_id)
+        query += ' ORDER BY created_at ASC'
+        with closing(self._connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self.load_workbench_session(str(row[0])) for row in rows]
+
+    def touch_workbench_session(self, session_id: str, expires_at: str | None) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'UPDATE workbench_sessions SET updated_at = ?, expires_at = ? WHERE session_id = ?',
+                (self._now(), expires_at, session_id),
+            )
+            connection.commit()
+
+    def update_workbench_session_status(self, session_id: str, status: str) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'UPDATE workbench_sessions SET status = ?, updated_at = ? WHERE session_id = ?',
+                (status, self._now(), session_id),
+            )
+            connection.commit()
+
+    def record_workbench_execution(
+        self,
+        *,
+        session_id: str,
+        command: list[str],
+        returncode: int,
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                (
+                    'INSERT INTO workbench_executions(session_id, command_payload, returncode, stdout, stderr, created_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?)'
+                ),
+                (session_id, self._encode(command), returncode, stdout, stderr, self._now()),
+            )
+            connection.commit()
+
+    def create_federated_task(
+        self,
+        task_id: str,
+        export_name: str,
+        target_type: str,
+        status: str,
+        input_payload: dict[str, Any],
+    ) -> None:
+        now = self._now()
+        with closing(self._connect()) as connection:
+            connection.execute(
+                (
+                    'INSERT INTO federated_tasks('
+                    'task_id, export_name, target_type, status, input_payload, response_payload, error_message, '
+                    'local_run_id, request_id, subscribers_payload, created_at, updated_at'
+                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                ),
+                (task_id, export_name, target_type, status, self._encode(input_payload), None, None, None, None, self._encode([]), now, now),
+            )
+            connection.commit()
+
+    def load_federated_task(self, task_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                (
+                    'SELECT export_name, target_type, status, input_payload, response_payload, error_message, '
+                    'local_run_id, request_id, subscribers_payload, created_at, updated_at '
+                    'FROM federated_tasks WHERE task_id = ?'
+                ),
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f'Federated task not found: {task_id}')
+        return {
+            'task_id': task_id,
+            'export_name': row[0],
+            'target_type': row[1],
+            'status': row[2],
+            'input_payload': cast(dict[str, Any], self._decode(row[3])),
+            'response_payload': cast(dict[str, Any] | None, self._decode(row[4])),
+            'error_message': row[5],
+            'local_run_id': row[6],
+            'request_id': row[7],
+            'subscribers': cast(list[str], self._decode(row[8]) or []),
+            'created_at': row[9],
+            'updated_at': row[10],
+        }
+
+    def list_federated_tasks(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute('SELECT task_id FROM federated_tasks ORDER BY created_at ASC').fetchall()
+        return [self.load_federated_task(str(row[0])) for row in rows]
+
+    def update_federated_task(self, task_id: str, **changes: Any) -> None:
+        mapping = {
+            'status': 'status',
+            'response_payload': 'response_payload',
+            'error_message': 'error_message',
+            'local_run_id': 'local_run_id',
+            'request_id': 'request_id',
+            'updated_at': 'updated_at',
+            'subscribers': 'subscribers_payload',
+        }
+        assignments: list[str] = []
+        params: list[Any] = []
+        for key, column in mapping.items():
+            if key not in changes:
+                continue
+            assignments.append(f'{column} = ?')
+            value = changes[key]
+            if key in {'response_payload', 'subscribers'}:
+                value = self._encode(value)
+            params.append(value)
+        if not assignments:
+            return
+        params.append(task_id)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                f'UPDATE federated_tasks SET {", ".join(assignments)} WHERE task_id = ?',
+                params,
+            )
+            connection.commit()
+
     def load_trace(self, run_id: str) -> dict[str, Any]:
         run_row = self.load_run(run_id)
         with closing(self._connect()) as connection:
@@ -771,3 +1012,7 @@ class SQLiteRunStore:
             'UPDATE sessions SET graph_name = ?, updated_at = ? WHERE session_id = ?',
             (graph_name, updated_at, session_id),
         )
+
+
+
+

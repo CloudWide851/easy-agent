@@ -30,7 +30,7 @@ Many agent repositories jump straight from "call a model" to "ship a product". T
 - A first-class long-running harness with `initializer -> worker -> evaluator` loops, resumable checkpoints, and durable artifacts.
 - A unified model-call surface for `OpenAI`, `Anthropic`, and `Gemini` style payloads.
 - A Tool Calling 2.0 runtime that can host direct tools, command skills, Python hook skills, MCP tools, and mounted plugins.
-- Built-in session memory, tracing, event streaming, guardrails, human approvals, replay tooling, and public evaluation helpers.
+- Built-in session memory, tracing, event streaming, guardrails, human approvals, replay tooling, A2A-style federation, isolated workbench execution, and public evaluation helpers.
 
 ## Tech Stack
 
@@ -81,6 +81,8 @@ Many agent repositories jump straight from "call a model" to "ship a product". T
 - Event streaming and tracing across agent, team, tool, guardrail, harness, and MCP boundaries.
 - SQLite plus JSONL persistence for runs, traces, checkpoints, session state, harness state, approval requests, interrupts, and resume lineage.
 - Historical checkpoint listing, time-travel replay, and branchable `--fork` resume for graph and team workflows.
+- A2A-style remote agent federation with exported local targets, remote inspection, task send or stream flows, durable task state, and CLI federation tooling.
+- Executor and workbench isolation for long-lived command skills, MCP subprocesses, execution manifests, TTL cleanup, and fork-safe resume snapshots.
 - MCP roots, sampling, elicitation, `streamable_http`, and authorization-aware remote transports with persisted OAuth state.
 - Public evaluation helpers for BFCL subset cases and tau2 mock cases.
 
@@ -92,6 +94,48 @@ The current runtime already ships the reliability controls that were previously 
 - Runs expose safe-point interrupts, approval queues, checkpoint listing, historical replay, and branchable `resume --fork` flows.
 - MCP integrations now support explicit roots, backward-compatible filesystem root inference for stdio servers, sampling callbacks, elicitation callbacks, `streamable_http`, and auth-aware remote transports with persisted OAuth state.
 - The CLI exposes `approvals`, `checkpoints`, `replay`, `interrupt`, `mcp roots`, and `mcp auth` commands so these controls are usable without custom code.
+
+## A2A Remote Agent Federation
+
+This round adds a first practical A2A-style federation layer to `easy-agent`.
+
+- `federation.server` can publish local agents, teams, or harnesses as exported targets.
+- `federation.remotes` lets the runtime inspect remote agent cards and invoke remote tasks through auth-aware HTTP clients.
+- The current surface supports `agent-card`, `extended-agent-card`, `send`, `send-stream`, `get-task`, `list-tasks`, `cancel`, and `subscribe` style flows.
+- Federated task state is persisted in SQLite so remote execution can be inspected after the initial request completes.
+- The CLI now exposes `easy-agent federation list`, `easy-agent federation inspect`, and `easy-agent federation serve`.
+
+Example shape:
+
+```yaml
+federation:
+  server:
+    enabled: true
+    host: <LOCAL_HOST>
+    port: 8787
+    base_path: /a2a
+    public_url: https://agent.example.com/a2a
+  exports:
+    - name: repo_delivery
+      target_type: harness
+      target: delivery_loop
+  remotes:
+    - name: partner
+      base_url: https://partner.example.com/a2a
+      auth:
+        type: bearer_env
+        token_env: PARTNER_AGENT_TOKEN
+```
+
+## Executor / Workbench Isolation
+
+The runtime now has a dedicated executor or workbench layer for long-lived code execution, tool runs, and environment tasks.
+
+- `WorkbenchManager` provisions per-run isolated roots under `.easy-agent/workbench`.
+- Command skills and stdio MCP servers can reuse a long-lived workbench session instead of paying full environment setup cost on every call.
+- Graph and harness checkpoints now capture workbench manifests, and forked resume clones those manifests into new session roots.
+- SQLite persists `workbench_sessions`, `workbench_executions`, and federated task state for later inspection.
+- The CLI now exposes `easy-agent workbench list` and `easy-agent workbench gc`.
 
 ## Architecture
 
@@ -189,7 +233,7 @@ src/
   agent_common/        shared models and tool abstractions
   agent_config/        typed config models and validation
   agent_graph/         orchestration, graph scheduling, team runtime
-  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails
+  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails, federation, workbench
   agent_protocols/     protocol adapters and model client
   agent_runtime/       runtime assembly, harnesses, benchmarks, long-run flows, public eval
 skills/
@@ -221,12 +265,12 @@ Example:
 
 ```dotenv
 DEEPSEEK_API_KEY=your-key
-PG_HOST=127.0.0.1
+PG_HOST=<LOCAL_HOST>
 PG_PORT=5432
 PG_USER=postgres
 PG_PASSWORD=your-password
 PG_DATABASE=postgres
-REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_URL=redis://<LOCAL_HOST>:6379/0
 ```
 
 ### Common Commands
@@ -237,6 +281,8 @@ uv run easy-agent skills list -c easy-agent.yml
 uv run easy-agent plugins list -c easy-agent.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent harness list -c configs/harness.example.yml
+uv run easy-agent federation list -c easy-agent.yml
+uv run easy-agent workbench list -c easy-agent.yml
 uv run easy-agent run "summarize the repository" --session-id demo-session --approval-mode deferred -c easy-agent.yml
 uv run easy-agent approvals list --status pending -c easy-agent.yml
 uv run easy-agent checkpoints <run_id> -c configs/teams.example.yml
@@ -277,13 +323,69 @@ The repository currently uses these verification paths on this machine:
 ```powershell
 uv run ruff check src tests scripts
 uv run mypy src tests scripts
-uv run python -m pytest tests/unit -q
-uv run python -m pytest tests/integration -m real -q
+uv run python -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-federation-workbench
+uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-federation-workbench
 uv run easy-agent --help
 uv run easy-agent doctor -c easy-agent.yml
+uv run easy-agent federation list -c easy-agent.yml
+uv run easy-agent workbench list -c easy-agent.yml
 uv run easy-agent harness list -c configs/harness.example.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 ```
+
+## Real Network Test Set Results
+
+Snapshot date: March 27, 2026.
+
+This snapshot was produced with Python `3.12.11`, local `.env.local` credentials, live DeepSeek calls, local Redis/PostgreSQL dependencies, and the repository's real MCP-backed integration suite.
+
+### Python Verification Snapshot
+
+| Suite | Command | Result |
+| --- | --- | --- |
+| Static checks | `uv run python -m ruff check src tests scripts` | passed |
+| Typing | `uv run python -m mypy src tests scripts` | passed |
+| Unit tests | `uv run python -m pytest tests/unit -q --basetemp=%TEMP%\\easy-agent-pytest\\unit-federation-workbench` | `63 passed` in `11.62s` |
+| Real integration tests | `uv run python -m pytest tests/integration -m real -q --basetemp=%TEMP%\\easy-agent-pytest\\integration-real-federation-workbench` | `4 passed` in `596.71s` |
+| Python CLI smoke | `CliRunner` against `agent_cli.app:app` for `--help`, `doctor`, `teams list`, `harness list`, `federation list` | passed |
+
+### Live Benchmark Snapshot
+
+| Mode | Success | Average Duration (s) |
+| --- | --- | --- |
+| `single_agent` | yes | `4.9189` |
+| `sub_agent` | yes | `15.9533` |
+| `multi_agent_graph` | yes | `13.4902` |
+| `team_round_robin` | yes | `7.7634` |
+| `team_selector` | yes | `26.4179` |
+| `team_swarm` | yes | `10.5093` |
+
+Source: `.easy-agent/benchmark-report.json` regenerated during the March 27, 2026 live integration pass.
+
+### Public Eval Snapshot
+
+| Suite | Pass Rate | Notes |
+| --- | --- | --- |
+| `bfcl_simple` | `0.75` | 6 of 8 cases passed |
+| `bfcl_multiple` | `0.25` | 2 of 8 cases passed |
+| `bfcl_parallel_multiple` | `0.00` | 0 of 4 cases passed |
+| `bfcl_irrelevance` | `0.00` | 0 of 4 cases passed |
+| `tau2_mock` | `1.00` | 3 of 3 cases passed |
+| `overall.bfcl_pass_rate` | `0.3333` | current DeepSeek compatibility baseline |
+
+Source: `.easy-agent/public-eval-report.json` regenerated during the March 27, 2026 live integration pass.
+
+Current caveat: the live suite still emits Windows `asyncio` subprocess cleanup warnings after completion, but the real tests and generated reports completed successfully.
+
+## Next Reinforcement
+
+The next hardening targets are based on the current A2A and MCP public protocol surfaces.
+
+- Extend federation from polling plus basic callbacks to stronger push delivery, retry policy, and richer `SubscribeToTask` lifecycle handling.
+- Enrich the agent-card model with stronger extended-card negotiation for modalities, capabilities, auth hints, and versioned compatibility metadata.
+- Upgrade remote federation auth from environment-backed headers to first-class OAuth/OIDC and optional mTLS for enterprise deployments.
+- Add container or microVM executor backends behind the workbench interface for stronger isolation and reusable long-lived environments.
+- Expand the real-network evaluation matrix to cover cross-process federation, long-lived workbench reuse, and replay or resume failure injection.
 
 ## Design References
 
@@ -294,6 +396,11 @@ uv run easy-agent teams list -c configs/teams.example.yml
 - OpenAI Agents SDK Tracing: [https://openai.github.io/openai-agents-python/tracing/](https://openai.github.io/openai-agents-python/tracing/)
 - AutoGen Teams: [https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html)
 - LangGraph Durable Execution: [https://docs.langchain.com/oss/python/langgraph/durable-execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)
+- A2A Protocol: [https://a2aprotocol.ai/](https://a2aprotocol.ai/)
+- A2A Reference Implementation: [https://github.com/a2aproject/A2A](https://github.com/a2aproject/A2A)
+- MCP Roots: [https://modelcontextprotocol.io/docs/concepts/roots](https://modelcontextprotocol.io/docs/concepts/roots)
+- MCP Sampling: [https://modelcontextprotocol.io/docs/concepts/sampling](https://modelcontextprotocol.io/docs/concepts/sampling)
+- MCP Elicitation: [https://modelcontextprotocol.io/docs/concepts/elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation)
 - MCP Transports: [https://modelcontextprotocol.io/docs/concepts/transports](https://modelcontextprotocol.io/docs/concepts/transports)
 
 ## Acknowledgements
@@ -304,3 +411,8 @@ uv run easy-agent teams list -c configs/teams.example.yml
 ## License
 
 [Apache-2.0](https://github.com/CloudWide851/easy-agent?tab=Apache-2.0-1-ov-file#)
+
+
+
+
+

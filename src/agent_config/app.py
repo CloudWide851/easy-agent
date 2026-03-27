@@ -203,6 +203,81 @@ class McpServerConfig(BaseModel):
         return self
 
 
+class FederationAuthConfig(BaseModel):
+    type: McpAuthType = McpAuthType.NONE
+    token_env: str | None = None
+    header_env: str | None = None
+    header_name: str = 'Authorization'
+    value_prefix: str = 'Bearer '
+
+    @model_validator(mode='after')
+    def validate_auth(self) -> FederationAuthConfig:
+        if self.type is McpAuthType.OAUTH:
+            raise ValueError('federation auth does not support oauth yet')
+        if self.type is McpAuthType.BEARER_ENV and not self.token_env:
+            raise ValueError('bearer_env auth requires token_env')
+        if self.type is McpAuthType.HEADER_ENV and not self.header_env:
+            raise ValueError('header_env auth requires header_env')
+        return self
+
+
+class FederationRemoteConfig(BaseModel):
+    name: str
+    base_url: str
+    auth: FederationAuthConfig = Field(default_factory=FederationAuthConfig)
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout_seconds: float = 30.0
+    poll_seconds: float = 0.2
+
+
+class FederationExportConfig(BaseModel):
+    name: str
+    target_type: Literal['agent', 'team', 'harness']
+    target: str
+    description: str = ''
+    tags: list[str] = Field(default_factory=list)
+    input_modes: list[str] = Field(default_factory=lambda: ['text'])
+    output_modes: list[str] = Field(default_factory=lambda: ['text'])
+
+
+class FederationServerConfig(BaseModel):
+    enabled: bool = False
+    host: str = '127.0.0.1'
+    port: int = 8787
+    base_path: str = '/a2a'
+    public_url: str | None = None
+
+
+class FederationConfig(BaseModel):
+    server: FederationServerConfig = Field(default_factory=FederationServerConfig)
+    remotes: list[FederationRemoteConfig] = Field(default_factory=list)
+    exports: list[FederationExportConfig] = Field(default_factory=list)
+
+    @property
+    def remote_map(self) -> dict[str, FederationRemoteConfig]:
+        return {remote.name: remote for remote in self.remotes}
+
+    @property
+    def export_map(self) -> dict[str, FederationExportConfig]:
+        return {item.name: item for item in self.exports}
+
+
+class ExecutorConfig(BaseModel):
+    name: str = 'process'
+    kind: Literal['process'] = 'process'
+    default_timeout_seconds: float = 30.0
+
+
+class WorkbenchConfig(BaseModel):
+    enabled: bool = True
+    root: str = '.easy-agent/workbench'
+    default_executor: str = 'process'
+    session_ttl_seconds: int = 3600
+    persistent_targets: list[SandboxTarget] = Field(
+        default_factory=lambda: [SandboxTarget.COMMAND_SKILL, SandboxTarget.STDIO_MCP]
+    )
+
+
 class StorageConfig(BaseModel):
     path: str = '.easy-agent'
     database: str = 'state.db'
@@ -268,6 +343,9 @@ class AppConfig(BaseModel):
     plugins: list[str] = Field(default_factory=list)
     skills: list[SkillSourceConfig] = Field(default_factory=list)
     mcp: list[McpServerConfig] = Field(default_factory=list)
+    federation: FederationConfig = Field(default_factory=FederationConfig)
+    executors: list[ExecutorConfig] = Field(default_factory=lambda: [ExecutorConfig()])
+    workbench: WorkbenchConfig = Field(default_factory=WorkbenchConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
@@ -289,6 +367,18 @@ class AppConfig(BaseModel):
     @property
     def mcp_map(self) -> dict[str, McpServerConfig]:
         return {server.name: server for server in self.mcp}
+
+    @property
+    def executor_map(self) -> dict[str, ExecutorConfig]:
+        return {executor.name: executor for executor in self.executors}
+
+    @property
+    def federation_remote_map(self) -> dict[str, FederationRemoteConfig]:
+        return {remote.name: remote for remote in self.federation.remotes}
+
+    @property
+    def federation_export_map(self) -> dict[str, FederationExportConfig]:
+        return {item.name: item for item in self.federation.exports}
 
     @model_validator(mode='after')
     def validate_harnesses(self) -> AppConfig:
@@ -312,6 +402,32 @@ class AppConfig(BaseModel):
                 )
         return self
 
+    @model_validator(mode='after')
+    def validate_workbench(self) -> AppConfig:
+        executor_names = [executor.name for executor in self.executors]
+        if len(executor_names) != len(set(executor_names)):
+            raise ValueError('executor names must be unique')
+        if self.workbench.default_executor not in self.executor_map:
+            raise ValueError('workbench.default_executor must reference a configured executor')
+        return self
+
+    @model_validator(mode='after')
+    def validate_federation(self) -> AppConfig:
+        remote_names = [remote.name for remote in self.federation.remotes]
+        export_names = [export.name for export in self.federation.exports]
+        if len(remote_names) != len(set(remote_names)):
+            raise ValueError('federation remote names must be unique')
+        if len(export_names) != len(set(export_names)):
+            raise ValueError('federation export names must be unique')
+        for export in self.federation.exports:
+            if export.target_type == 'agent' and export.target not in self.agent_map:
+                raise ValueError(f"federation export '{export.name}' references unknown agent '{export.target}'")
+            if export.target_type == 'team' and export.target not in self.team_map:
+                raise ValueError(f"federation export '{export.name}' references unknown team '{export.target}'")
+            if export.target_type == 'harness' and export.target not in self.harness_map:
+                raise ValueError(f"federation export '{export.name}' references unknown harness '{export.target}'")
+        return self
+
 
 def load_config(path: str | Path) -> AppConfig:
     load_local_env(path)
@@ -322,9 +438,14 @@ def load_config(path: str | Path) -> AppConfig:
     graph = expanded.setdefault('graph', {})
     graph.setdefault('teams', [])
     expanded.setdefault('harnesses', [])
+    expanded.setdefault('federation', {})
+    expanded.setdefault('executors', [{'name': 'process', 'kind': 'process', 'default_timeout_seconds': 30.0}])
+    expanded.setdefault('workbench', {})
     security = expanded.setdefault('security', {})
     security.setdefault('human_loop', {})
     return AppConfig.model_validate(expanded)
 
 
 load_local_env()
+
+

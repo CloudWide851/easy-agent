@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -122,7 +123,7 @@ def test_build_mcp_tool_name_sanitizes_separator() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_manager_infers_filesystem_roots_from_stdio_command(tmp_path) -> None:
+async def test_mcp_manager_infers_filesystem_roots_from_stdio_command(tmp_path: Path) -> None:
     sandbox_manager = SandboxManager(
         mode=SandboxMode.PROCESS,
         targets=[SandboxTarget.STDIO_MCP],
@@ -143,3 +144,4 @@ async def test_mcp_manager_infers_filesystem_roots_from_stdio_command(tmp_path) 
 
     assert roots[0]['path'] == str(tmp_path)
     assert roots[0]['uri'].startswith('file:///')
+

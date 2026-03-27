@@ -8,8 +8,9 @@ import anyio
 
 from agent_common.models import HumanLoopMode, HumanRequestStatus, ToolSpec
 from agent_common.tools import ToolHandler, ToolRegistry
-from agent_config.app import AppConfig, McpServerConfig, load_config
+from agent_config.app import AppConfig, FederationExportConfig, McpServerConfig, load_config
 from agent_graph import AgentOrchestrator, GraphScheduler
+from agent_integrations.federation import FederationClientManager, FederationServer
 from agent_integrations.guardrails import GuardrailEngine
 from agent_integrations.human_loop import HumanLoopManager, InlineApprovalResolver
 from agent_integrations.mcp import McpClientManager, build_mcp_tool_name
@@ -17,6 +18,7 @@ from agent_integrations.plugins import InlineRuntimePlugin, RuntimePlugin, Runti
 from agent_integrations.sandbox import SandboxManager, SandboxMode
 from agent_integrations.skills import SkillLoader, SkillMetadata
 from agent_integrations.storage import SQLiteRunStore
+from agent_integrations.workbench import WorkbenchManager
 from agent_protocols.client import HttpModelClient
 from agent_runtime.harness import HarnessRuntime
 
@@ -29,7 +31,9 @@ class EasyAgentRuntime:
         registry: ToolRegistry,
         store: SQLiteRunStore,
         sandbox_manager: SandboxManager,
+        workbench_manager: WorkbenchManager,
         mcp_manager: McpClientManager,
+        federation_manager: FederationClientManager,
         guardrail_engine: GuardrailEngine,
         human_loop: HumanLoopManager,
         orchestrator: AgentOrchestrator,
@@ -42,7 +46,9 @@ class EasyAgentRuntime:
         self.registry = registry
         self.store = store
         self.sandbox_manager = sandbox_manager
+        self.workbench_manager = workbench_manager
         self.mcp_manager = mcp_manager
+        self.federation_manager = federation_manager
         self.guardrail_engine = guardrail_engine
         self.human_loop = human_loop
         self.orchestrator = orchestrator
@@ -54,6 +60,7 @@ class EasyAgentRuntime:
         self._plugin_host = RuntimePluginHost(self)
         self._started = False
         self._bound_mcp_tools: set[str] = set()
+        self._federation_server = FederationServer(self)
 
     def load(self, source: str | Path | RuntimePlugin) -> EasyAgentRuntime:
         descriptor = self._plugin_host.load(source)
@@ -73,7 +80,12 @@ class EasyAgentRuntime:
         resolved_path = path.resolve()
         if resolved_path in self._loaded_skill_paths:
             return []
-        loader = SkillLoader([resolved_path], self.config.security.allowed_commands, self.sandbox_manager)
+        loader = SkillLoader(
+            [resolved_path],
+            self.config.security.allowed_commands,
+            self.sandbox_manager,
+            self.workbench_manager,
+        )
         loaded = loader.register(self.registry)
         self.skills.extend(loaded)
         self._loaded_skill_paths.add(resolved_path)
@@ -91,6 +103,10 @@ class EasyAgentRuntime:
         self.sandbox_manager.mode = SandboxMode(mode)
 
     async def start(self) -> None:
+        if self._started:
+            return
+        await self.federation_manager.start()
+        self.federation_manager.register_tools(self.registry)
         await self.mcp_manager.start()
         await self._bind_mcp_tools()
         self._started = True
@@ -142,6 +158,25 @@ class EasyAgentRuntime:
         if not self._started:
             await self.start()
         return await self.harness_runtime.run(name, input_text, session_id=session_id, approval_mode=approval_mode)
+
+    async def run_federated_export(
+        self,
+        export_name: str,
+        input_text: str,
+        *,
+        session_id: str | None = None,
+        approval_mode: HumanLoopMode = HumanLoopMode.HYBRID,
+    ) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        export = self._resolve_export(export_name)
+        if export.target_type == 'agent':
+            return await self.scheduler.run_agent_target(export.target, input_text, session_id=session_id, approval_mode=approval_mode)
+        if export.target_type == 'team':
+            return await self.scheduler.run_team_target(export.target, input_text, session_id=session_id, approval_mode=approval_mode)
+        if export.target_type == 'harness':
+            return await self.harness_runtime.run(export.target, input_text, session_id=session_id, approval_mode=approval_mode)
+        raise RuntimeError(f'Unsupported federation export type: {export.target_type}')
 
     async def stream(
         self,
@@ -336,10 +371,54 @@ class EasyAgentRuntime:
             span_id=f'human:interrupt:{run_id}',
         )
 
+    async def list_remotes(self) -> list[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.list_remotes()
+
+    async def inspect_remote(self, remote_name: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.inspect_remote(remote_name)
+
+    def serve_federation(self) -> dict[str, Any]:
+        return self._federation_server.start()
+
+    def stop_federation(self) -> None:
+        self._federation_server.stop()
+
+    def list_workbench_sessions(self, owner_run_id: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {
+                'session_id': item.session_id,
+                'owner_run_id': item.owner_run_id,
+                'name': item.name,
+                'root_path': str(item.root_path),
+                'status': item.status,
+                'executor_name': item.executor_name,
+                'branch_parent_session_id': item.branch_parent_session_id,
+                'expires_at': item.expires_at,
+                'metadata': item.metadata,
+            }
+            for item in self.workbench_manager.list_sessions(owner_run_id=owner_run_id)
+        ]
+
+    def gc_workbench_sessions(self) -> list[str]:
+        return self.workbench_manager.gc_expired()
+
     async def aclose(self) -> None:
+        self.stop_federation()
+        await self.federation_manager.aclose()
         await self.mcp_manager.aclose()
         await self.model_client.aclose()
         self._started = False
+
+    def _resolve_export(self, export_name: str) -> FederationExportConfig:
+        try:
+            return self.config.federation_export_map[export_name]
+        except KeyError as exc:
+            raise RuntimeError(f'Unknown federation export: {export_name}') from exc
+
 
 
 def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
@@ -353,23 +432,57 @@ def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
     )
     registry = ToolRegistry()
     store = SQLiteRunStore(Path(config.storage.path), config.storage.database)
+    workbench_manager = WorkbenchManager(
+        store,
+        sandbox_manager,
+        Path(config.workbench.root),
+        default_executor=config.workbench.default_executor,
+        session_ttl_seconds=config.workbench.session_ttl_seconds,
+    )
     guardrail_engine = GuardrailEngine(
         tool_input_hooks=config.guardrails.tool_input_hooks,
         final_output_hooks=config.guardrails.final_output_hooks,
     )
     human_loop = HumanLoopManager(store, config.security.human_loop)
     model_client = HttpModelClient(config.model)
-    mcp_manager = McpClientManager(config.mcp, sandbox_manager, store=store, model_client=model_client, human_loop=human_loop)
+    federation_manager = FederationClientManager(config.federation, store=store)
+    mcp_manager = McpClientManager(
+        config.mcp,
+        sandbox_manager,
+        workbench_manager=workbench_manager,
+        store=store,
+        model_client=model_client,
+        human_loop=human_loop,
+    )
     orchestrator = AgentOrchestrator(config, model_client, registry, store, guardrail_engine, human_loop)
-    scheduler = GraphScheduler(config, registry, orchestrator, store, mcp_manager, guardrail_engine, human_loop)
-    harness_runtime = HarnessRuntime(config, orchestrator, store, guardrail_engine, human_loop)
+    scheduler = GraphScheduler(
+        config,
+        registry,
+        orchestrator,
+        store,
+        mcp_manager,
+        guardrail_engine,
+        human_loop,
+        workbench_manager=workbench_manager,
+        federation_manager=federation_manager,
+    )
+    harness_runtime = HarnessRuntime(
+        config,
+        orchestrator,
+        store,
+        guardrail_engine,
+        human_loop,
+        workbench_manager=workbench_manager,
+    )
     runtime = EasyAgentRuntime(
         config,
         model_client,
         registry,
         store,
         sandbox_manager,
+        workbench_manager,
         mcp_manager,
+        federation_manager,
         guardrail_engine,
         human_loop,
         orchestrator,
@@ -382,6 +495,7 @@ def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
         runtime.load(InlineRuntimePlugin(skill_paths=[Path(item.path) for item in config.skills]))
     orchestrator.register_subagent_tools()
     return runtime
+
 
 
 def build_runtime(config_path: str | Path) -> EasyAgentRuntime:
