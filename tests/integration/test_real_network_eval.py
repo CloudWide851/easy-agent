@@ -22,6 +22,9 @@ def test_real_network_suite_generates_matrix_report() -> None:
     assert scenarios['cross_process_federation']['status'] == 'passed'
     assert scenarios['disconnect_retry_chaos']['status'] == 'passed'
     assert scenarios['workbench_reuse_process']['status'] == 'passed'
+    assert scenarios['workbench_reuse_container']['status'] == 'passed'
+    assert scenarios['workbench_reuse_microvm']['status'] == 'passed'
     assert scenarios['replay_resume_failure_injection']['status'] == 'passed'
+    assert report['summary']['skipped'] == 0
     assert Path('.easy-agent/real-network-report.json').is_file()
 

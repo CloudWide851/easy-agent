@@ -153,6 +153,17 @@ class WorkbenchManager:
         self.store.touch_workbench_session(session_id, self._expires_at(), runtime_state=runtime_state)
         return session
 
+    def shutdown_session(self, session_id: str) -> WorkbenchSession:
+        session = self.load_session(session_id)
+        runtime_state = self._backend(session).shutdown_session(self._executor_session(session))
+        session.runtime_state = runtime_state
+        self.store.touch_workbench_session(session_id, self._expires_at(), runtime_state=runtime_state)
+        return session
+
+    def restart_session(self, session_id: str) -> WorkbenchSession:
+        self.shutdown_session(session_id)
+        return self._ensure_executor_state(self.load_session(session_id))
+
     def snapshot_manifest(self, owner_run_id: str) -> dict[str, Any]:
         sessions = [self.sync_session(item.session_id) for item in self.list_sessions(owner_run_id=owner_run_id)]
         return {

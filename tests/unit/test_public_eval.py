@@ -73,3 +73,25 @@ def test_normalize_schema_converts_non_openai_json_types() -> None:
     assert schema['type'] == 'object'
     assert schema['properties']['items']['type'] == 'array'
     assert schema['properties']['items']['items']['type'] == 'object'
+
+
+def test_normalize_schema_flattens_variants_and_removes_provider_noise() -> None:
+    schema = _normalize_schema(
+        {
+            'anyOf': [
+                {'type': 'null'},
+                {
+                    'type': ['object', 'null'],
+                    'properties': {'when': {'type': 'string', 'format': 'date-time', 'title': 'When'}},
+                    'required': ['when', 'missing'],
+                    'title': 'Root',
+                },
+            ]
+        }
+    )
+
+    assert schema['type'] == 'object'
+    assert schema['required'] == ['when']
+    assert schema['properties']['when']['type'] == 'string'
+    assert 'format' not in schema['properties']['when']
+    assert 'title' not in schema

@@ -7,6 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added public-A2A-aligned federation compatibility for well-known discovery, richer agent-card metadata, `pushNotificationConfig` set/get/list/delete helpers, and reconnect-safe `sendSubscribe` / `resubscribe` flows.
+- Added broader federation CLI coverage for remote task inspection, cancellation, subscription management, push-notification management, and subscribe or resubscribe operations.
+- Added repeatable host-backed executor coverage so the real-network suite now exercises offline container restore and `podman_machine` microVM recovery instead of leaving those rows as `skipped`.
+
+### Changed
+
+- Strengthened federation routing, discovery bootstrapping, SSE fallback handling, and task-state persistence so remote task delivery stays closer to the public A2A contract.
+- Hardened executor and workbench flows with offline image preload, snapshot-style restore, resource quota controls, session restart or shutdown helpers, and broader host-environment variable passthrough for sandboxed processes.
+- Tightened public-eval schema normalization and tool-call prompting to reduce provider-side schema failures on OpenAI-compatible endpoints, while keeping the current DeepSeek BFCL limitations documented.
+- Refreshed the bilingual README pair to document shipped A2A compatibility, executor coverage, the latest real-network matrix, and next reinforcement items grounded in current A2A and MCP specifications.
+
+### Verified
+
+- `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
+- `.\.venv\Scripts\python.exe -m mypy src tests scripts`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `76 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -q -m real --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `4 passed, 1 skipped`
+- Python helper calling `run_real_network_suite()` refreshed `.easy-agent/real-network-report.json` with `6 passed`, `0 failed`, `0 skipped`
+
 ## [0.3.2] - 2026-03-27
 
 ### Added

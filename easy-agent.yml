@@ -76,6 +76,11 @@ security:
       - HOME
       - APPDATA
       - LOCALAPPDATA
+      - USERNAME
+      - HOMEDRIVE
+      - HOMEPATH
+      - PROGRAMDATA
+      - PUBLIC
       - DEEPSEEK_API_KEY
     working_root: .
     windows_sandbox_fallback: process

@@ -225,11 +225,13 @@ class FederationAuthConfig(BaseModel):
 class FederationRemoteConfig(BaseModel):
     name: str
     base_url: str
+    discovery_url: str | None = None
     auth: FederationAuthConfig = Field(default_factory=FederationAuthConfig)
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30.0
     poll_seconds: float = 0.2
     push_preference: Literal['auto', 'sse', 'poll'] = 'auto'
+    sse_reconnect_seconds: float = 0.5
 
 
 class FederationExportConfig(BaseModel):
@@ -256,6 +258,8 @@ class FederationServerConfig(BaseModel):
     retry_max_attempts: int = 4
     retry_initial_backoff_seconds: float = 0.5
     retry_backoff_multiplier: float = 2.0
+    well_known_path: str = '/.well-known/agent-card.json'
+    legacy_well_known_path: str = '/.well-known/agent.json'
 
 
 class FederationConfig(BaseModel):
@@ -279,9 +283,18 @@ class ContainerExecutorOptions(BaseModel):
     keepalive_command: list[str] = Field(default_factory=lambda: ['sleep', 'infinity'])
     run_args: list[str] = Field(default_factory=list)
     exec_args: list[str] = Field(default_factory=list)
+    bootstrap_context: str | None = None
+    bootstrap_containerfile: str | None = None
+    image_archive: str | None = None
+    auto_build: bool = True
+    auto_load: bool = True
+    checkpoint_enabled: bool = False
+    memory_mb: int | None = None
+    cpus: float | None = None
 
 
 class MicrovmExecutorOptions(BaseModel):
+    provider: Literal['qemu', 'podman_machine'] = 'qemu'
     executable: str = 'qemu-system-x86_64'
     base_image: str | None = None
     ssh_user: str = 'agent'
@@ -291,6 +304,9 @@ class MicrovmExecutorOptions(BaseModel):
     memory_mb: int = 1024
     cpus: int = 1
     extra_args: list[str] = Field(default_factory=list)
+    machine_name: str = 'podman-machine-default'
+    checkpoint_enabled: bool = False
+    disk_size_gb: int | None = None
 
 
 class ExecutorConfig(BaseModel):
@@ -364,6 +380,15 @@ class SandboxConfig(BaseModel):
             'COMSPEC',
             'TEMP',
             'TMP',
+            'USERPROFILE',
+            'HOME',
+            'APPDATA',
+            'LOCALAPPDATA',
+            'USERNAME',
+            'HOMEDRIVE',
+            'HOMEPATH',
+            'PROGRAMDATA',
+            'PUBLIC',
             'DEEPSEEK_API_KEY',
         ]
     )

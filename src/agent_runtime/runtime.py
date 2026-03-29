@@ -387,6 +387,26 @@ class EasyAgentRuntime:
             await self.start()
         return await self.federation_manager.list_tasks(remote_name)
 
+    async def get_remote_task(self, remote_name: str, task_id: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.get_task(remote_name, task_id)
+
+    async def cancel_remote_task(self, remote_name: str, task_id: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.cancel_task(remote_name, task_id)
+
+    async def stream_remote_task_events(
+        self,
+        remote_name: str,
+        task_id: str,
+        after_sequence: int = 0,
+    ) -> list[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.stream_task_events(remote_name, task_id, after_sequence)
+
     async def list_remote_task_events(
         self,
         remote_name: str,
@@ -428,6 +448,84 @@ class EasyAgentRuntime:
         if not self._started:
             await self.start()
         return await self.federation_manager.cancel_subscription(remote_name, task_id, subscription_id)
+
+    async def set_remote_push_notification(
+        self,
+        remote_name: str,
+        task_id: str,
+        callback_url: str,
+        *,
+        lease_seconds: int | None = None,
+        from_sequence: int = 0,
+    ) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.set_push_notification(
+            remote_name,
+            task_id,
+            callback_url,
+            lease_seconds=lease_seconds,
+            from_sequence=from_sequence,
+        )
+
+    async def get_remote_push_notification(self, remote_name: str, task_id: str, config_id: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.get_push_notification(remote_name, task_id, config_id)
+
+    async def list_remote_push_notifications(self, remote_name: str, task_id: str) -> list[dict[str, Any]]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.list_push_notifications(remote_name, task_id)
+
+    async def delete_remote_push_notification(self, remote_name: str, task_id: str, config_id: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.delete_push_notification(remote_name, task_id, config_id)
+
+    async def send_subscribe_remote(
+        self,
+        remote_name: str,
+        target: str,
+        input_text: str,
+        callback_url: str,
+        *,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        lease_seconds: int | None = None,
+        from_sequence: int = 0,
+    ) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.send_subscribe(
+            remote_name,
+            target,
+            input_text,
+            callback_url,
+            session_id=session_id,
+            metadata=metadata,
+            lease_seconds=lease_seconds,
+            from_sequence=from_sequence,
+        )
+
+    async def resubscribe_remote_task(
+        self,
+        remote_name: str,
+        task_id: str,
+        *,
+        from_sequence: int = 0,
+        callback_url: str | None = None,
+        lease_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.resubscribe_task(
+            remote_name,
+            task_id,
+            from_sequence=from_sequence,
+            callback_url=callback_url,
+            lease_seconds=lease_seconds,
+        )
 
     def serve_federation(self) -> dict[str, Any]:
         return self._federation_server.start()

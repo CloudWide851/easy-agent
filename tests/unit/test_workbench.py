@@ -84,3 +84,14 @@ def test_workbench_session_persists_runtime_state(tmp_path: Path) -> None:
 
     assert loaded.executor_name == 'process'
     assert loaded.runtime_state == {}
+
+
+def test_workbench_shutdown_and_restart_preserve_session_identity(tmp_path: Path) -> None:
+    _, manager = _manager(tmp_path)
+    session = manager.ensure_session('run-f', 'skill-restart')
+
+    shutdown = manager.shutdown_session(session.session_id)
+    restarted = manager.restart_session(session.session_id)
+
+    assert shutdown.session_id == session.session_id
+    assert restarted.session_id == session.session_id

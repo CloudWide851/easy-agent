@@ -160,10 +160,13 @@ _CROSS_PROCESS_SERVER = textwrap.dedent(
             self.wfile.write(data)
 
         def do_GET(self):
-            if self.path == '/a2a/agent-card':
-                self._write({'name': 'subproc', 'protocol_version': '0.3', 'exports': [{'name': 'remote_echo', 'capabilities': {'modalities': ['text']}}]})
+            if self.path == '/.well-known/agent-card.json':
+                self._write({'name': 'subproc', 'url': f'http://127.0.0.1:{self.server.server_address[1]}/a2a', 'protocol_version': '0.3', 'exports': [{'name': 'remote_echo', 'capabilities': {'modalities': ['text']}}]})
                 return
-            if self.path == '/a2a/agent-card/extended':
+            if self.path == '/a2a/agent-card':
+                self._write({'name': 'subproc', 'url': f'http://127.0.0.1:{self.server.server_address[1]}/a2a', 'protocol_version': '0.3', 'exports': [{'name': 'remote_echo', 'capabilities': {'modalities': ['text']}}]})
+                return
+            if self.path in {'/a2a/extendedAgentCard', '/a2a/agent-card/extended'}:
                 self._write({'name': 'subproc', 'capabilities': {'push_delivery': {'sse_events': False}}, 'retry_policy': {'max_attempts': 1}})
                 return
             if self.path == '/a2a/tasks':
@@ -176,15 +179,10 @@ _CROSS_PROCESS_SERVER = textwrap.dedent(
             self._write({'error': 'not_found'}, status=404)
 
         def do_POST(self):
-            if self.path == '/a2a/tasks/send':
+            if self.path in {'/a2a/tasks/send', '/a2a/message:send'}:
                 payload = self._json()
                 task_id = uuid.uuid4().hex
-                task = {
-                    'task_id': task_id,
-                    'status': 'running',
-                    'response_payload': None,
-                    'error_message': None,
-                }
+                task = {'task_id': task_id, 'status': 'running', 'response_payload': None, 'error_message': None}
                 tasks[task_id] = task
                 def worker():
                     time.sleep(0.1)
@@ -224,18 +222,102 @@ def _record(scenario: str, transport: str, host_dependency: str, runner: Any, *,
     )
 
 
+def _run(command: list[str], *, timeout_seconds: float = 60.0) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout_seconds)
+
+
+def _podman_machine_info(podman_executable: str) -> dict[str, Any]:
+    listing = _run([podman_executable, 'machine', 'list', '--format', 'json'], timeout_seconds=30.0)
+    if listing.returncode != 0:
+        raise RuntimeError(listing.stderr.strip() or listing.stdout.strip() or 'podman machine list failed')
+    machines = json.loads(listing.stdout or '[]')
+    if not machines:
+        raise RuntimeError('skipped: no podman machine is configured')
+    machine = next((item for item in machines if item.get('Default')), machines[0])
+    if not machine.get('Running'):
+        started = _run([podman_executable, 'machine', 'start', str(machine['Name'])], timeout_seconds=180.0)
+        if started.returncode != 0:
+            raise RuntimeError(started.stderr.strip() or started.stdout.strip() or 'failed to start podman machine')
+    inspect = _run([podman_executable, 'machine', 'inspect', str(machine['Name'])], timeout_seconds=30.0)
+    if inspect.returncode != 0:
+        raise RuntimeError(inspect.stderr.strip() or inspect.stdout.strip() or 'podman machine inspect failed')
+    payload = json.loads(inspect.stdout or '[]')
+    details = payload[0] if isinstance(payload, list) and payload else payload
+    ssh_config = dict(details.get('SSHConfig', {}))
+    return {
+        'name': str(details.get('Name') or machine['Name']),
+        'port': int(ssh_config.get('Port') or machine.get('Port') or 0),
+        'user': str(ssh_config.get('RemoteUsername') or machine.get('RemoteUsername') or 'user'),
+        'identity_path': str(ssh_config.get('IdentityPath') or machine.get('IdentityPath') or ''),
+    }
+
+
+def _ssh_base_args(info: dict[str, Any]) -> list[str]:
+    return [
+        'ssh',
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'StrictHostKeyChecking=no',
+        '-o',
+        'UserKnownHostsFile=NUL',
+        '-i',
+        str(info['identity_path']),
+        '-p',
+        str(info['port']),
+        f"{info['user']}@127.0.0.1",
+    ]
+
+
+def _ensure_offline_container_archive(cache_root: Path, podman_executable: str) -> Path:
+    cache_root.mkdir(parents=True, exist_ok=True)
+    archive_path = cache_root / 'podman-machine-python-rootfs.tar'
+    if archive_path.exists() and 0 < archive_path.stat().st_size < 500 * 1024 * 1024:
+        return archive_path
+    archive_path.unlink(missing_ok=True)
+    info = _podman_machine_info(podman_executable)
+    remote_command = [
+        'sudo',
+        'tar',
+        '--numeric-owner',
+        '-C',
+        '/',
+        '-cf',
+        '-',
+        'usr/bin/python3',
+        'usr/bin/python3.14',
+        'usr/lib64/python3.14',
+        'usr/lib/python3.14',
+        'lib64/libpython3.14.so.1.0',
+        'lib64/libc.so.6',
+        'lib64/libm.so.6',
+        'lib64/ld-linux-x86-64.so.2',
+    ]
+    with archive_path.open('wb') as handle:
+        process = subprocess.Popen(
+            [*_ssh_base_args(info), *remote_command],
+            stdout=handle,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+        _, stderr = process.communicate(timeout=900.0)
+    if process.returncode != 0:
+        archive_path.unlink(missing_ok=True)
+        raise RuntimeError(stderr.decode('utf-8', errors='ignore').strip() or 'failed to export podman-machine rootfs archive')
+    if archive_path.stat().st_size <= 0:
+        archive_path.unlink(missing_ok=True)
+        raise RuntimeError('failed to create offline rootfs archive')
+    return archive_path
+
+
 def _scenario_cross_process_federation() -> str:
-    process = subprocess.Popen(
-        [sys.executable, '-c', _CROSS_PROCESS_SERVER],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    process = subprocess.Popen([sys.executable, '-c', _CROSS_PROCESS_SERVER], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         port_line = process.stdout.readline().strip() if process.stdout is not None else ''
         if not port_line:
             raise RuntimeError('subprocess federation server did not report a port')
-        async def _run() -> str:
+
+        async def _run_async() -> str:
             manager = FederationClientManager(
                 AppConfig.model_validate(
                     {
@@ -254,8 +336,9 @@ def _scenario_cross_process_federation() -> str:
                 raise AssertionError('unexpected remote export')
             if result['result']['echo'] != 'CROSS-PROCESS':
                 raise AssertionError('unexpected remote result')
-            return 'cross-process send/poll federation passed'
-        return asyncio.run(_run())
+            return 'cross-process well-known discovery and send/poll federation passed'
+
+        return asyncio.run(_run_async())
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -268,7 +351,8 @@ def _scenario_federation_retry_and_reconnect(tmp_path: Path) -> str:
     callback_url = callback.start()
     status = server.start()
     base_url = f"http://127.0.0.1:{status['port']}"
-    async def _run() -> str:
+
+    async def _run_async() -> str:
         manager = FederationClientManager(
             AppConfig.model_validate(
                 {
@@ -280,26 +364,32 @@ def _scenario_federation_retry_and_reconnect(tmp_path: Path) -> str:
         )
         await manager.start()
         try:
-            client = manager._client('loopback')
-            response = await client.post('/a2a/tasks/send', json={'target': 'local_echo', 'input': 'deliver-me'})
-            task_id = str(response.json()['task']['task_id'])
-            await asyncio.sleep(0.2)
-            await manager.subscribe_task('loopback', task_id, callback_url, from_sequence=0)
-            await asyncio.sleep(0.3)
-            subscriptions = await manager.list_subscriptions('loopback', task_id)
-            if subscriptions[0]['status'] != 'delivered':
-                raise AssertionError(f"subscription not delivered: {subscriptions[0]['status']}")
+            response = await manager.send_subscribe('loopback', 'local_echo', 'deliver-me', callback_url, from_sequence=0)
+            task_id = str(response['task']['task_id'])
+            subscriptions: list[dict[str, Any]] = []
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                subscriptions = await manager.list_push_notifications('loopback', task_id)
+                if subscriptions and subscriptions[0]['status'] == 'delivered':
+                    break
+                await asyncio.sleep(0.2)
+            if not subscriptions or subscriptions[0]['status'] != 'delivered':
+                raise AssertionError(f"subscription not delivered: {subscriptions[0]['status'] if subscriptions else 'missing'}")
+            replay = await manager.resubscribe_task('loopback', task_id, from_sequence=0)
             renewed = await manager.renew_subscription('loopback', task_id, str(subscriptions[0]['subscription_id']), lease_seconds=60)
             cancelled = await manager.cancel_subscription('loopback', task_id, str(subscriptions[0]['subscription_id']))
+            if not replay['events']:
+                raise AssertionError('resubscribe did not return backlog events')
             if renewed['status'] != 'active' or cancelled['status'] != 'cancelled':
                 raise AssertionError('subscription lifecycle mismatch')
             if callback.attempts < 2:
                 raise AssertionError('retry backoff was not exercised')
-            return 'callback retry, renew, cancel, and reconnect-style resubscribe flow passed'
+            return 'callback retry, pushNotificationConfig, sendSubscribe, and resubscribe passed'
         finally:
             await manager.aclose()
+
     try:
-        return asyncio.run(_run())
+        return asyncio.run(_run_async())
     finally:
         callback.stop()
         server.stop()
@@ -309,17 +399,11 @@ def _workbench_manager(base_path: Path, executors: list[ExecutorConfig], default
     sandbox = SandboxManager(
         mode=SandboxMode.PROCESS,
         targets=[SandboxTarget.COMMAND_SKILL, SandboxTarget.STDIO_MCP],
-        env_allowlist=['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP'],
+        env_allowlist=['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'HOMEDRIVE', 'HOMEPATH', 'PROGRAMDATA', 'PUBLIC'],
         working_root=base_path,
     )
     store = SQLiteRunStore(base_path / 'state', 'state.db')
-    return WorkbenchManager(
-        store,
-        build_executor_backends(executors, sandbox),
-        base_path / 'workbench',
-        default_executor=default_executor,
-        session_ttl_seconds=300,
-    )
+    return WorkbenchManager(store, build_executor_backends(executors, sandbox), base_path / 'workbench', default_executor=default_executor, session_ttl_seconds=300)
 
 
 def _scenario_process_workbench_reuse(tmp_path: Path) -> str:
@@ -336,17 +420,26 @@ def _scenario_process_workbench_reuse(tmp_path: Path) -> str:
 
 def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
-    image = os.environ.get('EASY_AGENT_CONTAINER_IMAGE')
-    if not image:
-        raise RuntimeError('skipped: EASY_AGENT_CONTAINER_IMAGE is not set')
+    archive = _ensure_offline_container_archive(Path('.easy-agent/offline-images'), podman_executable)
+    image = os.environ.get('EASY_AGENT_CONTAINER_IMAGE', 'localhost/easy-agent/offline-python:latest')
     manager = _workbench_manager(
         tmp_path,
         [
             ExecutorConfig(
                 name='containerized',
                 kind='container',
-                default_timeout_seconds=20,
-                container=ContainerExecutorOptions(executable=podman_executable, image=image),
+                default_timeout_seconds=120,
+                container=ContainerExecutorOptions(
+                    executable=podman_executable,
+                    image=image,
+                    image_archive=str(archive),
+                    keepalive_command=['python3', '-c', 'import time; time.sleep(10**9)'],
+                    auto_load=True,
+                    auto_build=False,
+                    checkpoint_enabled=True,
+                    memory_mb=512,
+                    cpus=1.0,
+                ),
             )
         ],
         'containerized',
@@ -354,57 +447,76 @@ def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
     session = manager.ensure_session('run-container', 'skill-echo')
     result = manager.run_command(
         session.session_id,
-        ['python', '-c', "print('container-ok')"],
+        ['python3', '-c', "from pathlib import Path; Path('container-marker.txt').write_text('container-checkpoint', encoding='utf-8'); print('container-ok')"],
         env={},
-        timeout_seconds=20,
+        timeout_seconds=120,
         target=SandboxTarget.COMMAND_SKILL,
     )
     if result.returncode != 0 or 'container-ok' not in result.stdout:
         raise AssertionError(result.stderr or result.stdout)
-    reused = manager.ensure_session('run-container', 'skill-echo')
-    if session.session_id != reused.session_id:
-        raise AssertionError('container session was not reused')
-    return 'container executor reused the same session and executed inside podman'
+    shutdown = manager.shutdown_session(session.session_id)
+    if shutdown.runtime_state.get('status') != 'checkpointed':
+        raise AssertionError('container checkpoint state was not recorded')
+    restarted = manager.restart_session(session.session_id)
+    result_after = manager.run_command(
+        restarted.session_id,
+        ['python3', '-c', "from pathlib import Path; print(Path('container-marker.txt').read_text(encoding='utf-8'))"],
+        env={},
+        timeout_seconds=120,
+        target=SandboxTarget.COMMAND_SKILL,
+    )
+    if result_after.returncode != 0 or 'container-checkpoint' not in result_after.stdout:
+        raise AssertionError(result_after.stderr or result_after.stdout)
+    if restarted.runtime_state.get('image') != restarted.runtime_state.get('snapshot_image'):
+        raise AssertionError('container restart did not restore from the snapshot image')
+    return 'container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image'
 
 
 def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
-    base_image = os.environ.get('EASY_AGENT_QEMU_BASE_IMAGE')
-    ssh_key = os.environ.get('EASY_AGENT_QEMU_SSH_KEY')
-    qemu_executable = os.environ.get('EASY_AGENT_QEMU_EXE', 'qemu-system-x86_64')
-    ssh_user = os.environ.get('EASY_AGENT_QEMU_SSH_USER', 'agent')
-    if not base_image or not ssh_key:
-        raise RuntimeError('skipped: EASY_AGENT_QEMU_BASE_IMAGE or EASY_AGENT_QEMU_SSH_KEY is not set')
+    podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
+    machine = _podman_machine_info(podman_executable)
     manager = _workbench_manager(
         tmp_path,
         [
             ExecutorConfig(
-                name='microvm-qemu',
+                name='microvm-machine',
                 kind='microvm',
-                default_timeout_seconds=45,
+                default_timeout_seconds=90,
                 microvm=MicrovmExecutorOptions(
-                    executable=qemu_executable,
-                    base_image=base_image,
-                    ssh_user=ssh_user,
-                    ssh_private_key=ssh_key,
+                    provider='podman_machine',
+                    executable=podman_executable,
+                    machine_name=machine['name'],
+                    ssh_user=machine['user'],
+                    ssh_private_key=machine['identity_path'],
+                    guest_workdir='/tmp/easy-agent-workbench',
+                    checkpoint_enabled=True,
                 ),
             )
         ],
-        'microvm-qemu',
+        'microvm-machine',
     )
     session = manager.ensure_session('run-microvm', 'skill-echo')
     result = manager.run_command(
         session.session_id,
-        ['python3', '-c', "print('microvm-ok')"],
+        ['python3', '-c', "from pathlib import Path; Path('microvm-marker.txt').write_text('microvm-checkpoint', encoding='utf-8'); print('microvm-ok')"],
         env={},
-        timeout_seconds=45,
+        timeout_seconds=90,
         target=SandboxTarget.COMMAND_SKILL,
     )
     if result.returncode != 0 or 'microvm-ok' not in result.stdout:
         raise AssertionError(result.stderr or result.stdout)
-    reused = manager.ensure_session('run-microvm', 'skill-echo')
-    if session.session_id != reused.session_id:
-        raise AssertionError('microvm session was not reused')
-    return 'microvm executor reused the same session and executed through ssh'
+    manager.shutdown_session(session.session_id)
+    restarted = manager.restart_session(session.session_id)
+    result_after = manager.run_command(
+        restarted.session_id,
+        ['python3', '-c', "from pathlib import Path; print(Path('microvm-marker.txt').read_text(encoding='utf-8'))"],
+        env={},
+        timeout_seconds=90,
+        target=SandboxTarget.COMMAND_SKILL,
+    )
+    if result_after.returncode != 0 or 'microvm-checkpoint' not in result_after.stdout:
+        raise AssertionError(result_after.stderr or result_after.stdout)
+    return 'microvm executor reused the podman machine over SSH and recovered after a disconnect-style restart'
 
 
 def _scenario_replay_resume_failure_injection(tmp_path: Path) -> str:
@@ -433,11 +545,9 @@ def _scenario_replay_resume_failure_injection(tmp_path: Path) -> str:
             raise RuntimeError('injected failure')
         return {'status': 'recovered'}
 
-    runtime.register_tool(
-        spec=ToolSpec(name='flaky_tool', description='flaky', input_schema={'type': 'object'}),
-        handler=flaky_tool,
-    )
-    async def _run() -> str:
+    runtime.register_tool(spec=ToolSpec(name='flaky_tool', description='flaky', input_schema={'type': 'object'}), handler=flaky_tool)
+
+    async def _run_async() -> str:
         try:
             first_run_id: str | None = None
             try:
@@ -465,7 +575,8 @@ def _scenario_replay_resume_failure_injection(tmp_path: Path) -> str:
             return 'resume, replay, and fork recovery passed under injected failure'
         finally:
             await runtime.aclose()
-    return asyncio.run(_run())
+
+    return asyncio.run(_run_async())
 
 
 def run_real_network_suite(config_path: str | Path = 'easy-agent.yml') -> dict[str, Any]:
@@ -477,21 +588,11 @@ def run_real_network_suite(config_path: str | Path = 'easy-agent.yml') -> dict[s
     try:
         records = [
             _record('cross_process_federation', 'http_poll', 'python subprocess', _scenario_cross_process_federation),
-            _record(
-                'disconnect_retry_chaos',
-                'http_webhook',
-                'loopback callback server',
-                lambda: _scenario_federation_retry_and_reconnect(tmp_root / 'federation'),
-            ),
+            _record('disconnect_retry_chaos', 'http_webhook', 'loopback callback server', lambda: _scenario_federation_retry_and_reconnect(tmp_root / 'federation')),
             _record('workbench_reuse_process', 'local_process', 'none', lambda: _scenario_process_workbench_reuse(tmp_root / 'process')),
-            _record('workbench_reuse_container', 'podman_exec', 'podman image', lambda: _scenario_container_workbench_reuse(tmp_root / 'container')),
-            _record('workbench_reuse_microvm', 'qemu_ssh', 'qemu image + ssh key', lambda: _scenario_microvm_workbench_reuse(tmp_root / 'microvm')),
-            _record(
-                'replay_resume_failure_injection',
-                'sqlite_checkpoint',
-                'none',
-                lambda: _scenario_replay_resume_failure_injection(tmp_root / 'resume'),
-            ),
+            _record('workbench_reuse_container', 'podman_exec', 'podman machine rootfs import', lambda: _scenario_container_workbench_reuse(tmp_root / 'container')),
+            _record('workbench_reuse_microvm', 'podman_machine_ssh', 'podman machine ssh', lambda: _scenario_microvm_workbench_reuse(tmp_root / 'microvm')),
+            _record('replay_resume_failure_injection', 'sqlite_checkpoint', 'none', lambda: _scenario_replay_resume_failure_injection(tmp_root / 'resume')),
         ]
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
@@ -509,4 +610,3 @@ def run_real_network_suite(config_path: str | Path = 'easy-agent.yml') -> dict[s
     report_path = output_root / 'real-network-report.json'
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return report
-

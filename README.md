@@ -6,7 +6,7 @@
 
 It is not a business-specific app. It is the runtime layer underneath one. The project gives you a stable place to run single agents, sub-agents, multi-agent graphs, teams, tools, skills, MCP servers, plugins, and now long-running harnesses without hard-coding product logic into the framework.
 
-Current release line: `0.3.x`. This snapshot documents patch release `0.3.2`.
+Current release line: `0.3.x`. The latest published patch remains `0.3.2`; this snapshot also covers the current unreleased hardening work on top of that release.
 
 ## What This Project Is
 
@@ -103,10 +103,10 @@ The current runtime already ships the reliability controls that were previously 
 
 - `federation.server` can publish local agents, teams, or harnesses as exported targets.
 - `federation.remotes` can inspect remote cards and prefer SSE push or fall back to polling with `push_preference = auto|sse|poll`.
-- Federated delivery now includes persisted task event logs, SSE event streaming, webhook push delivery, retry with backoff, lease renewal, cancellation, and terminal delivery tracking for `SubscribeToTask` style lifecycles.
-- `agent-card` and `extended-agent-card` now expose protocol version, card schema version, modalities, declared capabilities, auth hints, retry policy, subscribe policy, and compatibility metadata.
-- Federated task state plus subscription state is persisted in SQLite so remote execution and push delivery can be inspected after the initial request completes.
-- The CLI now exposes `easy-agent federation list|inspect|tasks|events|subscriptions|renew-subscription|cancel-subscription|serve`.
+- Federated delivery now includes well-known discovery, persisted task event logs, SSE event streaming, webhook push delivery, retry with backoff, lease renewal, cancellation, `pushNotificationConfig` set/get/list/delete compatibility, and reconnect-safe `sendSubscribe` or resubscribe flows.
+- `agent-card` and `extended-agent-card` now expose protocol version, card schema version, modalities, declared capabilities, auth hints, retry policy, subscribe policy, well-known endpoints, and compatibility metadata.
+- Federated task state plus subscription state is persisted in SQLite so remote execution, backlog replay, and push delivery can be inspected after the initial request completes.
+- The CLI now exposes `easy-agent federation list|inspect|tasks|events|cancel-task|subscriptions|renew-subscription|cancel-subscription|push-set|push-get|push-list|push-delete|send-subscribe|resubscribe|serve`.
 
 Example shape:
 
@@ -143,10 +143,12 @@ The runtime now has a dedicated executor or workbench layer for long-lived code 
 
 - `WorkbenchManager` provisions per-run isolated roots under `.easy-agent/workbench` and persists backend runtime state alongside each session.
 - `executors` now support `process`, `container`, and `microvm` backends behind the same workbench interface.
+- The `container` backend can now preload offline archives, auto-build from a bootstrap context, enforce `memory` or `cpu` quotas, and restore from a committed snapshot image for repeatable host validation.
+- The `microvm` backend now supports both classic `qemu` and a `podman_machine` SSH-backed provider so the same isolation surface can be exercised on hosts that already have Podman machine assets.
 - Command skills and stdio MCP servers can opt into a named executor through `skill.metadata.executor` or `mcp[*].executor` and then reuse the same long-lived session.
 - Graph and harness checkpoints capture workbench manifests, and forked resume clones those manifests into new session roots without discarding the original lineage.
 - SQLite persists `workbench_sessions`, `workbench_executions`, runtime-state payloads, federated task state, and executor reuse metadata for later inspection.
-- The real-network suite now exercises process reuse directly and reports container or microVM rows as host-gated `skipped` until images and SSH assets are provisioned.
+- The real-network suite now exercises process reuse, offline container restore, and podman-machine microVM recovery as real host coverage instead of leaving those rows as `skipped`.
 - The CLI now exposes `easy-agent workbench list` and `easy-agent workbench gc`.
 
 ## Architecture
@@ -346,9 +348,9 @@ Python CLI smoke is also verified through `CliRunner` against `agent_cli.app:app
 
 ## Real Network Test Set Results
 
-Snapshot date: March 27, 2026.
+Snapshot date: March 29, 2026.
 
-This snapshot was produced with Python `3.12.11`, local `.env.local` credentials, live DeepSeek calls, local Redis/PostgreSQL dependencies, and the repository's real MCP-backed integration suite.
+This snapshot combines fresh Python verification from March 29, 2026 with the latest retained benchmark and public-eval artifacts already present under `.easy-agent/`. The fresh verification used Python `3.12.11`, local `.env.local` credentials, live DeepSeek calls, the repository's real MCP-backed integration suite, and a local Podman machine for executor coverage.
 
 ### Python Verification Snapshot
 
@@ -356,26 +358,27 @@ This snapshot was produced with Python `3.12.11`, local `.env.local` credentials
 | --- | --- | --- |
 | Static checks | `.\.venv\Scripts\ruff.exe check src tests scripts` | passed |
 | Typing | `.\.venv\Scripts\mypy.exe src tests scripts` | passed |
-| Unit tests | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `74 passed` in `21.93s` |
-| Real integration tests | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` | `5 passed` in `554.53s` |
-| Live benchmark refresh | `.\.venv\Scripts\python.exe scripts\benchmark_modes.py --config easy-agent.yml --repeat 1 --output .easy-agent\benchmark-report.json` | report refreshed |
-| Live public-eval refresh | Python helper calling `run_public_eval_suite('easy-agent.yml')` | report refreshed |
-| Live real-network refresh | Python helper calling `run_real_network_suite()` | report refreshed |
+| Unit tests | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `76 passed` |
+| Dedicated real-network pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -q -m real --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` | `1 passed` |
+| Real integration tests | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` | `4 passed`, `1 skipped` |
+| Live benchmark artifact | `.easy-agent/benchmark-report.json` | existing snapshot reused |
+| Live public-eval artifact | `.easy-agent/public-eval-report.json` | existing snapshot reused |
+| Live real-network refresh | Python helper calling `run_real_network_suite()` | report refreshed with `6 passed` |
 | Python CLI smoke | `CliRunner` against `agent_cli.app:app` for `--help`, `doctor`, `teams list`, `harness list`, `federation list` | passed |
 
 ### Real Network Matrix
 
 | Scenario | Transport | Status | Duration (s) | Notes |
 | --- | --- | --- | --- | --- |
-| `cross_process_federation` | `http_poll` | passed | `1.6837` | cross-process send/poll federation passed |
-| `disconnect_retry_chaos` | `http_webhook` | passed | `4.9721` | callback retry, renew, cancel, and reconnect-style resubscribe flow passed |
-| `workbench_reuse_process` | `local_process` | passed | `1.6489` | process workbench reused the same long-lived session root |
-| `workbench_reuse_container` | `podman_exec` | skipped | `0.0000` | `EASY_AGENT_CONTAINER_IMAGE` is not set on this machine |
-| `workbench_reuse_microvm` | `qemu_ssh` | skipped | `0.0000` | `EASY_AGENT_QEMU_BASE_IMAGE` or `EASY_AGENT_QEMU_SSH_KEY` is not set on this machine |
-| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `5.8592` | resume, replay, and fork recovery passed under injected failure |
+| `cross_process_federation` | `http_poll` | passed | `1.4692` | cross-process well-known discovery and send/poll federation passed |
+| `disconnect_retry_chaos` | `http_webhook` | passed | `4.1902` | callback retry, `pushNotificationConfig`, `sendSubscribe`, and resubscribe passed |
+| `workbench_reuse_process` | `local_process` | passed | `1.5789` | process workbench reused the same long-lived session root |
+| `workbench_reuse_container` | `podman_exec` | passed | `29.6954` | container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image |
+| `workbench_reuse_microvm` | `podman_machine_ssh` | passed | `19.1149` | microvm executor reused the podman machine over SSH and recovered after a disconnect-style restart |
+| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `5.6087` | resume, replay, and fork recovery passed under injected failure |
 
-Summary: `4 passed`, `0 failed`, `2 skipped`.
-Source: `.easy-agent/real-network-report.json` generated at `2026-03-27T14:15:10Z`.
+Summary: `6 passed`, `0 failed`, `0 skipped`.
+Source: `.easy-agent/real-network-report.json` generated at `2026-03-29T15:05:37Z`.
 
 ### Live Benchmark Snapshot
 
@@ -388,7 +391,7 @@ Source: `.easy-agent/real-network-report.json` generated at `2026-03-27T14:15:10
 | `team_selector` | yes | `16.9389` |
 | `team_swarm` | yes | `4.9341` |
 
-Source: `.easy-agent/benchmark-report.json` regenerated during this March 27, 2026 `0.3.2` verification pass.
+Source: latest checked `.easy-agent/benchmark-report.json` artifact retained from the March 27, 2026 `0.3.2` verification pass.
 
 ### Public Eval Snapshot
 
@@ -401,24 +404,24 @@ Source: `.easy-agent/benchmark-report.json` regenerated during this March 27, 20
 | `tau2_mock` | `0.3333` | 1 of 3 cases passed |
 | `overall.bfcl_pass_rate` | `0.4583` | unchanged overall, but long-run MCP workflows no longer fail on the schema-driven `400` path |
 
-Source: `.easy-agent/public-eval-report.json` regenerated during the March 27, 2026 live verification pass.
+Source: latest checked `.easy-agent/public-eval-report.json` artifact retained from the March 27, 2026 live verification pass.
 
 Current caveats:
 
+- The full `tests/integration -m real` pass still includes one host-side skip on this machine because local Redis is not listening on `127.0.0.1:6379`, so the long-run real suite does not execute its Redis-backed path in this round.
 - The live suite still emits Windows `asyncio` subprocess cleanup warnings after completion, but the real tests and generated reports completed successfully.
-- DeepSeek's OpenAI-compatible endpoint still returns provider-side `400 Bad Request` responses on a subset of BFCL multiple and irrelevance cases even after union-schema flattening; the harness and MCP-backed long-run workflows now pass end to end.
-- Container and microVM executor rows remain host-gated until `EASY_AGENT_CONTAINER_IMAGE`, `EASY_AGENT_QEMU_BASE_IMAGE`, and `EASY_AGENT_QEMU_SSH_KEY` are provisioned.
+- DeepSeek's OpenAI-compatible endpoint still returns provider-side `400 Bad Request` responses on a subset of BFCL multiple and irrelevance cases even after stronger schema flattening and tighter tool-call prompting.
 
 ## Next Reinforcement
 
 These next steps are based on the current public A2A and MCP protocol surfaces, not just internal backlog notes.
 
-- Align federation discovery and task delivery more closely with the public A2A surface, including well-known discovery, `pushNotification/set|get`, and reconnect-safe `sendSubscribe` or resubscribe behavior.
-- Extend federation card negotiation toward richer transport and security metadata, including clearer auth scheme hints, artifact or part-level modality declarations, and stricter compatibility negotiation for server-to-client notifications.
-- Expand MCP capability negotiation from basic roots support to full `roots/list_changed` flows plus stronger `streamable_http` reconnect and auth-refresh handling.
+- Push federation card negotiation closer to the latest public A2A surface by adding richer artifact or part-level modality declarations, `ListTasks` cursor pagination (`pageToken` / `nextPageToken`), and clearer notification compatibility metadata.
+- Harden federation security toward production-grade remote trust with stronger auth scheme hints, signed callback verification, OAuth or OIDC flows, and optional mTLS between agent servers.
+- Expand MCP capability negotiation from basic roots support to full `roots/list_changed` flows plus stronger `streamable_http` reconnect, auth-refresh, and server-initiated lifecycle handling.
 - Make MCP sampling and elicitation policies more granular by separating low-risk and high-risk remote requests, and by supporting richer form or URL elicitation result handling without bypassing human approval.
-- Turn the current host-gated `container` and `microvm` executor backends into provisioned flows with image bootstrap, snapshot or restore, resource quotas, and repeatable real-host validation so those matrix rows move from `skipped` to exercised.
-- Extend the real-network suite with mixed live-model federation runs, duplicate-delivery or replay resilience checks, and real container or microVM reuse scenarios once host assets are available.
+- Add provider-aware public-eval fallback strategies so complex BFCL schemas degrade more gracefully instead of failing fast on OpenAI-compatible `400` responses.
+- Extend the real-network suite with mixed live-model federation runs, duplicate-delivery or replay resilience checks, and faster delta-based container or microVM snapshot reuse on repeat executions.
 
 ## Design References
 
@@ -430,6 +433,7 @@ These next steps are based on the current public A2A and MCP protocol surfaces, 
 - AutoGen Teams: [https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html)
 - LangGraph Durable Execution: [https://docs.langchain.com/oss/python/langgraph/durable-execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)
 - A2A Protocol: [https://a2aprotocol.ai/](https://a2aprotocol.ai/)
+- A2A Latest Specification: [https://a2a-protocol.org/latest/specification/](https://a2a-protocol.org/latest/specification/)
 - A2A Reference Implementation: [https://github.com/a2aproject/A2A](https://github.com/a2aproject/A2A)
 - MCP Roots: [https://modelcontextprotocol.io/docs/concepts/roots](https://modelcontextprotocol.io/docs/concepts/roots)
 - MCP Sampling: [https://modelcontextprotocol.io/docs/concepts/sampling](https://modelcontextprotocol.io/docs/concepts/sampling)

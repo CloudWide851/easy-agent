@@ -50,19 +50,29 @@ def _load_fixture(name: str) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
-def _bfcl_system_prompt() -> str:
+def _bfcl_system_prompt(case: dict[str, Any]) -> str:
+    expected_calls = len(case.get('ground_truth', []))
+    if case.get('expect_no_tool'):
+        budget = 'Do not call any tool when the request is outside the tool set.'
+    elif expected_calls <= 1:
+        budget = 'Use at most one tool call, and only if it is clearly necessary.'
+    else:
+        budget = f'Use exactly {expected_calls} tool calls only when the requested actions are independent and necessary.'
     return (
-        'You are evaluating tool-calling behavior. Choose the best available tool based on the user request. '
-        'If the request is irrelevant to the available tools, answer directly without any tool call. '
-        'When multiple independent tool calls are required, issue all of them. '
+        'You are evaluating tool-calling behavior. Choose the single best action based on the user request. '
+        + budget
+        + ' If the request is irrelevant to the available tools, answer directly without any tool call. '
+        'Never speculate, never duplicate a successful tool call, and never call a second tool just to restate the first answer. '
         'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again.'
     )
 
 
 def _tau_system_prompt() -> str:
     return (
-        'You are a precise task assistant. Use the provided task-management tools when the user requests an action. '
-        'Acknowledge successful completion concisely. If previous conversation state is present, continue from it and infer task ids from prior tool outputs instead of asking again.'
+        'You are a precise task assistant. Use the provided task-management tools only when the user explicitly wants an action taken. '
+        'Prefer updating an existing matching task over creating a duplicate. '
+        'If previous conversation state is present, continue from it and infer task ids from prior tool outputs instead of asking again. '
+        'Acknowledge successful completion concisely after the required tool calls finish.'
     )
 
 
@@ -77,16 +87,38 @@ def _sanitize_tool_name(name: str) -> str:
 
 def _normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(schema)
-    schema_type = str(normalized.get('type', ''))
+    variant = None
+    for key in ('anyOf', 'oneOf', 'allOf'):
+        options = normalized.get(key)
+        if isinstance(options, list) and options:
+            variant = next((item for item in options if isinstance(item, dict) and item.get('type') != 'null'), options[0])
+            normalized.pop(key, None)
+            break
+    if isinstance(variant, dict):
+        merged = dict(variant)
+        if 'description' not in merged and 'description' in normalized:
+            merged['description'] = normalized['description']
+        normalized = merged
+    schema_type = normalized.get('type', '')
+    if isinstance(schema_type, list):
+        schema_type = next((item for item in schema_type if item != 'null'), schema_type[0] if schema_type else '')
+    schema_type = str(schema_type)
     if schema_type == 'dict':
         normalized['type'] = 'object'
     elif schema_type == 'tuple':
         normalized['type'] = 'array'
+    elif schema_type:
+        normalized['type'] = schema_type
+    for noisy_key in ('format', 'default', 'examples', 'title', '$schema', '$defs', 'nullable'):
+        normalized.pop(noisy_key, None)
     if normalized.get('type') == 'object':
         properties = cast(dict[str, Any], normalized.get('properties', {}))
         normalized['properties'] = {
             key: _normalize_schema(value) if isinstance(value, dict) else value for key, value in properties.items()
         }
+        required = normalized.get('required')
+        if isinstance(required, list):
+            normalized['required'] = [str(item) for item in required if str(item) in normalized['properties']]
     items = normalized.get('items')
     if isinstance(items, dict):
         normalized['items'] = _normalize_schema(items)
@@ -247,7 +279,7 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
                     {
                         'name': 'coordinator',
                         'description': 'Public-eval tool-calling evaluator.',
-                        'system_prompt': _bfcl_system_prompt(),
+                        'system_prompt': _bfcl_system_prompt(case),
                         'tools': [tool_name_map[str(item['name'])] for item in case['functions']],
                         'sub_agents': [],
                         'max_iterations': 6,
@@ -435,6 +467,9 @@ async def _run_tau_case(base_config: AppConfig, case: dict[str, Any]) -> PublicE
                 }
                 task_counter = 2
             prompt = str(case.get('ticket') or case.get('user_scenario', {}).get('instructions', ''))
+            existing_tasks = [f"{item['task_id']}:{item['title']}:{item['status']}" for item in tasks.values()]
+            if existing_tasks:
+                prompt = f"Known task state: {'; '.join(existing_tasks)}\nUser request: {prompt}"
             result = await runtime.run(prompt, session_id=session_id if initial_messages else None)
             duration = time.perf_counter() - start
             trace = runtime.store.load_trace(result['run_id'])

@@ -132,11 +132,13 @@ async def test_federation_loopback_server_and_client(tmp_path: Path) -> None:
         task_id = str(tasks[-1]['task_id'])
         task_events = await manager.list_task_events('loopback', task_id)
         streamed_task_events = await manager.stream_task_events('loopback', task_id)
+        resubscribe = await manager.resubscribe_task('loopback', task_id, from_sequence=0)
     finally:
         await manager.aclose()
         server.stop()
 
     assert remote['card']['exports'][0]['name'] == 'local_echo'
+    assert remote['card']['well_known_url'].endswith('/.well-known/agent-card.json')
     assert remote['card']['protocol_version'] == '0.3'
     assert remote['card']['exports'][0]['capabilities']['modalities'] == ['text']
     assert remote['extended_card']['capabilities']['push_delivery']['sse_events'] is True
@@ -145,6 +147,7 @@ async def test_federation_loopback_server_and_client(tmp_path: Path) -> None:
     assert stream_events[-1]['task']['status'] == 'succeeded'
     assert task_events[-1]['event_kind'] == 'task_succeeded'
     assert any(event['event_name'] == 'task_succeeded' for event in streamed_task_events)
+    assert resubscribe['events'][-1]['event_kind'] == 'task_succeeded'
     assert len(tasks) >= 2
 
 
@@ -197,13 +200,15 @@ async def test_federation_subscription_retry_and_lifecycle(tmp_path: Path) -> No
         response = await client.post('/a2a/tasks/send', json={'target': 'local_echo', 'input': 'deliver-me'})
         task_id = str(response.json()['task']['task_id'])
         await asyncio.sleep(0.2)
-        subscription = await manager.subscribe_task('loopback', task_id, callback_url, from_sequence=0)
+        subscription = await manager.set_push_notification('loopback', task_id, callback_url, from_sequence=0)
         assert subscription['status'] in {'retrying', 'active', 'delivered'}
         await asyncio.sleep(0.2)
-        subscriptions = await manager.list_subscriptions('loopback', task_id)
+        subscriptions = await manager.list_push_notifications('loopback', task_id)
         refreshed = subscriptions[0]
+        loaded = await manager.get_push_notification('loopback', task_id, str(refreshed['subscription_id']))
+        replay = await manager.resubscribe_task('loopback', task_id, from_sequence=0)
         renewed = await manager.renew_subscription('loopback', task_id, str(refreshed['subscription_id']), lease_seconds=60)
-        cancelled = await manager.cancel_subscription('loopback', task_id, str(refreshed['subscription_id']))
+        cancelled = await manager.delete_push_notification('loopback', task_id, str(refreshed['subscription_id']))
     finally:
         await manager.aclose()
         callback.stop()
@@ -213,6 +218,8 @@ async def test_federation_subscription_retry_and_lifecycle(tmp_path: Path) -> No
     assert callback.deliveries[-1]['task_id'] == task_id
     assert callback.deliveries[-1]['events'][-1]['event_kind'] == 'task_succeeded'
     assert refreshed['status'] == 'delivered'
+    assert loaded['subscription_id'] == refreshed['subscription_id']
+    assert replay['events'][-1]['event_kind'] == 'task_succeeded'
     assert renewed['status'] == 'active'
     assert cancelled['status'] == 'cancelled'
 

@@ -187,6 +187,216 @@ def inspect_federation(
     asyncio.run(with_runtime(config, _run))
 
 
+@federation_app.command('tasks')
+def list_federation_tasks(
+    remote_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.list_remote_tasks(remote_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('events')
+def list_federation_events(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    after_sequence: int = typer.Option(0, '--after-sequence'),
+    stream: bool = typer.Option(False, '--stream'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        if stream:
+            payload = await runtime.stream_remote_task_events(remote_name, task_id, after_sequence)
+        else:
+            payload = await runtime.list_remote_task_events(remote_name, task_id, after_sequence)
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('cancel-task')
+def cancel_federation_task(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.cancel_remote_task(remote_name, task_id), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('subscriptions')
+def list_federation_subscriptions(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.list_remote_subscriptions(remote_name, task_id), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('renew-subscription')
+def renew_federation_subscription(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    subscription_id: str = typer.Argument(...),
+    lease_seconds: int | None = typer.Option(None, '--lease-seconds'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(
+            json.dumps(
+                await runtime.renew_remote_subscription(
+                    remote_name,
+                    task_id,
+                    subscription_id,
+                    lease_seconds=lease_seconds,
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('cancel-subscription')
+def cancel_federation_subscription(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    subscription_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.cancel_remote_subscription(remote_name, task_id, subscription_id), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('push-set')
+def set_federation_push_notification(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    callback_url: str = typer.Argument(...),
+    lease_seconds: int | None = typer.Option(None, '--lease-seconds'),
+    from_sequence: int = typer.Option(0, '--from-sequence'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(
+            json.dumps(
+                await runtime.set_remote_push_notification(
+                    remote_name,
+                    task_id,
+                    callback_url,
+                    lease_seconds=lease_seconds,
+                    from_sequence=from_sequence,
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('push-get')
+def get_federation_push_notification(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    config_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.get_remote_push_notification(remote_name, task_id, config_id), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('push-list')
+def list_federation_push_notifications(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.list_remote_push_notifications(remote_name, task_id), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('push-delete')
+def delete_federation_push_notification(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    config_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.delete_remote_push_notification(remote_name, task_id, config_id), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('send-subscribe')
+def send_subscribe_federation(
+    remote_name: str = typer.Argument(...),
+    target: str = typer.Argument(...),
+    input_text: str = typer.Argument(...),
+    callback_url: str = typer.Argument(...),
+    session_id: str | None = typer.Option(None, '--session-id'),
+    lease_seconds: int | None = typer.Option(None, '--lease-seconds'),
+    from_sequence: int = typer.Option(0, '--from-sequence'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(
+            json.dumps(
+                await runtime.send_subscribe_remote(
+                    remote_name,
+                    target,
+                    input_text,
+                    callback_url,
+                    session_id=session_id,
+                    lease_seconds=lease_seconds,
+                    from_sequence=from_sequence,
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_app.command('resubscribe')
+def resubscribe_federation(
+    remote_name: str = typer.Argument(...),
+    task_id: str = typer.Argument(...),
+    from_sequence: int = typer.Option(0, '--from-sequence'),
+    callback_url: str | None = typer.Option(None, '--callback-url'),
+    lease_seconds: int | None = typer.Option(None, '--lease-seconds'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(
+            json.dumps(
+                await runtime.resubscribe_remote_task(
+                    remote_name,
+                    task_id,
+                    from_sequence=from_sequence,
+                    callback_url=callback_url,
+                    lease_seconds=lease_seconds,
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(with_runtime(config, _run))
+
+
 @federation_app.command('serve')
 def serve_federation(
     config: str = typer.Option('easy-agent.yml', '-c', '--config'),
