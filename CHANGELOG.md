@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-01
+
 ### Added
 
 - Added `src/agent_common/schema_utils.py` so protocol adapters, MCP integration, and public-eval all reuse the same JSON-schema normalization rules.

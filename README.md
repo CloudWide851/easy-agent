@@ -6,7 +6,7 @@
 
 It is not a business-specific app. It is the runtime layer underneath one. The project gives you a stable place to run single agents, sub-agents, multi-agent graphs, teams, tools, skills, MCP servers, plugins, and now long-running harnesses without hard-coding product logic into the framework.
 
-Current release line: `0.3.x`. The latest published patch remains `0.3.2`; this snapshot also covers the current unreleased hardening work on top of that release.
+Current release line: `0.3.x`. The latest published patch is `0.3.3`.
 
 ## What This Project Is
 

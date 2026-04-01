@@ -1,6 +1,6 @@
 [project]
 name = "easy-agent"
-version = "0.3.2"
+version = "0.3.3"
 description = "A white-box, extensible agent engineering foundation for Python."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
