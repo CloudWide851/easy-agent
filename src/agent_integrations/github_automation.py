@@ -209,6 +209,7 @@ def _write_issue_task_package(repo_root: Path, issue: dict[str, Any], branch_nam
 
 
 def github_issue_list(arguments: dict[str, Any], context: RunContext) -> dict[str, Any]:
+    _ensure_gh_installed()
     repo_root = _ensure_repo_root(context.workdir)
     _ensure_gh_auth(repo_root)
     limit = int(arguments.get('limit', 20) or 20)
@@ -242,6 +243,7 @@ def github_issue_list(arguments: dict[str, Any], context: RunContext) -> dict[st
 
 
 def github_issue_prepare_fix(arguments: dict[str, Any], context: RunContext) -> dict[str, Any]:
+    _ensure_gh_installed()
     repo_root = _ensure_repo_root(context.workdir)
     _ensure_gh_auth(repo_root)
     number_raw = arguments.get('number', arguments.get('issue_number'))
@@ -305,6 +307,7 @@ def git_commit_local(arguments: dict[str, Any], context: RunContext) -> dict[str
 
 
 def github_release_publish(arguments: dict[str, Any], context: RunContext) -> dict[str, Any]:
+    _ensure_gh_installed()
     repo_root = _ensure_repo_root(context.workdir)
     _ensure_gh_auth(repo_root)
     tag_name = str(arguments.get('tag_name') or '').strip()

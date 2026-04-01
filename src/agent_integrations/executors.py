@@ -101,22 +101,55 @@ def _is_podman_command(executable: str) -> bool:
     return 'podman' in resolved
 
 
+def _pick_podman_machine(executable: str, machine_name: str | None = None) -> dict[str, Any]:
+    machines = _run_json_command([executable, 'machine', 'list', '--format', 'json'], timeout_seconds=30.0) or []
+    if not machines:
+        raise RuntimeError('no podman machine is configured')
+    if machine_name:
+        selected = next((item for item in machines if str(item.get('Name')) == machine_name), None)
+        if selected is None:
+            raise RuntimeError(f'podman machine {machine_name} is not configured')
+        return dict(selected)
+    return dict(next((item for item in machines if item.get('Default')), machines[0]))
+
+
 def _ensure_podman_machine_running(executable: str) -> None:
     if not _is_podman_command(executable) or not _command_exists(executable):
         return
     try:
-        machines = _run_json_command([executable, 'machine', 'list', '--format', 'json'], timeout_seconds=30.0) or []
+        selected = _pick_podman_machine(executable)
     except Exception:  # noqa: BLE001
         return
-    if not machines:
-        raise RuntimeError('no podman machine is configured')
-    selected = next((item for item in machines if item.get('Default')), machines[0])
     if selected.get('Running'):
         return
     name = str(selected['Name'])
     result = _run_subprocess([executable, 'machine', 'start', name], timeout_seconds=180.0)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f'failed to start podman machine {name}')
+
+
+def _podman_machine_ssh_details(executable: str, machine_name: str) -> dict[str, Any]:
+    selected = _pick_podman_machine(executable, machine_name)
+    ssh_port = int(selected.get('Port') or 0)
+    ssh_user = str(selected.get('RemoteUsername') or 'user')
+    ssh_key = str(selected.get('IdentityPath') or '')
+    if not ssh_port:
+        inspect = _run_json_command([executable, 'machine', 'inspect', machine_name], timeout_seconds=30.0)
+        machine = inspect[0] if isinstance(inspect, list) and inspect else inspect
+        ssh_config = dict(machine.get('SSHConfig', {}))
+        ssh_port = int(ssh_config.get('Port') or 0)
+        ssh_user = str(ssh_config.get('RemoteUsername') or ssh_user)
+        ssh_key = str(ssh_config.get('IdentityPath') or ssh_key)
+    if not ssh_port:
+        raise RuntimeError(f'podman machine {machine_name} did not expose an SSH port')
+    if ssh_key and not Path(ssh_key).exists():
+        raise RuntimeError(f'podman machine identity is missing: {ssh_key}')
+    return {
+        'machine_name': str(selected.get('Name') or machine_name),
+        'ssh_port': ssh_port,
+        'ssh_user': ssh_user,
+        'ssh_private_key': ssh_key,
+    }
 
 
 class ProcessExecutorBackend:
@@ -543,12 +576,10 @@ class MicrovmExecutorBackend:
             state.update({'status': 'unavailable', 'last_error': 'ssh/scp executables are required'})
             return state
         _ensure_podman_machine_running(self._microvm.executable)
-        inspect = _run_json_command([self._microvm.executable, 'machine', 'inspect', self._microvm.machine_name], timeout_seconds=30.0)
-        machine = inspect[0] if isinstance(inspect, list) and inspect else inspect
-        ssh_config = dict(machine.get('SSHConfig', {}))
-        ssh_port = int(ssh_config.get('Port') or self._microvm.ssh_port_base)
-        ssh_user = str(ssh_config.get('RemoteUsername') or self._microvm.ssh_user)
-        ssh_key = str(ssh_config.get('IdentityPath') or self._microvm.ssh_private_key or '')
+        machine = _podman_machine_ssh_details(self._microvm.executable, self._microvm.machine_name)
+        ssh_port = int(machine.get('ssh_port') or self._microvm.ssh_port_base)
+        ssh_user = str(machine.get('ssh_user') or self._microvm.ssh_user)
+        ssh_key = str(machine.get('ssh_private_key') or self._microvm.ssh_private_key or '')
         guest_workdir = self._guest_session_root(session.session_id)
         state.update(
             {

@@ -12,9 +12,10 @@ from typing import Any, cast
 
 import httpx
 
-from agent_common.models import ChatMessage, ToolCall, ToolSpec
+from agent_common.models import ChatMessage, Protocol, ToolCall, ToolSpec
 from agent_common.schema_utils import normalize_json_schema
-from agent_config.app import AppConfig, load_config
+from agent_config.app import AppConfig, ModelConfig, load_config
+from agent_protocols.client import AnthropicAdapter, GeminiAdapter, OpenAIAdapter
 from agent_runtime.runtime import build_runtime_from_config
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[2] / 'public_evals' / 'fixtures'
@@ -69,6 +70,32 @@ _GENERIC_TOKENS = {
     'with',
 }
 _MULTI_INTENT_PATTERN = re.compile(r'\b(also|both|as well as|in addition)\b', re.IGNORECASE)
+_SINGULAR_TASK_REFERENCE_PATTERN = re.compile(r'\b(the task|that task|it)\b', re.IGNORECASE)
+_SCHEMA_MATRIX_SAMPLE = {
+    'type': 'dict',
+    'properties': {
+        'items': {
+            'type': 'tuple',
+            'items': {'type': 'dict', 'properties': {'value': {'type': 'integer'}}},
+        },
+        'choice': {
+            'anyOf': [
+                {'type': 'string', 'format': 'binary'},
+                {'type': 'integer'},
+                {'type': 'null'},
+            ]
+        },
+        'params': {
+            'type': 'array',
+            'items': {'type': ['string', 'number', 'boolean', 'null']},
+        },
+        'amount': {'type': 'float', 'optional': True},
+        'timestamp': {'type': 'string', 'format': 'date-time'},
+    },
+    'required': ['items', 'ghost'],
+    'examples': ['drop-me'],
+}
+_STAGE_ORDER = ('base', 'strict_schema_retry', 'candidate_pruned_retry')
 
 
 @dataclass(slots=True)
@@ -85,6 +112,7 @@ class PublicEvalRecord:
     error: str | None = None
     fallback_stage: str = 'base'
     fallback_attempts: list[str] = field(default_factory=list)
+    failure_bucket: str | None = None
 
 
 @dataclass(slots=True)
@@ -119,13 +147,16 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
     if case.get('expect_no_tool'):
         budget = 'Do not call any tool when the request is outside the tool set.'
     elif expected_calls <= 1:
-        budget = 'Use at most one tool call, and only if it is clearly necessary.'
+        budget = 'Make exactly one tool call total only if it is clearly necessary, then stop.'
     else:
         budget = f'Use exactly {expected_calls} tool calls only when the requested actions are independent and necessary.'
     return (
         'You are evaluating tool-calling behavior. Choose the single best action based on the user request. '
         + budget
         + ' If the request is irrelevant to the available tools, answer directly without any tool call. '
+        'If one tool already covers the request, prefer that single tool rather than decomposing the request into narrower follow-up calls. '
+        'If the user asks for the complete result, all results, or paired properties, include any needed selector or optional fields in the first tool call instead of retrying the same tool. '
+        'A successful tool call ends the search unless an additional independent tool call is explicitly required by the budget. '
         'Never speculate, never duplicate a successful tool call, and never call a second tool just to restate the first answer. '
         'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again.'
     )
@@ -136,7 +167,8 @@ def _tau_system_prompt() -> str:
         'You are a precise task assistant. Use the provided task-management tools only when the user explicitly wants an action taken. '
         'Prefer updating an existing matching task over creating a duplicate. '
         'If previous conversation state is present, continue from it and infer task ids from prior tool outputs instead of asking again. '
-        'When a single recent task in history clearly matches phrases like the task or that task, update it directly without a follow-up question. '
+        'When a single recent task in history clearly matches phrases like the task, that task, or it, update it directly without a follow-up question. '
+        'Treat the most recently created task in the visible history as the default singular reference unless the user names a different task. '
         'Acknowledge successful completion concisely after the required tool calls finish.'
     )
 
@@ -156,6 +188,65 @@ def _normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 def _strict_normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return normalize_json_schema(schema, drop_descriptions=True, core_only=True)
+
+
+def _protocol_matrix_sample_schema(adapter: Any, provider: str) -> dict[str, Any]:
+    payload = adapter.build_payload(
+        ModelConfig(provider=provider, protocol=adapter.protocol),
+        [ChatMessage(role='user', content='schema probe')],
+        [ToolSpec(name='schema_probe', description='schema probe', input_schema=_SCHEMA_MATRIX_SAMPLE)],
+    )
+    if adapter.protocol is Protocol.OPENAI:
+        return cast(dict[str, Any], payload['tools'][0]['function']['parameters'])
+    if adapter.protocol is Protocol.ANTHROPIC:
+        return cast(dict[str, Any], payload['tools'][0]['input_schema'])
+    return cast(dict[str, Any], payload['tools'][0]['functionDeclarations'][0]['parameters'])
+
+
+def _provider_schema_matrix() -> dict[str, Any]:
+    providers: list[tuple[str, Any, str]] = [
+        ('openai_compatible', OpenAIAdapter(), 'deepseek'),
+        ('anthropic', AnthropicAdapter(), 'anthropic'),
+        ('gemini', GeminiAdapter(), 'gemini'),
+    ]
+    matrix: dict[str, Any] = {}
+    for provider_name, adapter, config_provider in providers:
+        schema = _protocol_matrix_sample_schema(adapter, config_provider)
+        properties = cast(dict[str, Any], schema.get('properties', {}))
+        matrix[provider_name] = {
+            'protocol': adapter.protocol.value,
+            'features': {
+                'root_object_alias': {
+                    'supported': schema.get('type') == 'object',
+                    'observed': schema.get('type'),
+                },
+                'tuple_array_normalized': {
+                    'supported': cast(dict[str, Any], properties.get('items', {})).get('type') == 'array',
+                    'observed': cast(dict[str, Any], properties.get('items', {})).get('type'),
+                },
+                'any_of_flattened': {
+                    'supported': cast(dict[str, Any], properties.get('choice', {})).get('type') == 'string',
+                    'observed': cast(dict[str, Any], properties.get('choice', {})).get('type'),
+                },
+                'list_type_flattened': {
+                    'supported': cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type') == 'string',
+                    'observed': cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type'),
+                },
+                'format_removed': {
+                    'supported': 'format' not in cast(dict[str, Any], properties.get('timestamp', {})),
+                    'observed': cast(dict[str, Any], properties.get('timestamp', {})).get('format'),
+                },
+                'invalid_required_pruned': {
+                    'supported': 'ghost' not in cast(list[str], schema.get('required', [])),
+                    'observed': cast(list[str], schema.get('required', [])),
+                },
+                'optional_flag_removed': {
+                    'supported': 'optional' not in cast(dict[str, Any], properties.get('amount', {})),
+                    'observed': 'optional' in cast(dict[str, Any], properties.get('amount', {})),
+                },
+            },
+        }
+    return matrix
 
 
 def _build_tool_name_map(functions: list[dict[str, Any]]) -> dict[str, str]:
@@ -324,17 +415,53 @@ def _extract_tau_tasks_from_history(message_history: list[dict[str, Any]]) -> di
     return tasks
 
 
+def _select_recent_tau_task(tasks: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if not tasks:
+        return None
+
+    def _task_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+        task_id = str(item.get('task_id') or '')
+        if task_id.startswith('task_') and task_id.split('_')[-1].isdigit():
+            return int(task_id.split('_')[-1]), task_id
+        return -1, task_id
+
+    return sorted(tasks.values(), key=_task_sort_key)[-1]
+
+
 def _tau_history_memory_message(tasks: dict[str, dict[str, Any]]) -> str | None:
     if not tasks:
         return None
     ordered = list(tasks.values())[-4:]
+    recent = _select_recent_tau_task(tasks)
     lines = [
         'Conversation memory for task grounding. Reuse these task ids directly when the user refers to the previously discussed task:',
     ]
+    if recent is not None:
+        lines.append(
+            f"Default singular references like 'the task', 'that task', or 'it' refer to {recent['task_id']} unless the user names another task."
+        )
     for item in ordered:
         lines.append(
             f"- {item['task_id']}: title={item['title']!r}, status={item['status']!r}, description={item['description']!r}"
         )
+    return '\n'.join(lines)
+
+
+def _tau_prompt_with_grounding(prompt: str, tasks: dict[str, dict[str, Any]]) -> str:
+    if not tasks:
+        return prompt
+    lines: list[str] = []
+    recent = _select_recent_tau_task(tasks)
+    if recent is not None:
+        lines.append(
+            f"Most recent discussed task: {recent['task_id']} title={recent['title']!r} status={recent['status']!r}."
+        )
+        if _SINGULAR_TASK_REFERENCE_PATTERN.search(prompt):
+            lines.append(f"Default singular follow-up references map to {recent['task_id']}.")
+    task_state = [f"{item['task_id']}:{item['title']}:{item['status']}" for item in tasks.values()]
+    if task_state:
+        lines.append(f"Known task state: {'; '.join(task_state)}")
+    lines.append(f"User request: {prompt}")
     return '\n'.join(lines)
 
 
@@ -424,6 +551,104 @@ def _is_retryable_provider_400(base_config: AppConfig, exc: BaseException) -> bo
 
 def _same_function_selection(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
     return [str(item['name']) for item in left] == [str(item['name']) for item in right]
+
+
+def _parse_actual_calls(record: PublicEvalRecord) -> list[dict[str, Any]]:
+    if not record.error:
+        return []
+    try:
+        payload = json.loads(record.error)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    actual_calls = payload.get('actual_calls')
+    return actual_calls if isinstance(actual_calls, list) else []
+
+
+def _arguments_superset(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if len(right) <= len(left):
+        return False
+    for key, value in left.items():
+        if right.get(key) != value:
+            return False
+    return True
+
+
+def _is_duplicate_call_failure(record: PublicEvalRecord) -> bool:
+    actual_calls = _parse_actual_calls(record)
+    if len(actual_calls) <= record.expected_call_count:
+        return False
+    names = [str(item.get('name') or '') for item in actual_calls]
+    if len(set(names)) < len(names):
+        return True
+    if record.expected_call_count <= 1:
+        return True
+    for index, left in enumerate(actual_calls):
+        left_args = left.get('arguments') if isinstance(left, dict) else {}
+        for right in actual_calls[index + 1:]:
+            if str(left.get('name') or '') != str(right.get('name') or ''):
+                continue
+            right_args = right.get('arguments') if isinstance(right, dict) else {}
+            if isinstance(left_args, dict) and isinstance(right_args, dict):
+                if _arguments_superset(left_args, right_args) or _arguments_superset(right_args, left_args):
+                    return True
+    return False
+
+
+def _classify_failure_bucket(record: PublicEvalRecord) -> str:
+    if record.success:
+        return 'passed'
+    if record.suite == 'tau2_mock' and 'history' in record.case_id and record.actual_call_count == 0:
+        return 'history_grounding_miss'
+    if _is_duplicate_call_failure(record):
+        return 'duplicate_call'
+    error_text = record.error or ''
+    if '400 Bad Request' in error_text or 'HTTPStatusError' in error_text or record.fallback_stage != 'base':
+        return 'schema_or_provider_failure'
+    return 'other'
+
+
+def _aggregate_stage_summary(records: list[PublicEvalRecord]) -> dict[str, Any]:
+    stage_names = [stage for stage in _STAGE_ORDER if any(stage in item.fallback_attempts or item.fallback_stage == stage for item in records)]
+    summary: dict[str, Any] = {'stages': {}, 'transitions': {}}
+    for stage in stage_names:
+        entered = [item for item in records if stage in item.fallback_attempts]
+        terminal = [item for item in records if item.fallback_stage == stage]
+        successes = sum(1 for item in terminal if item.success)
+        summary['stages'][stage] = {
+            'entered_runs': len(entered),
+            'terminal_runs': len(terminal),
+            'terminal_successes': successes,
+            'terminal_failures': len(terminal) - successes,
+            'terminal_pass_rate': round(successes / len(terminal), 4) if terminal else 0.0,
+            'recovered_cases': sum(1 for item in terminal if item.success and stage != 'base'),
+        }
+    transitions: dict[str, int] = {}
+    for record in records:
+        for left, right in zip(record.fallback_attempts, record.fallback_attempts[1:], strict=False):
+            key = f'{left}->{right}'
+            transitions[key] = transitions.get(key, 0) + 1
+    summary['transitions'] = transitions
+    return summary
+
+
+def _aggregate_failure_buckets(records: list[PublicEvalRecord]) -> dict[str, Any]:
+    buckets: dict[str, dict[str, Any]] = {}
+    for record in records:
+        bucket = record.failure_bucket or _classify_failure_bucket(record)
+        entry = buckets.setdefault(bucket, {'count': 0, 'cases': []})
+        entry['count'] += 1
+        if bucket != 'passed':
+            entry['cases'].append({'suite': record.suite, 'case_id': record.case_id})
+    return buckets
+
+
+def _annotate_failure_buckets(records: list[PublicEvalRecord]) -> None:
+    for record in records:
+        record.failure_bucket = _classify_failure_bucket(record)
 
 
 def _make_bfcl_failure_record(
@@ -721,9 +946,7 @@ async def _run_tau_case(base_config: AppConfig, case: dict[str, Any]) -> PublicE
             if initial_messages:
                 runtime.store.save_session_messages(session_id, config.graph.name, initial_messages)
             prompt = str(case.get('ticket') or case.get('user_scenario', {}).get('instructions', ''))
-            existing_tasks = [f"{item['task_id']}:{item['title']}:{item['status']}" for item in tasks.values()]
-            if existing_tasks:
-                prompt = f"Known task state: {'; '.join(existing_tasks)}\nUser request: {prompt}"
+            prompt = _tau_prompt_with_grounding(prompt, tasks)
             result = await runtime.run(prompt, session_id=session_id if initial_messages else None)
             duration = time.perf_counter() - start
             trace = runtime.store.load_trace(result['run_id'])
@@ -795,9 +1018,13 @@ def run_public_eval_suite(config_path: str | Path) -> dict[str, Any]:
         records.append(asyncio.run(_run_bfcl_case(base_config, case)))
     for case in tau_cases:
         records.append(asyncio.run(_run_tau_case(base_config, case)))
+    _annotate_failure_buckets(records)
     return {
         'records': [asdict(record) for record in records],
         'summary': _aggregate_summary(records),
+        'stage_summary': _aggregate_stage_summary(records),
+        'failure_buckets': _aggregate_failure_buckets(records),
+        'provider_schema_matrix': _provider_schema_matrix(),
         'sources': {
             'bfcl': 'https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard',
             'tau2': 'https://github.com/sierra-research/tau2-bench',

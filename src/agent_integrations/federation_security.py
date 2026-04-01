@@ -153,18 +153,23 @@ def verify_callback_headers(
     expected_audience: str | None = None,
     now: int | None = None,
 ) -> None:
+    normalized_headers = {str(key).lower(): value for key, value in headers.items()}
+
+    def _header(name: str) -> str | None:
+        return normalized_headers.get(name.lower())
+
     if config.require_audience or expected_audience:
-        audience = headers.get(config.audience_header)
+        audience = _header(config.audience_header)
         if not audience or audience != (expected_audience or config.audience):
             raise RuntimeError('callback audience mismatch')
     if config.require_signature or config.signature_secret_env:
-        header_value = headers.get(config.signature_header)
+        header_value = _header(config.signature_header)
         if not header_value or '=' not in header_value:
             raise RuntimeError('callback signature header is missing')
         algorithm, digest = header_value.split('=', 1)
         if algorithm != config.signature_algorithm:
             raise RuntimeError('callback signature algorithm mismatch')
-        timestamp = headers.get(config.timestamp_header)
+        timestamp = _header(config.timestamp_header)
         if not timestamp:
             raise RuntimeError('callback timestamp header is missing')
         current = int(now or time.time())

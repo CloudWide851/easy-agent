@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import textwrap
@@ -13,7 +14,10 @@ from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+from urllib.parse import urlparse
+
+import httpx
 
 from agent_common.models import HumanLoopMode, ToolSpec
 from agent_config.app import (
@@ -251,30 +255,136 @@ def _run(command: list[str], *, timeout_seconds: float = 60.0) -> subprocess.Com
     return subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout_seconds)
 
 
-def _podman_machine_info(podman_executable: str) -> dict[str, Any]:
+def _machine_lock_dir() -> Path:
+    user_home = Path(os.environ.get('USERPROFILE') or Path.home())
+    return user_home / '.config' / 'containers' / 'podman' / 'machine' / 'wsl'
+
+
+def _file_readable(path: Path) -> bool:
+    try:
+        with path.open('rb') as handle:
+            handle.read(1)
+    except OSError:
+        return False
+    return True
+
+
+def _socket_target(base_url: str) -> tuple[str, int]:
+    parsed = urlparse(base_url)
+    host = parsed.hostname or parsed.path or base_url
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    return host, port
+
+
+def _live_model_preflight(base_config: AppConfig) -> str:
+    api_key = os.environ.get(base_config.model.api_key_env, '').strip()
+    if not api_key:
+        raise RuntimeError(f'preflight: missing {base_config.model.api_key_env}')
+    host, port = _socket_target(base_config.model.base_url)
+    try:
+        with socket.create_connection((host, port), timeout=5.0):
+            pass
+    except OSError as exc:
+        raise RuntimeError(f'preflight: provider_unreachable {host}:{port}: {exc}') from exc
+    try:
+        response = httpx.get(base_config.model.base_url.rstrip('/'), timeout=5.0, follow_redirects=True)
+        status = response.status_code
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f'preflight: provider_http_unreachable {base_config.model.base_url}: {exc}') from exc
+    return f'preflight ok: api_key present, tcp {host}:{port}, http_status={status}'
+
+
+def _podman_machine_info(podman_executable: str, machine_name: str | None = None) -> dict[str, Any]:
     listing = _run([podman_executable, 'machine', 'list', '--format', 'json'], timeout_seconds=30.0)
     if listing.returncode != 0:
         raise RuntimeError(listing.stderr.strip() or listing.stdout.strip() or 'podman machine list failed')
     machines = json.loads(listing.stdout or '[]')
     if not machines:
-        raise RuntimeError('skipped: no podman machine is configured')
-    machine = next((item for item in machines if item.get('Default')), machines[0])
+        raise RuntimeError('preflight: no podman machine is configured')
+    if machine_name:
+        machine = next((item for item in machines if str(item.get('Name')) == machine_name), None)
+        if machine is None:
+            raise RuntimeError(f'preflight: podman machine {machine_name} is not configured')
+    else:
+        machine = next((item for item in machines if item.get('Default')), machines[0])
     if not machine.get('Running'):
         started = _run([podman_executable, 'machine', 'start', str(machine['Name'])], timeout_seconds=180.0)
         if started.returncode != 0:
             raise RuntimeError(started.stderr.strip() or started.stdout.strip() or 'failed to start podman machine')
-    inspect = _run([podman_executable, 'machine', 'inspect', str(machine['Name'])], timeout_seconds=30.0)
-    if inspect.returncode != 0:
-        raise RuntimeError(inspect.stderr.strip() or inspect.stdout.strip() or 'podman machine inspect failed')
-    payload = json.loads(inspect.stdout or '[]')
-    details = payload[0] if isinstance(payload, list) and payload else payload
-    ssh_config = dict(details.get('SSHConfig', {}))
+        listing = _run([podman_executable, 'machine', 'list', '--format', 'json'], timeout_seconds=30.0)
+        if listing.returncode == 0:
+            refreshed = json.loads(listing.stdout or '[]')
+            machine = next((item for item in refreshed if str(item.get('Name')) == str(machine['Name'])), machine)
+    port = int(machine.get('Port') or 0)
+    user = str(machine.get('RemoteUsername') or 'user')
+    identity_path = str(machine.get('IdentityPath') or '')
+    if not port or not identity_path:
+        inspect = _run([podman_executable, 'machine', 'inspect', str(machine['Name'])], timeout_seconds=30.0)
+        if inspect.returncode != 0:
+            raise RuntimeError(inspect.stderr.strip() or inspect.stdout.strip() or 'podman machine inspect failed')
+        payload = json.loads(inspect.stdout or '[]')
+        details = payload[0] if isinstance(payload, list) and payload else payload
+        ssh_config = dict(details.get('SSHConfig', {}))
+        port = int(ssh_config.get('Port') or port or 0)
+        user = str(ssh_config.get('RemoteUsername') or user)
+        identity_path = str(ssh_config.get('IdentityPath') or identity_path)
+    if not port:
+        raise RuntimeError('preflight: podman machine did not expose an SSH port')
     return {
-        'name': str(details.get('Name') or machine['Name']),
-        'port': int(ssh_config.get('Port') or machine.get('Port') or 0),
-        'user': str(ssh_config.get('RemoteUsername') or machine.get('RemoteUsername') or 'user'),
-        'identity_path': str(ssh_config.get('IdentityPath') or machine.get('IdentityPath') or ''),
+        'name': str(machine.get('Name') or machine_name or 'podman-machine'),
+        'port': port,
+        'user': user,
+        'identity_path': identity_path,
     }
+
+
+def _podman_preflight(podman_executable: str, machine_name: str | None = None) -> dict[str, Any]:
+    if shutil.which(podman_executable) is None and not Path(podman_executable).exists():
+        raise RuntimeError(f'preflight: missing podman executable {podman_executable}')
+    connections = _run([podman_executable, 'system', 'connection', 'list', '--format', 'json'], timeout_seconds=30.0)
+    if connections.returncode != 0:
+        raise RuntimeError(connections.stderr.strip() or connections.stdout.strip() or 'preflight: podman connection list failed')
+    machine = _podman_machine_info(podman_executable, machine_name=machine_name)
+    identity_path = Path(machine['identity_path'])
+    if not identity_path.exists():
+        raise RuntimeError(f'preflight: podman identity is missing: {identity_path}')
+    if not _file_readable(identity_path):
+        raise RuntimeError(f'preflight: podman identity is unreadable: {identity_path}')
+    lock_dir = _machine_lock_dir()
+    if lock_dir.exists() and not os.access(lock_dir, os.W_OK):
+        raise RuntimeError(f'preflight: podman lock directory is not writable: {lock_dir}')
+    return {
+        'machine': machine,
+        'note': (
+            f"preflight ok: machine={machine['name']} ssh={machine['user']}@127.0.0.1:{machine['port']} "
+            f"identity={identity_path.name} lock_dir={lock_dir}"
+        ),
+    }
+
+
+def _ensure_container_image_available(podman_executable: str, image: str, archive: Path) -> str:
+    exists = _run([podman_executable, 'image', 'exists', image], timeout_seconds=20.0)
+    if exists.returncode == 0:
+        return f'warm_cache: image already present {image}'
+    load_result = _run([podman_executable, 'load', '-i', str(archive)], timeout_seconds=1200.0)
+    if load_result.returncode != 0:
+        import_result = _run([podman_executable, 'import', str(archive), image], timeout_seconds=1200.0)
+        if import_result.returncode != 0:
+            raise RuntimeError(
+                import_result.stderr.strip()
+                or import_result.stdout.strip()
+                or load_result.stderr.strip()
+                or load_result.stdout.strip()
+                or f'preflight: failed to warm container image {image}'
+            )
+    return f'warm_cache: loaded image {image}'
+
+
+def _warm_microvm_ssh(machine: dict[str, Any]) -> str:
+    result = _run([*_ssh_base_args(machine), 'python3', '--version'], timeout_seconds=30.0)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or 'preflight: microvm ssh warm cache failed')
+    return 'warm_cache: podman-machine ssh ready'
 
 
 def _ssh_base_args(info: dict[str, Any]) -> list[str]:
@@ -371,9 +481,7 @@ def _scenario_cross_process_federation() -> str:
 
 
 def _scenario_live_model_federation_roundtrip(base_config: AppConfig, tmp_path: Path) -> str:
-    api_key = os.environ.get(base_config.model.api_key_env, '').strip()
-    if not api_key:
-        raise RuntimeError(f'skipped: missing {base_config.model.api_key_env}')
+    preflight_note = _live_model_preflight(base_config)
     config = AppConfig.model_validate(
         {
             'model': base_config.model.model_dump(),
@@ -433,7 +541,7 @@ def _scenario_live_model_federation_roundtrip(base_config: AppConfig, tmp_path: 
         response_text = str(result.get('result') or '').strip().upper()
         if 'FEDERATED_OK' not in response_text:
             raise AssertionError(f'unexpected live-model federated response: {result}')
-        return 'live-model loopback federation completed through the local A2A surface'
+        return f'live-model loopback federation completed through the local A2A surface ({preflight_note})'
 
     return asyncio.run(_run_async())
 
@@ -493,7 +601,8 @@ def _scenario_federation_retry_and_reconnect(tmp_path: Path) -> str:
                 expected_secret='real-network-secret',
                 expected_audience='easy-agent-real-network',
             )
-            if last_request['headers'].get('X-A2A-Notification-Token') != 'real-network-token':
+            normalized_headers = {str(key).lower(): value for key, value in last_request['headers'].items()}
+            if normalized_headers.get('x-a2a-notification-token') != 'real-network-token':
                 raise AssertionError('missing callback token header')
             return 'callback retry, pushNotificationConfig, sendSubscribe, signed webhook delivery, and resubscribe passed'
         finally:
@@ -539,8 +648,10 @@ def _scenario_process_workbench_reuse(tmp_path: Path) -> str:
 
 def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
+    preflight = _podman_preflight(podman_executable)
     archive = _ensure_offline_container_archive(Path('.easy-agent/offline-images'), podman_executable)
     image = os.environ.get('EASY_AGENT_CONTAINER_IMAGE', 'localhost/easy-agent/offline-python:latest')
+    warm_cache_note = _ensure_container_image_available(podman_executable, image, archive)
     manager = _workbench_manager(
         tmp_path,
         [
@@ -588,12 +699,17 @@ def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
         raise AssertionError(result_after.stderr or result_after.stdout)
     if restarted.runtime_state.get('image') != restarted.runtime_state.get('snapshot_image'):
         raise AssertionError('container restart did not restore from the snapshot image')
-    return 'container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image'
+    return (
+        'container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image '
+        f"({preflight['note']}; {warm_cache_note})"
+    )
 
 
 def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
-    machine = _podman_machine_info(podman_executable)
+    preflight = _podman_preflight(podman_executable)
+    machine = cast(dict[str, Any], preflight['machine'])
+    warm_cache_note = _warm_microvm_ssh(machine)
     manager = _workbench_manager(
         tmp_path,
         [
@@ -635,7 +751,10 @@ def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
     )
     if result_after.returncode != 0 or 'microvm-checkpoint' not in result_after.stdout:
         raise AssertionError(result_after.stderr or result_after.stdout)
-    return 'microvm executor reused the podman machine over SSH and recovered after a disconnect-style restart'
+    return (
+        'microvm executor reused the podman machine over SSH and recovered after a disconnect-style restart '
+        f"({preflight['note']}; {warm_cache_note})"
+    )
 
 
 
@@ -722,8 +841,10 @@ def _scenario_duplicate_delivery_replay_resilience(tmp_path: Path) -> str:
 
 def _scenario_container_incremental_snapshot_reuse(tmp_path: Path) -> str:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
+    preflight = _podman_preflight(podman_executable)
     archive = _ensure_offline_container_archive(Path('.easy-agent/offline-images'), podman_executable)
     image = os.environ.get('EASY_AGENT_CONTAINER_IMAGE', 'localhost/easy-agent/offline-python:latest')
+    warm_cache_note = _ensure_container_image_available(podman_executable, image, archive)
     manager = _workbench_manager(
         tmp_path,
         [
@@ -784,14 +905,16 @@ def _scenario_container_incremental_snapshot_reuse(tmp_path: Path) -> str:
         raise AssertionError(verify.stderr or verify.stdout)
     return (
         'container repeated checkpoint restore preserved incremental state '
-        f'(first_cycle={first_duration:.3f}s, second_cycle={second_duration:.3f}s)'
+        f'(first_cycle={first_duration:.3f}s, second_cycle={second_duration:.3f}s; {preflight['note']}; {warm_cache_note})'
     )
 
 
 
 def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
-    machine = _podman_machine_info(podman_executable)
+    preflight = _podman_preflight(podman_executable)
+    machine = cast(dict[str, Any], preflight['machine'])
+    warm_cache_note = _warm_microvm_ssh(machine)
     manager = _workbench_manager(
         tmp_path,
         [
@@ -844,7 +967,10 @@ def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
     )
     if verify.returncode != 0 or 'one-two' not in verify.stdout:
         raise AssertionError(verify.stderr or verify.stdout)
-    return 'microvm repeated checkpoint restore preserved incremental state across restart cycles'
+    return (
+        'microvm repeated checkpoint restore preserved incremental state across restart cycles '
+        f"({preflight['note']}; {warm_cache_note})"
+    )
 
 
 def _scenario_replay_resume_failure_injection(tmp_path: Path) -> str:

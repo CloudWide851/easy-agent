@@ -358,7 +358,12 @@ class HttpModelClient:
         raise RuntimeError('Model request did not complete')
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        try:
+            await self._client.aclose()
+        except RuntimeError as exc:
+            # Windows asyncio transport teardown can raise after a successful request.
+            if 'Event loop is closed' not in str(exc):
+                raise
 
 
 

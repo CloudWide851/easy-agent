@@ -588,6 +588,62 @@ async def test_graph_scheduler_runs_federated_node(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_graph_scheduler_blocks_exact_duplicate_tool_calls(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'model': ModelConfig().model_dump(),
+            'graph': {
+                'entrypoint': 'coordinator',
+                'agents': [
+                    {
+                        'name': 'coordinator',
+                        'system_prompt': 'system',
+                        'tools': ['python_echo'],
+                        'sub_agents': [],
+                    }
+                ],
+                'nodes': [],
+            },
+            'skills': [],
+            'mcp': [],
+            'storage': {'path': str(tmp_path), 'database': 'state.db'},
+            'security': {'allowed_commands': []},
+        }
+    )
+    registry = ToolRegistry()
+    call_counter = {'count': 0}
+
+    def python_echo(arguments: dict[str, Any], context: RunContext) -> dict[str, Any]:
+        del context
+        call_counter['count'] += 1
+        return {'echo': arguments['prompt']}
+
+    registry.register(
+        ToolSpec(
+            name='python_echo',
+            description='echo',
+            input_schema={
+                'type': 'object',
+                'properties': {'prompt': {'type': 'string'}},
+                'required': ['prompt'],
+            },
+        ),
+        python_echo,
+    )
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    model_client = DuplicateToolModelClient()
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
+
+    result = await scheduler.run('repeat once')
+    trace = store.load_trace(result['run_id'])
+
+    assert result['result'] == 'deduped'
+    assert call_counter['count'] == 1
+    assert any(event['kind'] == 'tool_call_duplicate_blocked' for event in trace['events'])
+
+
+@pytest.mark.asyncio
 async def test_graph_scheduler_blocks_duplicate_tool_calls_with_optional_argument_superset(tmp_path: Path) -> None:
     config = AppConfig.model_validate(
         {

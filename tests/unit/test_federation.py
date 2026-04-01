@@ -284,7 +284,8 @@ async def test_federation_subscription_retry_lifecycle_and_signed_push(tmp_path:
     assert callback.attempts >= 2
     assert last_request['payload']['task_id'] == task_id
     assert last_request['payload']['events'][-1]['event_kind'] == 'task_succeeded'
-    assert last_request['headers']['X-A2A-Notification-Token'] == 'unit-token'
+    normalized_headers = {str(key).lower(): value for key, value in last_request['headers'].items()}
+    assert normalized_headers['x-a2a-notification-token'] == 'unit-token'
     assert refreshed['status'] == 'delivered'
     assert loaded['subscription_id'] == refreshed['subscription_id']
     assert replay['events'][-1]['event_kind'] == 'task_succeeded'

@@ -11,7 +11,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Added `src/agent_common/schema_utils.py` so protocol adapters, MCP integration, and public-eval all reuse the same JSON-schema normalization rules.
 - Added risk-aware MCP sampling and elicitation handling with deferred approval escalation for high-risk remote requests plus richer form / URL elicitation payload processing.
-- Added provider-aware BFCL fallback tracking in public eval with `fallback_stage`, `fallback_attempts`, and candidate-pruned retry paths for OpenAI-compatible `400` responses.
+- Added provider-aware BFCL fallback tracking in public eval with `fallback_stage`, `fallback_attempts`, candidate-pruned retry paths for OpenAI-compatible `400` responses, stage summaries, failure buckets, and a provider schema compatibility matrix.
 - Added federation security negotiation helpers for `securitySchemes` / `security`, callback signing plus audience headers, cursor page-token encoding, and optional client-side mTLS handshake kwargs.
 - Added `src/agent_integrations/github_automation.py` with local GitHub automation helpers for:
   - `github_issue_list`
@@ -24,6 +24,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `duplicate_delivery_replay_resilience`
   - `workbench_incremental_snapshot_reuse_container`
   - `workbench_incremental_snapshot_reuse_microvm`
+- Added Windows-safe HTTP client close handling so successful live-model real-network runs are not downgraded by `Event loop is closed` cleanup noise.
 
 ### Changed
 
@@ -31,18 +32,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Updated the inline CLI approval resolver so MCP form elicitation responses are collected and validated as structured JSON instead of being treated as free-form text.
 - Moved the default coordinator tool order in `easy-agent.yml` so GitHub issue listing, repair-package prep, local commit, and release publishing are available before the demo echo tools.
 - Tightened duplicate successful tool-call suppression so a second call that only adds optional schema-declared arguments reuses the first successful result instead of executing again.
-- Grounded tau public-eval cases more aggressively from prior tool history by extracting known task ids into a synthetic memory message.
-- Hardened federation client delivery so `run_remote()` auto-discovers the remote base path before sending tasks, and fixed the real-network replay resilience scenario to read the task payload returned by `get_task()` correctly.
+- Grounded tau public-eval cases more aggressively from prior tool history by extracting known task ids into a synthetic memory message and prompt-grounding the latest discussed task.
+- Hardened federation client delivery so `run_remote()` auto-discovers the remote base path before sending tasks, fixed the real-network replay resilience scenario to read the task payload returned by `get_task()` correctly, and normalized callback-token checks to be case-insensitive.
 - Extended federation client and server negotiation with richer `agent-card` / `extended-agent-card` metadata, `ListTasks` / `ListTaskEvents` cursor pagination, signed webhook delivery, callback audience handling, and fail-fast remote auth readiness checks for bearer, header, OAuth/OIDC, and optional mTLS paths.
-- Refreshed the bilingual README pair for the March 30, 2026 verification pass, synchronized the latest real-network matrix, and rewrote `Next Reinforcement` against the latest public A2A and MCP protocol surfaces while keeping the older benchmark and public-eval artifacts marked as retained snapshots.
+- Refreshed the bilingual README pair for the March 31, 2026 verification pass, synchronized the latest real-network and public-eval artifacts, and rewrote `Next Reinforcement` against the latest public A2A, MCP, and OpenAI tool-calling surfaces while keeping the older benchmark artifact marked as a retained snapshot.
 
 ### Verified
 
 - `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
 - `.\.venv\Scripts\python.exe -m mypy src tests scripts`
-- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q` with `1 passed`
-- Repo-local Python harnesses passed coverage for federation loopback delivery, signed callback retry and audience verification, remote security-readiness gates, config validation, and loopback CLI pagination smoke.
-- `.easy-agent/real-network-report.json` was refreshed with `5 passed`, `0 failed`, and `5 skipped` across 10 scenarios.
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-final-<timestamp>` with `113 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-final-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_public_eval_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-public-eval-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-final-<timestamp>` with `5 passed`
+- Repo-local Python helpers refreshed:
+  - `.easy-agent/public-eval-report.json` with `overall.bfcl_pass_rate = 0.8750` and `tau2_mock_pass_rate = 1.0000`
+  - `.easy-agent/real-network-report.json` with `10 passed`, `0 failed`, and `0 skipped` across 10 scenarios
+- The full real integration suite still emitted known Windows asyncio cleanup warnings after success; they were treated as cleanup debt rather than functional failures.
 
 ## [0.3.2] - 2026-03-27
 
