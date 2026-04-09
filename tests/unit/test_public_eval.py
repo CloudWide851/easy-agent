@@ -97,6 +97,7 @@ def test_strict_normalize_schema_drops_non_core_fields() -> None:
             'description': 'root',
             'properties': {
                 'when': {'type': 'string', 'description': 'When', 'format': 'date-time'},
+                'note': {'type': 'string', 'optional': True},
             },
             'required': ['when'],
             'additionalProperties': False,
@@ -105,8 +106,12 @@ def test_strict_normalize_schema_drops_non_core_fields() -> None:
 
     assert schema == {
         'type': 'object',
-        'properties': {'when': {'type': 'string'}},
-        'required': ['when'],
+        'properties': {
+            'when': {'type': 'string'},
+            'note': {'type': ['string', 'null']},
+        },
+        'required': ['when', 'note'],
+        'additionalProperties': False,
     }
 
 
@@ -206,9 +211,15 @@ def test_provider_schema_matrix_reflects_adapter_behavior() -> None:
     matrix = _provider_schema_matrix()
 
     assert matrix['openai_compatible']['features']['root_object_alias']['supported'] is True
+    assert matrix['openai_compatible']['features']['strict_flag']['supported'] is True
+    assert matrix['openai_compatible']['features']['additional_properties_false']['supported'] is True
+    assert matrix['openai_compatible']['features']['nullable_preserved']['supported'] is True
+    assert matrix['openai_compatible']['features']['optional_promoted_to_required_nullable']['supported'] is True
+    assert matrix['openai_compatible']['features']['parallel_tool_calls_control']['supported'] is True
     assert matrix['gemini']['features']['format_removed']['supported'] is True
     assert matrix['anthropic']['features']['root_object_alias']['supported'] is False
     assert matrix['anthropic']['features']['invalid_required_pruned']['supported'] is False
+    assert matrix['anthropic']['features']['strict_flag']['supported'] is False
 
 
 def test_aggregate_stage_summary_counts_transitions_and_recoveries() -> None:

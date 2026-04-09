@@ -38,6 +38,29 @@ storage:
     assert config.harnesses == []
 
 
+def test_load_config_reads_function_calling_defaults() -> None:
+    config = AppConfig.model_validate(
+        {
+            'model': {
+                'provider': 'deepseek',
+                'protocol': 'openai',
+                'function_calling': {
+                    'strict': True,
+                    'parallel_tool_calls': False,
+                },
+            },
+            'graph': {
+                'entrypoint': 'agent-a',
+                'agents': [{'name': 'agent-a'}],
+                'nodes': [],
+            },
+        }
+    )
+
+    assert config.model.function_calling.strict is True
+    assert config.model.function_calling.parallel_tool_calls is False
+
+
 def test_graph_allows_team_entrypoint() -> None:
     config = AppConfig.model_validate(
         {

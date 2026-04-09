@@ -125,6 +125,50 @@ class DuplicateOptionalArgModelClient:
         return None
 
 
+class DuplicateOptionalSubsetModelClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages: list[ChatMessage], tools: list[ToolSpec]) -> AssistantResponse:
+        del messages, tools
+        self.calls += 1
+        if self.calls == 1:
+            return AssistantResponse(
+                text='',
+                tool_calls=[
+                    ToolCall(
+                        id='dup-opt-subset-1',
+                        name='triangle_properties_get',
+                        arguments={
+                            'side1': 5,
+                            'side2': 4,
+                            'side3': 3,
+                            'get_area': True,
+                            'get_perimeter': True,
+                            'get_angles': True,
+                        },
+                    )
+                ],
+                protocol=Protocol.OPENAI,
+            )
+        if self.calls == 2:
+            return AssistantResponse(
+                text='',
+                tool_calls=[
+                    ToolCall(
+                        id='dup-opt-subset-2',
+                        name='triangle_properties_get',
+                        arguments={'side1': 5, 'side2': 4, 'side3': 3},
+                    )
+                ],
+                protocol=Protocol.OPENAI,
+            )
+        return AssistantResponse(text='optional-subset-deduped', protocol=Protocol.OPENAI)
+
+    async def aclose(self) -> None:
+        return None
+
+
 class DummyMcpManager:
     async def call_tool(
         self,
@@ -695,5 +739,68 @@ async def test_graph_scheduler_blocks_duplicate_tool_calls_with_optional_argumen
     trace = store.load_trace(result['run_id'])
 
     assert result['result'] == 'optional-deduped'
+    assert call_counter['count'] == 1
+    assert any(event['kind'] == 'tool_call_duplicate_blocked' for event in trace['events'])
+
+
+@pytest.mark.asyncio
+async def test_graph_scheduler_blocks_duplicate_tool_calls_with_optional_argument_subset(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'model': ModelConfig().model_dump(),
+            'graph': {
+                'entrypoint': 'coordinator',
+                'agents': [
+                    {
+                        'name': 'coordinator',
+                        'system_prompt': 'system',
+                        'tools': ['triangle_properties_get'],
+                        'sub_agents': [],
+                    }
+                ],
+                'nodes': [],
+            },
+            'skills': [],
+            'mcp': [],
+            'storage': {'path': str(tmp_path), 'database': 'state.db'},
+            'security': {'allowed_commands': []},
+        }
+    )
+    registry = ToolRegistry()
+    call_counter = {'count': 0}
+
+    def triangle_properties_get(arguments: dict[str, Any], context: RunContext) -> dict[str, Any]:
+        del context
+        call_counter['count'] += 1
+        return {'echo': arguments}
+
+    registry.register(
+        ToolSpec(
+            name='triangle_properties_get',
+            description='triangle properties',
+            input_schema={
+                'type': 'object',
+                'properties': {
+                    'side1': {'type': 'integer'},
+                    'side2': {'type': 'integer'},
+                    'side3': {'type': 'integer'},
+                    'get_area': {'type': 'boolean'},
+                    'get_perimeter': {'type': 'boolean'},
+                    'get_angles': {'type': 'boolean'},
+                },
+                'required': ['side1', 'side2', 'side3'],
+            },
+        ),
+        triangle_properties_get,
+    )
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    model_client = DuplicateOptionalSubsetModelClient()
+    orchestrator = AgentOrchestrator(config, model_client, registry, store, GuardrailEngine())
+    scheduler = GraphScheduler(config, registry, orchestrator, store, DummyMcpManager(), GuardrailEngine())
+
+    result = await scheduler.run('measure triangle once')
+    trace = store.load_trace(result['run_id'])
+
+    assert result['result'] == 'optional-subset-deduped'
     assert call_counter['count'] == 1
     assert any(event['kind'] == 'tool_call_duplicate_blocked' for event in trace['events'])

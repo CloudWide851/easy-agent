@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from agent_cli.commands.general import _doctor_rows, _entrypoint_type, _mcp_transport_summary
+from agent_common.version import runtime_version
 from agent_config.app import AppConfig, ModelConfig
 from agent_integrations.sandbox import SandboxMode
 
@@ -118,7 +119,7 @@ def test_doctor_rows_include_runtime_stack_details() -> None:
 
     assert rows['Provider'] == 'deepseek'
     assert rows['Model'] == 'deepseek-chat'
-    assert rows['Runtime Version'] == '0.3.2'
+    assert rows['Runtime Version'] == runtime_version()
     assert rows['Entrypoint'] == 'writer_team'
     assert rows['Entrypoint Type'] == 'team'
     assert rows['Harnesses'] == '1'

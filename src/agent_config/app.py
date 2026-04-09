@@ -70,6 +70,11 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
+class FunctionCallingConfig(BaseModel):
+    strict: bool = True
+    parallel_tool_calls: bool = True
+
+
 class ModelConfig(BaseModel):
     provider: str = 'deepseek'
     protocol: Protocol = Protocol.AUTO
@@ -80,6 +85,7 @@ class ModelConfig(BaseModel):
     max_tokens: int = 2048
     temperature: float = 0.1
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    function_calling: FunctionCallingConfig = Field(default_factory=lambda: FunctionCallingConfig())
 
 
 class AgentConfig(BaseModel):

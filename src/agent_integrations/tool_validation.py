@@ -42,7 +42,14 @@ def normalize_and_validate_tool_arguments(schema: dict[str, Any], arguments: dic
 
 
 def _normalize_value(value: Any, schema: dict[str, Any], path: str) -> tuple[Any, list[str]]:
-    expected_type = str(schema.get('type', ''))
+    expected_type = schema.get('type', '')
+    normalized_types = _normalize_expected_types(expected_type)
+    if value is None:
+        if 'null' in normalized_types:
+            return None, []
+        if 'string' in normalized_types:
+            return '', []
+    expected_type = next((item for item in normalized_types if item != 'null'), '')
     if expected_type in ('', 'any'):
         return value, []
     if expected_type in _JSON_OBJECT_TYPES:
@@ -89,8 +96,6 @@ def _normalize_value(value: Any, schema: dict[str, Any], path: str) -> tuple[Any
     if expected_type == 'string':
         if isinstance(value, str):
             return value, []
-        if value is None:
-            return '', []
         if isinstance(value, (int, float, bool)):
             return str(value), []
         return value, [f'{path} expected string']
@@ -117,3 +122,11 @@ def _normalize_array(value: Any, schema: dict[str, Any], path: str) -> tuple[Any
     if schema.get('type') == 'tuple':
         return tuple(normalized), errors
     return normalized, errors
+
+
+def _normalize_expected_types(raw_type: Any) -> list[str]:
+    if isinstance(raw_type, list):
+        return [str(item).strip().lower() for item in raw_type]
+    if raw_type in (None, ''):
+        return []
+    return [str(raw_type).strip().lower()]

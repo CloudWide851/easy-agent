@@ -7,6 +7,37 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added explicit `model.function_calling` config with `strict` and `parallel_tool_calls` controls for OpenAI-compatible providers.
+- Added strict-schema compatibility coverage for:
+  - recursive `additionalProperties: false`
+  - required nullable modeling for optional fields
+  - explicit nullable field preservation
+  - single-call versus parallel-call control surfaces
+- Added regression coverage for duplicate tool-call suppression when a later call is an optional subset of an earlier successful call.
+
+### Changed
+
+- Hardened the shared JSON-schema normalizer so the OpenAI-compatible path can emit strict-friendly schemas while keeping the broader non-strict cleanup path for other providers.
+- Updated the OpenAI-compatible adapter to emit `strict: true` by default, forward `parallel_tool_calls`, and keep the schema payload aligned with the stricter OpenAI function-calling and structured-output constraints.
+- Updated the public-eval harness so BFCL and tau runs can control `parallel_tool_calls` per scenario, and refreshed the provider schema matrix to report strict-mode capabilities more explicitly.
+- Tightened benchmark execution defaults around function-calling strictness and serialized tool execution so the live benchmark suite stays more stable.
+- Refreshed `README.md` and `README.zh-CN.md` together for the April 9, 2026 verification pass, including the latest benchmark, public-eval, and real-network artifacts plus expanded `Next Reinforcement` items.
+
+### Verified
+
+- `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
+- `.\.venv\Scripts\python.exe -m mypy src tests scripts`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `117 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_public_eval_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-public-eval-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_teams_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-teams-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `5 passed`
+- `.\.venv\Scripts\python.exe scripts\benchmark_modes.py --config easy-agent.yml --repeat 1 --output .easy-agent\benchmark-report.json`
+- Repo-local Python helper refreshed `.easy-agent/public-eval-report.json` with `overall.bfcl_pass_rate = 0.9167` and `tau2_mock_pass_rate = 1.0000`
+- `.easy-agent/real-network-report.json` refreshed with `10 passed`, `0 failed`, `0 skipped`
+
 ## [0.3.3] - 2026-04-01
 
 ### Added

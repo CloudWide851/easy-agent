@@ -362,22 +362,22 @@ A successful harness run does more than return text.
 The repository currently uses these verification paths on this machine:
 
 ```powershell
-.\.venv\Scripts\ruff.exe check src tests scripts
-.\.venv\Scripts\mypy.exe src tests scripts
+.\.venv\Scripts\python.exe -m ruff check src tests scripts
+.\.venv\Scripts\python.exe -m mypy src tests scripts
 .\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>
 .\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>
 .\.venv\Scripts\python.exe scripts\benchmark_modes.py --config easy-agent.yml --repeat 1 --output .easy-agent\benchmark-report.json
 .\.venv\Scripts\python.exe -  # helper script calling run_public_eval_suite('easy-agent.yml')
-.\.venv\Scripts\python.exe -  # helper script calling run_real_network_suite()
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>
 ```
 
 Python CLI smoke is also verified through `CliRunner` against `agent_cli.app:app` for `--help`, `doctor`, `teams list`, `harness list`, and `federation list`.
 
 ## Real Network Test Set Results
 
-Snapshot date: March 31, 2026.
+Snapshot date: April 9, 2026.
 
-This snapshot combines a fresh full Python verification pass from March 31, 2026. The real-network and public-eval artifacts were regenerated on March 31, 2026, while the benchmark artifact remains the retained March 27, 2026 snapshot.
+This snapshot combines a fresh full Python verification pass from April 9, 2026. The real-network, public-eval, and benchmark artifacts were all refreshed in this round.
 
 ### Python Verification Snapshot
 
@@ -385,81 +385,82 @@ This snapshot combines a fresh full Python verification pass from March 31, 2026
 | --- | --- | --- |
 | Static checks | `.\.venv\Scripts\python.exe -m ruff check src tests scripts` | passed |
 | Typing | `.\.venv\Scripts\python.exe -m mypy src tests scripts` | passed |
-| Full unit suite | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-final-<timestamp>` | `113 passed` |
-| Full real integration suite | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-final-<timestamp>` | `5 passed`, with 4 known Windows cleanup warnings |
-| Focused real-network pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-final-<timestamp>` | `1 passed` |
+| Full unit suite | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `117 passed` |
+| Full real integration suite | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` | `5 passed`, with 4 known Windows cleanup warnings |
+| Focused real-network pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` | `1 passed` |
 | Focused public-eval pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_public_eval_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-public-eval-<timestamp>` | `1 passed` |
-| Live real-network artifact | `.easy-agent/real-network-report.json` | refreshed on March 31, 2026 |
-| Live public-eval artifact | `.easy-agent/public-eval-report.json` | refreshed on March 31, 2026 |
-| Live benchmark artifact | `.easy-agent/benchmark-report.json` | retained March 27, 2026 snapshot |
+| Focused live team benchmark pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_teams_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-teams-<timestamp>` | `1 passed` |
+| Live real-network artifact | `.easy-agent/real-network-report.json` | refreshed on April 9, 2026 |
+| Live public-eval artifact | `.easy-agent/public-eval-report.json` | refreshed on April 9, 2026 |
+| Live benchmark artifact | `.easy-agent/benchmark-report.json` | refreshed on April 9, 2026 |
 
-The live public-eval artifact was refreshed through a repo-local Python helper calling `run_public_eval_suite('easy-agent.yml')`, and the real-network artifact was refreshed through the focused Python real-network suite.
+The live public-eval artifact was refreshed through a repo-local Python helper calling `run_public_eval_suite('easy-agent.yml')`, the benchmark artifact was refreshed through `scripts/benchmark_modes.py`, and the real-network artifact was refreshed through the focused Python real-network suite included in the live verification pass.
 
 ### Real Network Matrix
 
 | Scenario | Transport | Status | Duration (s) | Notes |
 | --- | --- | --- | --- | --- |
-| `cross_process_federation` | `http_poll` | passed | `1.9428` | cross-process well-known discovery and send/poll federation passed |
-| `live_model_federation_roundtrip` | `http_poll` | passed | `36.9191` | live-model loopback federation completed through the local A2A surface after preflighting API-key, TCP reachability, and HTTP reachability |
-| `disconnect_retry_chaos` | `http_webhook` | passed | `5.3765` | callback retry, `pushNotificationConfig`, `sendSubscribe`, signed webhook delivery, and resubscribe passed |
-| `duplicate_delivery_replay_resilience` | `http_webhook` | passed | `5.0311` | duplicate delivery, signed callback replay, and stable federated task event logs passed |
-| `workbench_reuse_process` | `local_process` | passed | `1.8651` | process workbench reused the same long-lived session root |
-| `workbench_reuse_container` | `podman_exec` | passed | `32.5495` | container executor reused a warmed offline image archive and resumed from a snapshot image |
-| `workbench_incremental_snapshot_reuse_container` | `podman_exec` | passed | `53.8666` | container repeated checkpoint restore preserved incremental state across restart cycles |
-| `workbench_reuse_microvm` | `podman_machine_ssh` | passed | `21.5404` | microVM executor reused the podman machine over SSH and recovered after a disconnect-style restart |
-| `workbench_incremental_snapshot_reuse_microvm` | `podman_machine_ssh` | passed | `29.5044` | microVM repeated checkpoint restore preserved incremental state across restart cycles |
-| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `6.2460` | resume, replay, and fork recovery passed under injected failure |
+| `cross_process_federation` | `http_poll` | passed | `1.4032` | cross-process well-known discovery and send/poll federation passed |
+| `live_model_federation_roundtrip` | `http_poll` | passed | `7.4190` | live-model loopback federation completed through the local A2A surface after preflighting API-key, TCP reachability, and HTTP reachability |
+| `disconnect_retry_chaos` | `http_webhook` | passed | `4.1993` | callback retry, `pushNotificationConfig`, `sendSubscribe`, signed webhook delivery, and resubscribe passed |
+| `duplicate_delivery_replay_resilience` | `http_webhook` | passed | `3.7237` | duplicate delivery, signed callback replay, and stable federated task event logs passed |
+| `workbench_reuse_process` | `local_process` | passed | `1.9306` | process workbench reused the same long-lived session root |
+| `workbench_reuse_container` | `podman_exec` | passed | `29.5252` | container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image |
+| `workbench_incremental_snapshot_reuse_container` | `podman_exec` | passed | `48.4886` | container repeated checkpoint restore preserved incremental state across restart cycles |
+| `workbench_reuse_microvm` | `podman_machine_ssh` | passed | `17.2082` | microVM executor reused the podman machine over SSH and recovered after a disconnect-style restart |
+| `workbench_incremental_snapshot_reuse_microvm` | `podman_machine_ssh` | passed | `25.3954` | microVM repeated checkpoint restore preserved incremental state across restart cycles |
+| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `5.5155` | resume, replay, and fork recovery passed under injected failure |
 
 Summary: `10 passed`, `0 failed`, `0 skipped`.
-Source: `.easy-agent/real-network-report.json` generated at `2026-03-31T10:33:45Z`.
+Source: `.easy-agent/real-network-report.json` generated at `2026-04-09T07:10:12Z`.
 
 ### Live Benchmark Snapshot
 
 | Mode | Success | Average Duration (s) |
 | --- | --- | --- |
-| `single_agent` | yes | `5.9261` |
-| `sub_agent` | yes | `18.7510` |
-| `multi_agent_graph` | yes | `15.8392` |
-| `team_round_robin` | yes | `12.9947` |
-| `team_selector` | yes | `16.9389` |
-| `team_swarm` | yes | `4.9341` |
+| `single_agent` | yes | `4.7150` |
+| `sub_agent` | yes | `43.4971` |
+| `multi_agent_graph` | yes | `13.6622` |
+| `team_round_robin` | yes | `9.5407` |
+| `team_selector` | yes | `13.3906` |
+| `team_swarm` | yes | `8.5783` |
 
-Source: latest checked `.easy-agent/benchmark-report.json` artifact retained from the March 27, 2026 `0.3.2` verification pass.
+Source: `.easy-agent/benchmark-report.json` refreshed on April 9, 2026.
 
 ### Public Eval Snapshot
 
 | Suite | Pass Rate | Notes |
 | --- | --- | --- |
 | `bfcl_simple` | `0.8750` | 7 of 8 cases passed |
-| `bfcl_multiple` | `0.7500` | 6 of 8 cases passed |
+| `bfcl_multiple` | `0.8750` | 7 of 8 cases passed |
 | `bfcl_parallel_multiple` | `1.0000` | 4 of 4 cases passed |
 | `bfcl_irrelevance` | `1.0000` | 4 of 4 cases passed |
 | `tau2_mock` | `1.0000` | 3 of 3 cases passed |
-| `overall.bfcl_pass_rate` | `0.8750` | current misses are behavior-level rather than provider-side schema failures |
+| `overall.bfcl_pass_rate` | `0.9167` | current misses are down to one duplicate-call case and one optional-selector case |
 
 ### Stage-Aware Public Eval Analytics
 
 | Metric | Value | Notes |
 | --- | --- | --- |
-| Base-stage terminal pass rate | `0.8889` | 24 of 27 cases completed successfully without leaving the base stage |
+| Base-stage terminal pass rate | `0.9259` | 25 of 27 cases completed successfully without leaving the base stage |
 | Retry-stage transitions | `0` | no `strict_schema_retry` or `candidate_pruned_retry` transitions were needed in this live pass |
-| Failure buckets | `duplicate_call=2`, `other=1` | `schema_or_provider_failure=0`, `history_grounding_miss=0` in the refreshed live report |
+| Failure buckets | `duplicate_call=1`, `other=1` | `schema_or_provider_failure=0`, `history_grounding_miss=0` in the refreshed live report |
 
 ### Provider Schema Compatibility Matrix
 
 | Provider | Protocol | Compatibility Summary | Notes |
 | --- | --- | --- | --- |
-| `openai_compatible` | `openai` | normalized and pruned | flattens root object aliases, tuple arrays, `anyOf`, list-typed `type`, removes `format`, and prunes invalid `required` entries |
+| `openai_compatible` | `openai` | normalized, strict, and pruned | flattens root object aliases, tuple arrays, and `anyOf`, emits `strict: true`, sets recursive `additionalProperties: false`, promotes optional fields to required nullable fields, and exposes `parallel_tool_calls` control |
 | `anthropic` | `anthropic` | provider-native passthrough | current adapter intentionally preserves the original schema shape instead of coercing it into the OpenAI-compatible subset |
-| `gemini` | `gemini` | normalized and pruned | matches the OpenAI-compatible normalization path for the probed features in the current adapter |
+| `gemini` | `gemini` | normalized and pruned | keeps the OpenAI-like normalization path for broad schema cleanup, but does not currently expose OpenAI-only strict or parallel-call controls |
 
-Source: `.easy-agent/public-eval-report.json` refreshed at `2026-03-31T10:42:00Z`.
+Source: `.easy-agent/public-eval-report.json` refreshed on April 9, 2026.
 
 Current caveats:
 
 - The full real integration suite still emits Windows asyncio subprocess cleanup warnings after success; on this machine they remain cleanup debt rather than functional failures.
-- The benchmark artifact in this README is still the retained March 27, 2026 snapshot, not a March 31 rerun.
-- The remaining BFCL misses in the refreshed live public-eval run are concentrated in duplicate-call behavior, not OpenAI-compatible provider schema failures.
+- The remaining BFCL misses in the refreshed live public-eval run are concentrated in one duplicate multi-intent case and one optional selector case (`root_type='all'`), not provider-side schema failures.
+- The refreshed benchmark is fully green, but the `sub_agent` path is still materially slower than the other benchmark modes because it pays for both a live coordinator turn and a live delegated turn.
 
 ## Next Reinforcement
 
@@ -468,6 +469,8 @@ These next steps are based on the current public A2A, MCP, and OpenAI tool-calli
 - Continue aligning federation with the latest public A2A surface around richer agent-card metadata, signed-card verification, push-notification authentication details, task history filters, and status-timestamp fidelity so remote inspection and replay stay closer to the evolving protocol contract.
 - Push federation trust beyond readiness checks by adding first-class OAuth/OIDC token acquisition and refresh, JWKS/JWS verification for signed cards or callbacks, and stricter per-tenant or per-task authorization boundaries.
 - Extend provider compatibility hardening around the official OpenAI function-calling and structured-output constraints by adding explicit regression coverage for `strict: true`, `additionalProperties: false`, nullable-vs-optional argument shaping, and single-call versus parallel-call enforcement.
+- Carry OpenAI structured-output refusal, incomplete, and schema-unsupported states into durable runtime events and public-eval telemetry so provider incompatibility can be separated cleanly from model refusal or truncation behavior.
+- Extend the OpenAI-compatible call-control surface beyond `tool_choice='auto'` by adding explicit regression coverage for forced-none, forced-single-tool, and serialized multi-step tool plans under the same strict schema path.
 - Expand MCP roots support from list retrieval to full `notifications/roots/list_changed` propagation plus root-diff reconciliation, and carry URL-mode elicitation completion plus explicit `accept` / `decline` / `cancel` outcomes through the same durable approval state.
 - Turn the current public-eval analytics into trendable history across runs so stage summaries, failure buckets, and provider schema matrices can be compared over time instead of living only in the latest snapshot.
 - Add latency budgets and cache telemetry for container and microVM warm-start paths so the real-network matrix tracks recovery speed and snapshot drift, not just pass/fail state.

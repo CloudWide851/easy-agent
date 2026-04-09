@@ -137,6 +137,7 @@ def test_openai_adapter_sanitizes_non_standard_schema_types() -> None:
                             ]
                         },
                         'amount': {'type': 'float', 'optional': True},
+                        'nickname': {'type': 'string', 'nullable': True},
                         'params': {
                             'type': 'array',
                             'items': {'type': ['string', 'number', 'boolean', 'null']},
@@ -151,15 +152,49 @@ def test_openai_adapter_sanitizes_non_standard_schema_types() -> None:
 
     schema = payload['tools'][0]['function']['parameters']
     assert schema['type'] == 'object'
+    assert payload['tools'][0]['function']['strict'] is True
+    assert payload['parallel_tool_calls'] is True
+    assert schema['additionalProperties'] is False
     assert schema['properties']['items']['type'] == 'array'
     assert schema['properties']['items']['items']['type'] == 'object'
     assert schema['properties']['value']['type'] == 'string'
     assert 'format' not in schema['properties']['value']
-    assert schema['properties']['params']['items']['type'] == 'string'
-    assert schema['properties']['amount']['type'] == 'number'
+    assert schema['properties']['params']['items']['type'] == ['string', 'null']
+    assert schema['properties']['amount']['type'] == ['number', 'null']
+    assert schema['properties']['nickname']['type'] == ['string', 'null']
     assert 'optional' not in schema['properties']['amount']
-    assert schema['required'] == ['items']
+    assert set(schema['required']) == {'items', 'value', 'amount', 'nickname', 'params'}
     assert 'examples' not in schema
+
+
+def test_openai_adapter_can_disable_strict_and_parallel_tool_calls() -> None:
+    adapter = OpenAIAdapter()
+    payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'deepseek',
+                'protocol': Protocol.OPENAI,
+                'function_calling': {'strict': False, 'parallel_tool_calls': False},
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [
+            ToolSpec(
+                name='simple_tool',
+                description='Simple',
+                input_schema={
+                    'type': 'object',
+                    'properties': {'value': {'type': 'string', 'optional': True}},
+                },
+            )
+        ],
+    )
+
+    function = payload['tools'][0]['function']
+    assert 'strict' not in function
+    assert payload['parallel_tool_calls'] is False
+    assert function['parameters']['properties']['value']['type'] == 'string'
+    assert function['parameters'].get('additionalProperties') is None
 
 
 class _RuntimeErrorClosingClient:

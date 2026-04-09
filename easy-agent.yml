@@ -7,6 +7,9 @@ model:
   timeout_seconds: 60
   max_tokens: 2048
   temperature: 0.1
+  function_calling:
+    strict: true
+    parallel_tool_calls: true
 
 graph:
   name: baseline

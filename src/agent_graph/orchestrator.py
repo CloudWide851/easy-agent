@@ -622,8 +622,36 @@ class AgentOrchestrator:
                 return False
         for key, value in previous_arguments.items():
             if key not in current_arguments or current_arguments[key] != value:
+                return AgentOrchestrator._is_declared_optional_subset(
+                    smaller=current_arguments,
+                    larger=previous_arguments,
+                    required=required,
+                    properties=properties,
+                )
+        return AgentOrchestrator._is_declared_optional_subset(
+            smaller=previous_arguments,
+            larger=current_arguments,
+            required=required,
+            properties=properties,
+        )
+
+    @staticmethod
+    def _is_declared_optional_subset(
+        *,
+        smaller: dict[str, Any],
+        larger: dict[str, Any],
+        required: set[str],
+        properties: dict[str, Any],
+    ) -> bool:
+        if smaller == larger:
+            return True
+        for key in required:
+            if key not in smaller or key not in larger or smaller[key] != larger[key]:
                 return False
-        extra_keys = set(current_arguments) - set(previous_arguments)
+        for key, value in smaller.items():
+            if key not in larger or larger[key] != value:
+                return False
+        extra_keys = set(larger) - set(smaller)
         if not extra_keys:
             return False
         if any(key in required for key in extra_keys):

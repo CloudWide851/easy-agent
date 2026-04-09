@@ -48,6 +48,14 @@ def _shared_payload(base: AppConfig) -> dict[str, Any]:
 
 def build_default_cases(base_config: AppConfig) -> list[BenchmarkCase]:
     shared = _shared_payload(base_config)
+    shared['model'] = {
+        **shared['model'],
+        'function_calling': {
+            **shared['model'].get('function_calling', {}),
+            'strict': True,
+            'parallel_tool_calls': False,
+        },
+    }
     single_agent = AppConfig.model_validate(
         {
             **shared,

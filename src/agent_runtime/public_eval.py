@@ -90,6 +90,7 @@ _SCHEMA_MATRIX_SAMPLE = {
             'items': {'type': ['string', 'number', 'boolean', 'null']},
         },
         'amount': {'type': 'float', 'optional': True},
+        'nickname': {'type': 'string', 'nullable': True},
         'timestamp': {'type': 'string', 'format': 'date-time'},
     },
     'required': ['items', 'ghost'],
@@ -187,20 +188,20 @@ def _normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strict_normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    return normalize_json_schema(schema, drop_descriptions=True, core_only=True)
+    return normalize_json_schema(schema, drop_descriptions=True, strict=True)
 
 
-def _protocol_matrix_sample_schema(adapter: Any, provider: str) -> dict[str, Any]:
+def _protocol_matrix_sample_schema(adapter: Any, provider: str) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = adapter.build_payload(
         ModelConfig(provider=provider, protocol=adapter.protocol),
         [ChatMessage(role='user', content='schema probe')],
         [ToolSpec(name='schema_probe', description='schema probe', input_schema=_SCHEMA_MATRIX_SAMPLE)],
     )
     if adapter.protocol is Protocol.OPENAI:
-        return cast(dict[str, Any], payload['tools'][0]['function']['parameters'])
+        return payload, cast(dict[str, Any], payload['tools'][0]['function']['parameters'])
     if adapter.protocol is Protocol.ANTHROPIC:
-        return cast(dict[str, Any], payload['tools'][0]['input_schema'])
-    return cast(dict[str, Any], payload['tools'][0]['functionDeclarations'][0]['parameters'])
+        return payload, cast(dict[str, Any], payload['tools'][0]['input_schema'])
+    return payload, cast(dict[str, Any], payload['tools'][0]['functionDeclarations'][0]['parameters'])
 
 
 def _provider_schema_matrix() -> dict[str, Any]:
@@ -211,8 +212,16 @@ def _provider_schema_matrix() -> dict[str, Any]:
     ]
     matrix: dict[str, Any] = {}
     for provider_name, adapter, config_provider in providers:
-        schema = _protocol_matrix_sample_schema(adapter, config_provider)
+        payload, schema = _protocol_matrix_sample_schema(adapter, config_provider)
         properties = cast(dict[str, Any], schema.get('properties', {}))
+        required = cast(list[str], schema.get('required', []))
+        amount_schema = cast(dict[str, Any], properties.get('amount', {}))
+        nickname_schema = cast(dict[str, Any], properties.get('nickname', {}))
+        payload_tools = cast(list[dict[str, Any]], payload.get('tools', []))
+        first_tool = payload_tools[0] if payload_tools else {}
+        strict_enabled = bool(cast(dict[str, Any], first_tool.get('function', {})).get('strict'))
+        parallel_control = payload.get('parallel_tool_calls')
+        params_item_type = cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type')
         matrix[provider_name] = {
             'protocol': adapter.protocol.value,
             'features': {
@@ -229,8 +238,8 @@ def _provider_schema_matrix() -> dict[str, Any]:
                     'observed': cast(dict[str, Any], properties.get('choice', {})).get('type'),
                 },
                 'list_type_flattened': {
-                    'supported': cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type') == 'string',
-                    'observed': cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type'),
+                    'supported': params_item_type == 'string' or params_item_type == ['string', 'null'],
+                    'observed': params_item_type,
                 },
                 'format_removed': {
                     'supported': 'format' not in cast(dict[str, Any], properties.get('timestamp', {})),
@@ -240,9 +249,32 @@ def _provider_schema_matrix() -> dict[str, Any]:
                     'supported': 'ghost' not in cast(list[str], schema.get('required', [])),
                     'observed': cast(list[str], schema.get('required', [])),
                 },
-                'optional_flag_removed': {
-                    'supported': 'optional' not in cast(dict[str, Any], properties.get('amount', {})),
-                    'observed': 'optional' in cast(dict[str, Any], properties.get('amount', {})),
+                'strict_flag': {
+                    'supported': strict_enabled,
+                    'observed': strict_enabled,
+                },
+                'additional_properties_false': {
+                    'supported': schema.get('additionalProperties') is False,
+                    'observed': schema.get('additionalProperties'),
+                },
+                'all_properties_required': {
+                    'supported': set(required) == set(properties),
+                    'observed': required,
+                },
+                'nullable_preserved': {
+                    'supported': nickname_schema.get('type') == ['string', 'null'],
+                    'observed': nickname_schema.get('type'),
+                },
+                'optional_promoted_to_required_nullable': {
+                    'supported': amount_schema.get('type') == ['number', 'null'] and 'amount' in required,
+                    'observed': {
+                        'type': amount_schema.get('type'),
+                        'required': 'amount' in required,
+                    },
+                },
+                'parallel_tool_calls_control': {
+                    'supported': parallel_control is not None,
+                    'observed': parallel_control,
                 },
             },
         }
@@ -709,6 +741,8 @@ async def _run_bfcl_case_attempt(
     )
     with tempfile.TemporaryDirectory(prefix=f"easy-agent-bfcl-{case['id']}-") as storage_dir:
         config.storage.path = storage_dir
+        config.model.function_calling.strict = strict_schema
+        config.model.function_calling.parallel_tool_calls = len(case.get('ground_truth', [])) > 1
         runtime = build_runtime_from_config(config)
         for function in functions:
             original_name = str(function['name'])
@@ -854,6 +888,7 @@ async def _run_tau_case(base_config: AppConfig, case: dict[str, Any]) -> PublicE
     )
     with tempfile.TemporaryDirectory(prefix=f"easy-agent-tau2-{case['id']}-") as storage_dir:
         config.storage.path = storage_dir
+        config.model.function_calling.parallel_tool_calls = False
         runtime = build_runtime_from_config(config)
         tasks: dict[str, dict[str, Any]] = {
             'task_1': {'task_id': 'task_1', 'title': 'Existing Task', 'status': 'pending', 'user_id': 'user_1'}

@@ -40,6 +40,24 @@ def test_tool_validation_reports_missing_required_arguments() -> None:
     assert result.errors == ['missing required argument: count']
 
 
+def test_tool_validation_accepts_required_nullable_arguments() -> None:
+    result = normalize_and_validate_tool_arguments(
+        {
+            'type': 'object',
+            'properties': {
+                'count': {'type': 'integer'},
+                'note': {'type': ['string', 'null']},
+            },
+            'required': ['count', 'note'],
+            'additionalProperties': False,
+        },
+        {'count': 5, 'note': None},
+    )
+
+    assert result.errors == []
+    assert result.normalized == {'count': 5, 'note': None}
+
+
 def test_guardrail_blocks_shell_metacharacters_in_tool_input() -> None:
     engine = GuardrailEngine()
     decisions = engine.check_tool_input('command_echo', {'prompt': 'hello && shutdown now'}, build_context())

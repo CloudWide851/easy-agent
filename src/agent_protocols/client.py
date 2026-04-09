@@ -40,8 +40,8 @@ def _anthropic_tool(tool: ToolSpec) -> dict[str, Any]:
     }
 
 
-def _openai_safe_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    return normalize_json_schema(schema)
+def _openai_safe_schema(schema: dict[str, Any], *, strict: bool = False) -> dict[str, Any]:
+    return normalize_json_schema(schema, strict=strict)
 
 
 class OpenAIAdapter:
@@ -95,18 +95,21 @@ class OpenAIAdapter:
             'max_tokens': config.max_tokens,
         }
         if tools:
+            function_calling = config.function_calling
             payload['tools'] = [
                 {
                     'type': 'function',
                     'function': {
                         'name': tool.name,
                         'description': tool.description,
-                        'parameters': _openai_safe_schema(tool.input_schema),
+                        'parameters': _openai_safe_schema(tool.input_schema, strict=function_calling.strict),
+                        **({'strict': True} if function_calling.strict else {}),
                     },
                 }
                 for tool in tools
             ]
             payload['tool_choice'] = 'auto'
+            payload['parallel_tool_calls'] = function_calling.parallel_tool_calls
         return payload
 
     def parse_response(self, payload: dict[str, Any]) -> AssistantResponse:
