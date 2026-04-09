@@ -135,6 +135,15 @@ class SQLiteRunStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS federation_auth_state (
+                    remote_name TEXT PRIMARY KEY,
+                    tokens_payload TEXT,
+                    metadata_payload TEXT,
+                    jwks_payload TEXT,
+                    pkce_payload TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS workbench_sessions (
                     session_id TEXT PRIMARY KEY,
                     owner_run_id TEXT NOT NULL,
@@ -170,6 +179,9 @@ class SQLiteRunStore:
                     error_message TEXT,
                     local_run_id TEXT,
                     request_id TEXT,
+                    tenant_id TEXT,
+                    subject_id TEXT,
+                    task_scope_payload TEXT,
                     subscribers_payload TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -189,6 +201,8 @@ class SQLiteRunStore:
                     mode TEXT NOT NULL,
                     callback_url TEXT,
                     status TEXT NOT NULL,
+                    tenant_id TEXT,
+                    subject_id TEXT,
                     lease_expires_at TEXT,
                     from_sequence INTEGER NOT NULL DEFAULT 0,
                     last_delivered_sequence INTEGER NOT NULL DEFAULT 0,
@@ -207,6 +221,11 @@ class SQLiteRunStore:
             self._ensure_runs_column(connection, 'source_checkpoint_id', 'INTEGER')
             self._ensure_runs_column(connection, 'resume_strategy', 'TEXT')
             self._ensure_table_column(connection, 'workbench_sessions', 'runtime_state_payload', "TEXT NOT NULL DEFAULT '{}'" )
+            self._ensure_table_column(connection, 'federated_tasks', 'tenant_id', 'TEXT')
+            self._ensure_table_column(connection, 'federated_tasks', 'subject_id', 'TEXT')
+            self._ensure_table_column(connection, 'federated_tasks', 'task_scope_payload', 'TEXT')
+            self._ensure_table_column(connection, 'federated_subscriptions', 'tenant_id', 'TEXT')
+            self._ensure_table_column(connection, 'federated_subscriptions', 'subject_id', 'TEXT')
             connection.commit()
 
     @staticmethod
@@ -710,6 +729,61 @@ class SQLiteRunStore:
             connection.execute('DELETE FROM oauth_state WHERE server_name = ?', (server_name,))
             connection.commit()
 
+    def save_federation_auth_state(
+        self,
+        remote_name: str,
+        *,
+        tokens: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        jwks: dict[str, Any] | None = None,
+        pkce: dict[str, Any] | None = None,
+    ) -> None:
+        updated_at = self._now()
+        current = self.load_federation_auth_state(remote_name) or {}
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'INSERT INTO federation_auth_state(remote_name, tokens_payload, metadata_payload, jwks_payload, pkce_payload, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?) '
+                'ON CONFLICT(remote_name) DO UPDATE SET '
+                'tokens_payload = excluded.tokens_payload, '
+                'metadata_payload = excluded.metadata_payload, '
+                'jwks_payload = excluded.jwks_payload, '
+                'pkce_payload = excluded.pkce_payload, '
+                'updated_at = excluded.updated_at',
+                (
+                    remote_name,
+                    self._encode(tokens if tokens is not None else current.get('tokens')),
+                    self._encode(metadata if metadata is not None else current.get('metadata')),
+                    self._encode(jwks if jwks is not None else current.get('jwks')),
+                    self._encode(pkce if pkce is not None else current.get('pkce')),
+                    updated_at,
+                ),
+            )
+            connection.commit()
+
+    def load_federation_auth_state(self, remote_name: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                'SELECT tokens_payload, metadata_payload, jwks_payload, pkce_payload, updated_at '
+                'FROM federation_auth_state WHERE remote_name = ?',
+                (remote_name,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            'remote_name': remote_name,
+            'tokens': cast(dict[str, Any] | None, self._decode(row[0])),
+            'metadata': cast(dict[str, Any] | None, self._decode(row[1])),
+            'jwks': cast(dict[str, Any] | None, self._decode(row[2])),
+            'pkce': cast(dict[str, Any] | None, self._decode(row[3])),
+            'updated_at': row[4],
+        }
+
+    def clear_federation_auth_state(self, remote_name: str) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute('DELETE FROM federation_auth_state WHERE remote_name = ?', (remote_name,))
+            connection.commit()
+
     def create_workbench_session(
         self,
         *,
@@ -863,6 +937,10 @@ class SQLiteRunStore:
         target_type: str,
         status: str,
         input_payload: dict[str, Any],
+        *,
+        tenant_id: str | None = None,
+        subject_id: str | None = None,
+        task_scope: list[str] | None = None,
     ) -> None:
         now = self._now()
         with closing(self._connect()) as connection:
@@ -870,10 +948,26 @@ class SQLiteRunStore:
                 (
                     'INSERT INTO federated_tasks('
                     'task_id, export_name, target_type, status, input_payload, response_payload, error_message, '
-                    'local_run_id, request_id, subscribers_payload, created_at, updated_at'
-                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    'local_run_id, request_id, tenant_id, subject_id, task_scope_payload, subscribers_payload, created_at, updated_at'
+                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 ),
-                (task_id, export_name, target_type, status, self._encode(input_payload), None, None, None, None, self._encode([]), now, now),
+                (
+                    task_id,
+                    export_name,
+                    target_type,
+                    status,
+                    self._encode(input_payload),
+                    None,
+                    None,
+                    None,
+                    None,
+                    tenant_id,
+                    subject_id,
+                    self._encode(task_scope or []),
+                    self._encode([]),
+                    now,
+                    now,
+                ),
             )
             connection.commit()
 
@@ -882,7 +976,7 @@ class SQLiteRunStore:
             row = connection.execute(
                 (
                     'SELECT export_name, target_type, status, input_payload, response_payload, error_message, '
-                    'local_run_id, request_id, subscribers_payload, created_at, updated_at '
+                    'local_run_id, request_id, tenant_id, subject_id, task_scope_payload, subscribers_payload, created_at, updated_at '
                     'FROM federated_tasks WHERE task_id = ?'
                 ),
                 (task_id,),
@@ -899,9 +993,12 @@ class SQLiteRunStore:
             'error_message': row[5],
             'local_run_id': row[6],
             'request_id': row[7],
-            'subscribers': cast(list[str], self._decode(row[8]) or []),
-            'created_at': row[9],
-            'updated_at': row[10],
+            'tenant_id': row[8],
+            'subject_id': row[9],
+            'task_scope': cast(list[str], self._decode(row[10]) or []),
+            'subscribers': cast(list[str], self._decode(row[11]) or []),
+            'created_at': row[12],
+            'updated_at': row[13],
         }
 
     def list_federated_tasks(self) -> list[dict[str, Any]]:
@@ -916,6 +1013,9 @@ class SQLiteRunStore:
             'error_message': 'error_message',
             'local_run_id': 'local_run_id',
             'request_id': 'request_id',
+            'tenant_id': 'tenant_id',
+            'subject_id': 'subject_id',
+            'task_scope': 'task_scope_payload',
             'updated_at': 'updated_at',
             'subscribers': 'subscribers_payload',
         }
@@ -926,7 +1026,7 @@ class SQLiteRunStore:
                 continue
             assignments.append(f'{column} = ?')
             value = changes[key]
-            if key in {'response_payload', 'subscribers'}:
+            if key in {'response_payload', 'subscribers', 'task_scope'}:
                 value = self._encode(value)
             params.append(value)
         if not assignments:
@@ -986,6 +1086,8 @@ class SQLiteRunStore:
         mode: str,
         callback_url: str | None,
         status: str,
+        tenant_id: str | None,
+        subject_id: str | None,
         lease_expires_at: str | None,
         from_sequence: int,
     ) -> None:
@@ -994,11 +1096,27 @@ class SQLiteRunStore:
             connection.execute(
                 (
                     'INSERT INTO federated_subscriptions('
-                    'subscription_id, task_id, mode, callback_url, status, lease_expires_at, from_sequence, '
+                    'subscription_id, task_id, mode, callback_url, status, tenant_id, subject_id, lease_expires_at, from_sequence, '
                     'last_delivered_sequence, delivery_attempts, last_error, next_retry_at, created_at, updated_at'
-                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 ),
-                (subscription_id, task_id, mode, callback_url, status, lease_expires_at, from_sequence, 0, 0, None, None, now, now),
+                (
+                    subscription_id,
+                    task_id,
+                    mode,
+                    callback_url,
+                    status,
+                    tenant_id,
+                    subject_id,
+                    lease_expires_at,
+                    from_sequence,
+                    0,
+                    0,
+                    None,
+                    None,
+                    now,
+                    now,
+                ),
             )
             connection.commit()
 
@@ -1006,7 +1124,7 @@ class SQLiteRunStore:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 (
-                    'SELECT task_id, mode, callback_url, status, lease_expires_at, from_sequence, '
+                    'SELECT task_id, mode, callback_url, status, tenant_id, subject_id, lease_expires_at, from_sequence, '
                     'last_delivered_sequence, delivery_attempts, last_error, next_retry_at, created_at, updated_at '
                     'FROM federated_subscriptions WHERE subscription_id = ?'
                 ),
@@ -1020,14 +1138,16 @@ class SQLiteRunStore:
             'mode': row[1],
             'callback_url': row[2],
             'status': row[3],
-            'lease_expires_at': row[4],
-            'from_sequence': int(row[5]),
-            'last_delivered_sequence': int(row[6]),
-            'delivery_attempts': int(row[7]),
-            'last_error': row[8],
-            'next_retry_at': row[9],
-            'created_at': row[10],
-            'updated_at': row[11],
+            'tenant_id': row[4],
+            'subject_id': row[5],
+            'lease_expires_at': row[6],
+            'from_sequence': int(row[7]),
+            'last_delivered_sequence': int(row[8]),
+            'delivery_attempts': int(row[9]),
+            'last_error': row[10],
+            'next_retry_at': row[11],
+            'created_at': row[12],
+            'updated_at': row[13],
         }
 
     def list_federated_subscriptions(self, task_id: str) -> list[dict[str, Any]]:
@@ -1041,6 +1161,8 @@ class SQLiteRunStore:
     def update_federated_subscription(self, subscription_id: str, **changes: Any) -> None:
         mapping = {
             'status': 'status',
+            'tenant_id': 'tenant_id',
+            'subject_id': 'subject_id',
             'lease_expires_at': 'lease_expires_at',
             'last_delivered_sequence': 'last_delivered_sequence',
             'delivery_attempts': 'delivery_attempts',

@@ -18,11 +18,13 @@ mcp_app = typer.Typer(help='Inspect discovered MCP tools.')
 plugins_app = typer.Typer(help='Inspect loaded plugins.')
 teams_app = typer.Typer(help='Inspect configured agent teams.')
 federation_app = typer.Typer(help='Inspect and serve federated agent surfaces.')
+federation_auth_app = typer.Typer(help='Manage federation remote authorization.')
 workbench_app = typer.Typer(help='Inspect and manage isolated workbench sessions.')
 mcp_auth_app = typer.Typer(help='Manage MCP remote authorization.')
 mcp_roots_app = typer.Typer(help='Inspect and refresh MCP roots.')
 mcp_app.add_typer(mcp_auth_app, name='auth')
 mcp_app.add_typer(mcp_roots_app, name='roots')
+federation_app.add_typer(federation_auth_app, name='auth')
 
 
 @skills_app.command('list')
@@ -184,6 +186,61 @@ def inspect_federation(
 ) -> None:
     async def _run(runtime: EasyAgentRuntime) -> None:
         console.print_json(json.dumps(await runtime.inspect_remote(remote_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_auth_app.command('status')
+def federation_auth_status(
+    remote_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    runtime = build_runtime(config)
+    try:
+        console.print_json(json.dumps(runtime.federation_auth_status(remote_name), ensure_ascii=False))
+    finally:
+        asyncio.run(runtime.aclose())
+
+
+@federation_auth_app.command('login')
+def federation_auth_login(
+    remote_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        async def _redirect(url: str) -> None:
+            console.print(f'Open this URL to authorize:\n{url}')
+
+        async def _callback() -> tuple[str, str | None]:
+            code = await asyncio.to_thread(console.input, 'Authorization code: ')
+            state = await asyncio.to_thread(console.input, 'Returned state (blank if none): ')
+            return code.strip(), state.strip() or None
+
+        runtime.federation_manager.set_oauth_handlers(_redirect, _callback)
+        console.print_json(json.dumps(await runtime.federation_authorize(remote_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_auth_app.command('refresh')
+def federation_auth_refresh(
+    remote_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.federation_refresh_auth(remote_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@federation_auth_app.command('logout')
+def federation_auth_logout(
+    remote_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        await runtime.federation_logout(remote_name)
+        console.print_json(json.dumps({'remote': remote_name, 'status': 'logged_out'}, ensure_ascii=False))
 
     asyncio.run(with_runtime(config, _run))
 

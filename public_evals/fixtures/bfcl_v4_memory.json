@@ -1,0 +1,147 @@
+{
+  "snapshot_note": "Pinned repo-local BFCL v4-aligned memory cases generated on 2026-04-09 from public BFCL v4 category descriptions.",
+  "cases": [
+    {
+      "id": "memory_0",
+      "suite": "memory",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Remember that user alice prefers vscode as her editor."
+        }
+      ],
+      "functions": [
+        {
+          "name": "memory.put",
+          "description": "Persist a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {"type": "string"},
+              "value": {"type": "string"}
+            },
+            "required": ["key", "value"]
+          }
+        },
+        {
+          "name": "memory.get",
+          "description": "Load a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {"type": "string"}
+            },
+            "required": ["key"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "memory.put": {
+            "key": ["user:alice:editor"],
+            "value": ["vscode", "VS Code"]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "memory_1",
+      "suite": "memory",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What editor preference do we already have stored for user alice? Use memory instead of guessing."
+        }
+      ],
+      "functions": [
+        {
+          "name": "memory.put",
+          "description": "Persist a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {"type": "string"},
+              "value": {"type": "string"}
+            },
+            "required": ["key", "value"]
+          }
+        },
+        {
+          "name": "memory.get",
+          "description": "Load a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {"type": "string"}
+            },
+            "required": ["key"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "memory.get": {
+            "key": ["user:alice:editor"]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "initial_state": {
+        "memory": {
+          "user:alice:editor": "vscode"
+        }
+      },
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "memory_2",
+      "suite": "memory",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Delete the stored editor preference for alice from memory."
+        }
+      ],
+      "functions": [
+        {
+          "name": "memory.delete",
+          "description": "Delete a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {"type": "string"}
+            },
+            "required": ["key"]
+          }
+        },
+        {
+          "name": "memory.get",
+          "description": "Load a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {"type": "string"}
+            },
+            "required": ["key"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "memory.delete": {
+            "key": ["user:alice:editor"]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "initial_state": {
+        "memory": {
+          "user:alice:editor": "vscode"
+        }
+      },
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    }
+  ]
+}

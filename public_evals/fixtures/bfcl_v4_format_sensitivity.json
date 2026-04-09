@@ -1,0 +1,103 @@
+{
+  "snapshot_note": "Pinned repo-local BFCL v4-aligned format-sensitivity cases generated on 2026-04-09 from public BFCL v4 category descriptions.",
+  "cases": [
+    {
+      "id": "format_0",
+      "suite": "format_sensitivity",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<task>\nUse exactly one tool call.\nReturn the factorial for 6.\n</task>"
+        }
+      ],
+      "functions": [
+        {
+          "name": "math.factorial",
+          "description": "Calculate n factorial.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "n": {"type": "integer"}
+            },
+            "required": ["n"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "math.factorial": {
+            "n": [6]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "format_1",
+      "suite": "format_sensitivity",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Tool contract:\n| tool | intent |\n| geometry.circle_circumference | circumference from radius |\n\nUser request: radius = 4 inches. Please use the matching tool once."
+        }
+      ],
+      "functions": [
+        {
+          "name": "geometry.circle_circumference",
+          "description": "Calculate a circle circumference from radius.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "radius": {"type": "number"}
+            },
+            "required": ["radius"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "geometry.circle_circumference": {
+            "radius": [4, 4.0]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "format_2",
+      "suite": "format_sensitivity",
+      "messages": [
+        {
+          "role": "user",
+          "content": "JSON style instruction:\n{\"operation\":\"area_rectangle\",\"arguments\":{\"length\":7,\"breadth\":3},\"policy\":\"single tool call only\"}"
+        }
+      ],
+      "functions": [
+        {
+          "name": "geometry.rectangle_area",
+          "description": "Calculate rectangle area from length and breadth.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "length": {"type": "number"},
+              "breadth": {"type": "number"}
+            },
+            "required": ["length", "breadth"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "geometry.rectangle_area": {
+            "length": [7, 7.0],
+            "breadth": [3, 3.0]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    }
+  ]
+}

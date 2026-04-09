@@ -18,10 +18,14 @@ def test_public_eval_suite_runs_with_live_model() -> None:
         'bfcl_multiple',
         'bfcl_parallel_multiple',
         'bfcl_irrelevance',
+        'bfcl_web_search',
+        'bfcl_memory',
+        'bfcl_format_sensitivity',
         'tau2_mock',
         'overall',
     }
     assert expected_suites.issubset(report['summary'])
+    assert report['profile'] == 'full_v4'
     assert report['records']
     assert all('suite' in record and 'case_id' in record for record in report['records'])
     assert all(record['duration_seconds'] >= 0 for record in report['records'])

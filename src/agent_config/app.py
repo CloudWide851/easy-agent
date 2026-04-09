@@ -224,8 +224,49 @@ class FederationOAuthConfig(BaseModel):
     authorization_url: str | None = None
     token_url: str | None = None
     jwks_url: str | None = None
+    metadata_url: str | None = None
     audience: str | None = None
     scopes: list[str] = Field(default_factory=list)
+    grant_type: Literal['client_credentials', 'authorization_code'] = 'client_credentials'
+    client_id: str | None = None
+    client_id_env: str | None = None
+    client_secret: str | None = None
+    client_secret_env: str | None = None
+    redirect_uri: str = 'urn:ietf:wg:oauth:2.0:oob'
+    use_pkce: bool = True
+    token_refresh_skew_seconds: int = 60
+    allowed_algorithms: list[str] = Field(default_factory=lambda: ['RS256'])
+
+    @property
+    def resolved_client_id(self) -> str | None:
+        return self.client_id
+
+    @property
+    def resolved_client_secret(self) -> str | None:
+        return self.client_secret
+
+
+class FederationServerJwtConfig(BaseModel):
+    enabled: bool = False
+    issuer: str | None = None
+    audience: str | None = None
+    algorithm: str = 'RS256'
+    allowed_algorithms: list[str] = Field(default_factory=lambda: ['RS256'])
+    key_id: str = 'easy-agent-default'
+    private_key_path: str | None = None
+    public_key_path: str | None = None
+    jwks_path: str = '/.well-known/jwks.json'
+    token_ttl_seconds: int = 600
+    leeway_seconds: int = 30
+    tenant_claim: str = 'tenant'
+    subject_claim: str = 'sub'
+    task_scope_claim: str = 'task_ids'
+
+    @model_validator(mode='after')
+    def validate_jwt(self) -> FederationServerJwtConfig:
+        if self.enabled and not self.private_key_path:
+            raise ValueError('federation server jwt requires private_key_path when enabled')
+        return self
 
 
 class FederationMtlsConfig(BaseModel):
@@ -255,8 +296,15 @@ class FederationAuthConfig(BaseModel):
             raise ValueError('bearer_env auth requires token_env')
         if self.type is FederationAuthType.HEADER_ENV and not self.header_env:
             raise ValueError('header_env auth requires header_env')
-        if self.type in {FederationAuthType.OAUTH, FederationAuthType.OIDC} and not (self.token_env or self.header_env):
-            raise ValueError('oauth/oidc federation auth currently requires token_env or header_env')
+        if self.type in {FederationAuthType.OAUTH, FederationAuthType.OIDC}:
+            if self.token_env or self.header_env:
+                return self
+            if not (self.oauth.client_id or self.oauth.client_id_env):
+                raise ValueError('oauth/oidc federation auth requires client_id or client_id_env when env headers are not used')
+            if self.oauth.grant_type == 'client_credentials' and not (
+                self.oauth.client_secret or self.oauth.client_secret_env
+            ):
+                raise ValueError('client_credentials federation auth requires client_secret or client_secret_env')
         if self.type is FederationAuthType.MTLS and not self.mtls.enabled:
             raise ValueError('mtls federation auth requires client_cert and client_key')
         return self
@@ -299,6 +347,10 @@ class FederationPushSecurityConfig(BaseModel):
     require_signature: bool = False
     require_audience: bool = False
     timestamp_tolerance_seconds: int = 300
+    jws_enabled: bool = False
+    jws_header: str = 'X-A2A-JWS'
+    jwks_url: str | None = None
+    allowed_algorithms: list[str] = Field(default_factory=lambda: ['RS256'])
 
     @model_validator(mode='after')
     def validate_push_security(self) -> FederationPushSecurityConfig:
@@ -308,6 +360,8 @@ class FederationPushSecurityConfig(BaseModel):
             raise ValueError('push signature requires signature_secret_env')
         if self.require_audience and not self.audience:
             raise ValueError('push audience validation requires audience')
+        if self.jws_enabled and not self.jwks_url:
+            raise ValueError('push JWS verification requires jwks_url')
         return self
 
 
@@ -357,6 +411,7 @@ class FederationServerConfig(BaseModel):
     security_schemes: list[FederationSecuritySchemeConfig] = Field(default_factory=list)
     security_requirements: list[dict[str, list[str]]] = Field(default_factory=list)
     push_security: FederationPushSecurityConfig = Field(default_factory=FederationPushSecurityConfig)
+    jwt: FederationServerJwtConfig = Field(default_factory=FederationServerJwtConfig)
 
 
 class FederationConfig(BaseModel):
@@ -457,6 +512,57 @@ class ObservabilityConfig(BaseModel):
     stream_format: Literal['pretty', 'ndjson'] = 'pretty'
 
 
+class PublicEvalWebSearchConfig(BaseModel):
+    provider: Literal['serpapi', 'replay_only'] = 'serpapi'
+    endpoint_url: str = 'https://serpapi.com/search.json'
+    api_key_env: str = 'SERPAPI_API_KEY'
+    engine: str = 'google'
+    google_domain: str = 'google.com'
+    hl: str = 'en'
+    gl: str = 'us'
+    timeout_seconds: float = 20.0
+    hourly_limit: int = 50
+    daily_limit: int = 300
+    usage_path: str = '.easy-agent/public-eval-web-search-usage.json'
+    quota_policy: Literal['resume_later', 'replay', 'fail'] = 'resume_later'
+
+
+class PublicEvalOfficialDatasetConfig(BaseModel):
+    cache_dir: str = '.easy-agent/public-eval-cache'
+    manifest_path: str = '.easy-agent/public-eval-cache/bfcl_v4_manifest.json'
+    source_url: str | None = None
+    checkpoint_path: str = '.easy-agent/public-eval-progress.json'
+    resume: bool = True
+
+
+class PublicEvalConfig(BaseModel):
+    profile: Literal['subset', 'full_v4', 'official_full_v4'] = 'full_v4'
+    bfcl_version: str = 'v4'
+    enable_full_bfcl: bool = True
+    web_search: PublicEvalWebSearchConfig = Field(default_factory=PublicEvalWebSearchConfig)
+    official_dataset: PublicEvalOfficialDatasetConfig = Field(default_factory=PublicEvalOfficialDatasetConfig)
+
+
+class RealNetworkLatencyBudgetConfig(BaseModel):
+    container_warm_start_seconds: float = 35.0
+    microvm_warm_start_seconds: float = 25.0
+    container_snapshot_restore_seconds: float = 8.0
+    microvm_snapshot_restore_seconds: float = 12.0
+
+
+class RealNetworkEvalConfig(BaseModel):
+    history_path: str = '.easy-agent/real-network-history.jsonl'
+    latency_budgets: RealNetworkLatencyBudgetConfig = Field(
+        default_factory=RealNetworkLatencyBudgetConfig
+    )
+    snapshot_drift_ratio_limit: float = 0.5
+
+
+class EvaluationConfig(BaseModel):
+    public_eval: PublicEvalConfig = Field(default_factory=PublicEvalConfig)
+    real_network: RealNetworkEvalConfig = Field(default_factory=RealNetworkEvalConfig)
+
+
 class HumanLoopConfig(BaseModel):
     mode: HumanLoopMode = HumanLoopMode.HYBRID
     sensitive_tools: list[str] = Field(default_factory=list)
@@ -517,6 +623,7 @@ class AppConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @property

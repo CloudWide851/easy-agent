@@ -32,5 +32,7 @@ def test_real_network_suite_generates_matrix_report() -> None:
     assert scenarios['workbench_incremental_snapshot_reuse_microvm']['status'] in {'passed', 'skipped'}
     assert scenarios['replay_resume_failure_injection']['status'] == 'passed'
     assert report['summary']['failed'] == 0
+    assert 'telemetry_summary' in report
+    assert Path('.easy-agent/real-network-history.jsonl').is_file()
     assert Path('.easy-agent/real-network-report.json').is_file()
 

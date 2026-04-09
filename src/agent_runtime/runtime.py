@@ -384,6 +384,24 @@ class EasyAgentRuntime:
             await self.start()
         return await self.federation_manager.inspect_remote(remote_name)
 
+    def federation_auth_status(self, remote_name: str) -> dict[str, Any]:
+        return self.federation_manager.auth_status(remote_name)
+
+    async def federation_authorize(self, remote_name: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.authorize(remote_name)
+
+    async def federation_refresh_auth(self, remote_name: str) -> dict[str, Any]:
+        if not self._started:
+            await self.start()
+        return await self.federation_manager.refresh_authorization(remote_name)
+
+    async def federation_logout(self, remote_name: str) -> None:
+        if not self._started:
+            await self.start()
+        await self.federation_manager.logout(remote_name)
+
     async def list_remote_tasks(
         self,
         remote_name: str,

@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import mean
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 
 from agent_common.models import ChatMessage, Protocol, ToolCall, ToolSpec
 from agent_common.schema_utils import normalize_json_schema
-from agent_config.app import AppConfig, ModelConfig, load_config
+from agent_config.app import AppConfig, ModelConfig, PublicEvalWebSearchConfig, load_config
 from agent_protocols.client import AnthropicAdapter, GeminiAdapter, OpenAIAdapter
 from agent_runtime.runtime import build_runtime_from_config
 
@@ -124,6 +125,14 @@ class _BfclAttemptResult:
     retryable_provider_400: bool = False
 
 
+class WebSearchQuotaExceeded(RuntimeError):
+    def __init__(self, wait_seconds: float, *, scope: str) -> None:
+        rounded = max(0.0, round(wait_seconds, 2))
+        super().__init__(f'web search quota exceeded for {scope}; retry after {rounded:.2f}s')
+        self.wait_seconds = rounded
+        self.scope = scope
+
+
 def _shared_payload(base: AppConfig) -> dict[str, Any]:
     return {
         'model': base.model.model_dump(),
@@ -134,6 +143,7 @@ def _shared_payload(base: AppConfig) -> dict[str, Any]:
         'logging': base.logging.model_dump(),
         'guardrails': base.guardrails.model_dump(),
         'observability': base.observability.model_dump(),
+        'evaluation': base.evaluation.model_dump(),
         'security': base.security.model_dump(),
     }
 
@@ -141,6 +151,80 @@ def _shared_payload(base: AppConfig) -> dict[str, Any]:
 def _load_fixture(name: str) -> dict[str, Any]:
     payload = json.loads((FIXTURE_ROOT / name).read_text(encoding='utf-8'))
     return cast(dict[str, Any], payload)
+
+
+def _load_json_path(path: Path) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(path.read_text(encoding='utf-8')))
+
+
+def _write_json_path(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def _cache_json_from_url(url: str, cache_path: Path) -> dict[str, Any]:
+    if cache_path.is_file():
+        return _load_json_path(cache_path)
+    response = httpx.get(url, timeout=30.0)
+    response.raise_for_status()
+    payload = cast(dict[str, Any], response.json())
+    _write_json_path(cache_path, payload)
+    return payload
+
+
+def _flatten_official_manifest_cases(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    direct = payload.get('bfcl_cases')
+    if isinstance(direct, list):
+        return cast(list[dict[str, Any]], direct)
+    direct = payload.get('cases')
+    if isinstance(direct, list):
+        return cast(list[dict[str, Any]], direct)
+    categories = payload.get('categories')
+    if isinstance(categories, dict):
+        cases: list[dict[str, Any]] = []
+        for item in categories.values():
+            if isinstance(item, list):
+                cases.extend(cast(list[dict[str, Any]], item))
+                continue
+            if isinstance(item, dict) and isinstance(item.get('cases'), list):
+                cases.extend(cast(list[dict[str, Any]], item['cases']))
+        return cases
+    raise RuntimeError('official BFCL manifest does not contain a supported cases payload')
+
+
+def _load_official_full_v4_inputs(base_config: AppConfig) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    official = base_config.evaluation.public_eval.official_dataset
+    manifest_path = Path(official.manifest_path)
+    cache_dir = Path(official.cache_dir)
+    if manifest_path.is_file():
+        manifest = _load_json_path(manifest_path)
+    elif official.source_url:
+        manifest = _cache_json_from_url(official.source_url, cache_dir / 'bfcl_v4_manifest.json')
+    else:
+        raise RuntimeError(
+            f"official BFCL profile requires '{manifest_path}' or evaluation.public_eval.official_dataset.source_url"
+        )
+    bfcl_cases = _flatten_official_manifest_cases(manifest)
+    tau_cases = cast(list[dict[str, Any]], _load_fixture('tau2_mock_subset.json')['cases'])
+    return bfcl_cases, tau_cases
+
+
+def _load_public_eval_inputs(base_config: AppConfig) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]]:
+    public_eval = base_config.evaluation.public_eval
+    profile = public_eval.profile
+    if profile == 'official_full_v4':
+        bfcl_cases, tau_cases = _load_official_full_v4_inputs(base_config)
+        return profile, public_eval.bfcl_version, bfcl_cases, tau_cases
+    bfcl_cases = list(cast(list[dict[str, Any]], _load_fixture('bfcl_subset.json')['cases']))
+    if profile == 'full_v4' and public_eval.enable_full_bfcl:
+        for name in (
+            'bfcl_v4_web_search.json',
+            'bfcl_v4_memory.json',
+            'bfcl_v4_format_sensitivity.json',
+        ):
+            bfcl_cases.extend(cast(list[dict[str, Any]], _load_fixture(name)['cases']))
+    tau_cases = cast(list[dict[str, Any]], _load_fixture('tau2_mock_subset.json')['cases'])
+    return profile, public_eval.bfcl_version, bfcl_cases, tau_cases
 
 
 def _bfcl_system_prompt(case: dict[str, Any]) -> str:
@@ -157,6 +241,8 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         + ' If the request is irrelevant to the available tools, answer directly without any tool call. '
         'If one tool already covers the request, prefer that single tool rather than decomposing the request into narrower follow-up calls. '
         'If the user asks for the complete result, all results, or paired properties, include any needed selector or optional fields in the first tool call instead of retrying the same tool. '
+        "If the user asks for all roots, both roots, or a complete root set, set any available root-type selector to include all roots instead of relying on a default real-only mode. "
+        'If the budget allows exactly one tool call and multiple tools look related, choose the tool that best matches the primary requested analysis and avoid secondary follow-up calls. '
         'A successful tool call ends the search unless an additional independent tool call is explicitly required by the budget. '
         'Never speculate, never duplicate a successful tool call, and never call a second tool just to restate the first answer. '
         'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again.'
@@ -635,9 +721,20 @@ def _classify_failure_bucket(record: PublicEvalRecord) -> str:
         return 'passed'
     if record.suite == 'tau2_mock' and 'history' in record.case_id and record.actual_call_count == 0:
         return 'history_grounding_miss'
+    if record.suite == 'bfcl_web_search' and any(
+        token in (record.error or '').lower()
+        for token in ('serpapi', 'web search', 'web contents', 'api_key', 'quota', 'search.json')
+    ):
+        return 'search_tool_miss'
+    if record.suite == 'bfcl_memory':
+        return 'memory_backend_miss'
+    if record.suite == 'bfcl_format_sensitivity':
+        return 'format_variant_miss'
     if _is_duplicate_call_failure(record):
         return 'duplicate_call'
     error_text = record.error or ''
+    if 'refusal' in error_text.lower() or 'incomplete' in error_text.lower():
+        return 'refusal_or_incomplete'
     if '400 Bad Request' in error_text or 'HTTPStatusError' in error_text or record.fallback_stage != 'base':
         return 'schema_or_provider_failure'
     return 'other'
@@ -707,6 +804,295 @@ def _make_bfcl_failure_record(
     )
 
 
+def _case_prompt(case: dict[str, Any]) -> str:
+    messages = cast(list[dict[str, Any]], case.get('messages', []))
+    if messages:
+        return str(messages[0].get('content', ''))
+    return str(case.get('prompt', ''))
+
+
+def _load_web_search_usage(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    entries = payload.get('requests', [])
+    if isinstance(entries, list):
+        return [cast(dict[str, Any], item) for item in entries if isinstance(item, dict)]
+    return []
+
+
+def _save_web_search_usage(path: Path, entries: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {'requests': entries}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def _prune_web_search_usage(entries: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in entries
+        if now - float(item.get('timestamp', 0.0)) < 86400.0
+    ]
+
+
+def _window_wait_seconds(entries: list[dict[str, Any]], now: float, *, seconds: float, limit: int) -> float:
+    if limit <= 0:
+        return 0.0
+    window_entries = sorted(
+        float(item.get('timestamp', 0.0))
+        for item in entries
+        if now - float(item.get('timestamp', 0.0)) < seconds
+    )
+    if len(window_entries) < limit:
+        return 0.0
+    oldest_relevant = window_entries[-limit]
+    return max(0.0, seconds - (now - oldest_relevant))
+
+
+def _record_web_search_usage(config: PublicEvalWebSearchConfig, *, kind: str, now: float | None = None) -> None:
+    moment = time.time() if now is None else now
+    usage_path = Path(config.usage_path)
+    entries = _prune_web_search_usage(_load_web_search_usage(usage_path), moment)
+    hourly_wait = _window_wait_seconds(entries, moment, seconds=3600.0, limit=config.hourly_limit)
+    daily_wait = _window_wait_seconds(entries, moment, seconds=86400.0, limit=config.daily_limit)
+    wait_seconds = max(hourly_wait, daily_wait)
+    if wait_seconds > 0:
+        if config.quota_policy == 'replay':
+            raise WebSearchQuotaExceeded(wait_seconds, scope='quota_replay_fallback')
+        if config.quota_policy in {'resume_later', 'fail'}:
+            raise WebSearchQuotaExceeded(wait_seconds, scope='quota_resume')
+    entries.append({'timestamp': moment, 'kind': kind})
+    _save_web_search_usage(usage_path, entries)
+
+
+def _should_use_replay_results(case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> bool:
+    return web_search.provider == 'replay_only' or bool(case.get('replay_results'))
+
+
+def _replay_web_search(case: dict[str, Any], *, query: str, num_results: int, backend: str) -> dict[str, Any]:
+    replay_results = cast(list[dict[str, Any]], case.get('replay_results', []))
+    if not replay_results:
+        raise RuntimeError('missing replay_results for BFCL web search evaluation')
+    return {'query': query, 'results': replay_results[:num_results], 'backend': backend}
+
+
+def _normalize_serpapi_search_results(payload: dict[str, Any], *, num_results: int) -> list[dict[str, Any]]:
+    raw_results = payload.get('organic_results', [])
+    if not isinstance(raw_results, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in raw_results[:num_results]:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                'title': str(item.get('title') or item.get('name') or ''),
+                'link': str(item.get('link') or item.get('url') or ''),
+                'snippet': str(item.get('text') or item.get('snippet') or ''),
+            }
+        )
+    return normalized
+
+
+def _normalize_web_contents_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_results = payload.get('results', [])
+    if not isinstance(raw_results, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                'title': str(item.get('title') or ''),
+                'link': str(item.get('url') or ''),
+                'text': str(item.get('text') or item.get('snippet') or ''),
+            }
+        )
+    return normalized
+
+
+def _strip_html_text(value: str) -> str:
+    collapsed = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', value, flags=re.IGNORECASE | re.DOTALL)
+    collapsed = re.sub(r'<[^>]+>', ' ', collapsed)
+    collapsed = re.sub(r'\s+', ' ', collapsed)
+    return collapsed.strip()
+
+
+def _serpapi_query_params(
+    arguments: dict[str, Any],
+    web_search: PublicEvalWebSearchConfig,
+) -> dict[str, Any]:
+    query = str(arguments.get('query') or '').strip()
+    num_results = int(arguments.get('num_results') or 5)
+    return {
+        'engine': web_search.engine,
+        'q': query,
+        'num': num_results,
+        'google_domain': web_search.google_domain,
+        'hl': web_search.hl,
+        'gl': web_search.gl,
+    }
+
+
+def _is_retryable_search_unavailable(response: httpx.Response) -> bool:
+    if response.status_code not in {429, 503}:
+        return False
+    lowered = response.text.lower()
+    return (
+        'quota' in lowered
+        or 'rate limit' in lowered
+        or 'service unavailable' in lowered
+        or 'temporarily unavailable' in lowered
+    )
+
+
+def _serpapi_search(arguments: dict[str, Any], case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> dict[str, Any]:
+    query = str(arguments.get('query') or '').strip()
+    num_results = int(arguments.get('num_results') or 5)
+    api_key = os.environ.get(web_search.api_key_env, '').strip()
+    if not api_key:
+        if _should_use_replay_results(case, web_search):
+            return _replay_web_search(case, query=query, num_results=num_results, backend='replay')
+        raise RuntimeError(f'missing {web_search.api_key_env} for BFCL web search evaluation')
+    try:
+        _record_web_search_usage(web_search, kind='search')
+    except WebSearchQuotaExceeded:
+        if web_search.quota_policy == 'replay' and case.get('replay_results'):
+            return _replay_web_search(case, query=query, num_results=num_results, backend='quota_replay')
+        raise
+    response = httpx.get(
+        web_search.endpoint_url,
+        params={**_serpapi_query_params(arguments, web_search), 'api_key': api_key},
+        timeout=web_search.timeout_seconds,
+    )
+    if _is_retryable_search_unavailable(response) and case.get('replay_results'):
+        return _replay_web_search(case, query=query, num_results=num_results, backend='service_unavailable_replay')
+    response.raise_for_status()
+    payload = cast(dict[str, Any], response.json())
+    return {'query': query, 'results': _normalize_serpapi_search_results(payload, num_results=num_results), 'backend': 'serpapi'}
+
+
+def _resolve_content_urls(arguments: dict[str, Any], case: dict[str, Any]) -> list[str]:
+    urls = arguments.get('urls') or arguments.get('links') or []
+    if isinstance(urls, list):
+        direct_urls = [str(item).strip() for item in urls if str(item).strip()]
+        if direct_urls:
+            return direct_urls
+    result_ids = arguments.get('ids') or arguments.get('result_ids') or []
+    replay_results = cast(list[dict[str, Any]], case.get('replay_results', []))
+    resolved: list[str] = []
+    if isinstance(result_ids, list):
+        for item in result_ids:
+            if isinstance(item, int) and 0 <= item < len(replay_results):
+                link = str(replay_results[item].get('link') or '').strip()
+                if link:
+                    resolved.append(link)
+            else:
+                text = str(item).strip()
+                if text.startswith('http'):
+                    resolved.append(text)
+    return resolved
+
+
+def _fetch_web_contents(arguments: dict[str, Any], case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> dict[str, Any]:
+    replay_contents = cast(list[dict[str, Any]], case.get('replay_contents', []))
+    urls = _resolve_content_urls(arguments, case)
+    if not urls:
+        if replay_contents:
+            return {'results': replay_contents, 'backend': 'replay'}
+        raise RuntimeError('web.contents requires urls/links or replay_contents')
+    try:
+        _record_web_search_usage(web_search, kind='contents')
+    except WebSearchQuotaExceeded:
+        if web_search.quota_policy == 'replay' and replay_contents:
+            return {'results': replay_contents, 'backend': 'quota_replay'}
+        raise
+    results: list[dict[str, Any]] = []
+    for url in urls:
+        try:
+            response = httpx.get(url, timeout=web_search.timeout_seconds, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.HTTPError:
+            continue
+        content_type = response.headers.get('content-type', '').lower()
+        body = response.text
+        text = _strip_html_text(body) if 'html' in content_type or '<html' in body.lower() else body.strip()
+        results.append({'title': url, 'link': url, 'text': text[:4000]})
+    if not results and replay_contents:
+        return {'results': replay_contents, 'backend': 'service_unavailable_replay'}
+    return {'results': _normalize_web_contents_results({'results': results}), 'backend': 'http_fetch'}
+
+
+def _build_eval_tool_handler(
+    case: dict[str, Any],
+    original_name: str,
+    tool_name: str,
+    *,
+    web_search: PublicEvalWebSearchConfig,
+    memory_state: dict[str, str],
+) -> Any:
+    if original_name == 'web.search':
+        def search_handler(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            result = _serpapi_search(arguments, case, web_search)
+            result['tool'] = tool_name
+            result['run_id'] = context.run_id
+            return result
+
+        return search_handler
+    if original_name == 'web.contents':
+        def contents_handler(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            result = _fetch_web_contents(arguments, case, web_search)
+            result['tool'] = tool_name
+            result['run_id'] = context.run_id
+            return result
+
+        return contents_handler
+    if original_name == 'memory.put':
+        def memory_put(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            key = str(arguments['key'])
+            value = str(arguments['value'])
+            memory_state[key] = value
+            return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'value': value}
+
+        return memory_put
+    if original_name == 'memory.get':
+        def memory_get(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            key = str(arguments['key'])
+            return {
+                'tool': tool_name,
+                'run_id': context.run_id,
+                'key': key,
+                'value': memory_state.get(key),
+                'found': key in memory_state,
+            }
+
+        return memory_get
+    if original_name == 'memory.delete':
+        def memory_delete(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            key = str(arguments['key'])
+            removed = memory_state.pop(key, None)
+            return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'removed': removed is not None}
+
+        return memory_delete
+    if original_name == 'memory.list':
+        def memory_list(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            prefix = str(arguments.get('prefix') or '')
+            keys = sorted(key for key in memory_state if key.startswith(prefix))
+            return {'tool': tool_name, 'run_id': context.run_id, 'prefix': prefix, 'keys': keys}
+
+        return memory_list
+
+    def record_tool_call(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+        return {
+            'tool': tool_name,
+            'arguments': arguments,
+            'run_id': context.run_id,
+        }
+
+    return record_tool_call
+
+
 async def _run_bfcl_case_attempt(
     base_config: AppConfig,
     case: dict[str, Any],
@@ -744,6 +1130,11 @@ async def _run_bfcl_case_attempt(
         config.model.function_calling.strict = strict_schema
         config.model.function_calling.parallel_tool_calls = len(case.get('ground_truth', [])) > 1
         runtime = build_runtime_from_config(config)
+        web_search = base_config.evaluation.public_eval.web_search
+        memory_state = {
+            str(key): str(value)
+            for key, value in cast(dict[str, Any], case.get('initial_state', {}).get('memory', {})).items()
+        }
         for function in functions:
             original_name = str(function['name'])
             tool_name = tool_name_map[original_name]
@@ -753,25 +1144,24 @@ async def _run_bfcl_case_attempt(
                 else _normalize_schema(cast(dict[str, Any], function['parameters']))
             )
 
-            def record_tool_call(arguments: dict[str, Any], context: Any, *, bound_name: str = tool_name) -> dict[str, Any]:
-                return {
-                    'tool': bound_name,
-                    'arguments': arguments,
-                    'run_id': context.run_id,
-                }
-
             runtime.register_tool(
                 ToolSpec(
                     name=tool_name,
                     description=function['description'],
                     input_schema=input_schema,
                 ),
-                record_tool_call,
+                _build_eval_tool_handler(
+                    case,
+                    original_name,
+                    tool_name,
+                    web_search=web_search,
+                    memory_state=memory_state,
+                ),
             )
         start = time.perf_counter()
         try:
             await runtime.start()
-            prompt = str(case['messages'][0]['content'])
+            prompt = _case_prompt(case)
             result = await runtime.run(prompt)
             duration = time.perf_counter() - start
             trace = runtime.store.load_trace(result['run_id'])
@@ -808,7 +1198,7 @@ async def _run_bfcl_case_attempt(
 async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> PublicEvalRecord:
     shared = _shared_payload(base_config)
     tool_name_map = _build_tool_name_map(cast(list[dict[str, Any]], case['functions']))
-    prompt = str(case['messages'][0]['content'])
+    prompt = _case_prompt(case)
     all_functions = list(cast(list[dict[str, Any]], case['functions']))
     attempt_history: list[str] = []
     stages: list[tuple[str, list[dict[str, Any]], bool]] = [
@@ -1044,26 +1434,249 @@ def _aggregate_summary(records: list[PublicEvalRecord]) -> dict[str, Any]:
     return summary
 
 
-def run_public_eval_suite(config_path: str | Path) -> dict[str, Any]:
-    base_config = load_config(config_path)
-    bfcl_cases = _load_fixture('bfcl_subset.json')['cases']
-    tau_cases = _load_fixture('tau2_mock_subset.json')['cases']
+def _aggregate_category_summary(records: list[PublicEvalRecord]) -> dict[str, Any]:
+    categories = {
+        'bfcl_core': {
+            'suites': {'bfcl_simple', 'bfcl_multiple', 'bfcl_parallel_multiple', 'bfcl_irrelevance'},
+        },
+        'bfcl_agentic': {
+            'suites': {'bfcl_web_search', 'bfcl_memory', 'bfcl_format_sensitivity'},
+        },
+        'tau2_mock': {'suites': {'tau2_mock'}},
+    }
+    summary: dict[str, Any] = {}
+    for name, item in categories.items():
+        suites = item['suites']
+        selected = [record for record in records if record.suite in suites]
+        if not selected:
+            continue
+        summary[name] = {
+            'runs': len(selected),
+            'successes': sum(1 for record in selected if record.success),
+            'failures': sum(1 for record in selected if not record.success),
+            'pass_rate': round(sum(1 for record in selected if record.success) / len(selected), 4),
+            'average_duration_seconds': round(mean(record.duration_seconds for record in selected), 4),
+        }
+    return summary
+
+
+def _aggregate_agentic_summary(records: list[PublicEvalRecord]) -> dict[str, Any]:
+    suites = ('bfcl_web_search', 'bfcl_memory', 'bfcl_format_sensitivity')
+    summary: dict[str, Any] = {}
+    for suite in suites:
+        selected = [record for record in records if record.suite == suite]
+        if not selected:
+            continue
+        summary[suite] = {
+            'runs': len(selected),
+            'successes': sum(1 for record in selected if record.success),
+            'failures': sum(1 for record in selected if not record.success),
+            'pass_rate': round(sum(1 for record in selected if record.success) / len(selected), 4),
+        }
+    return summary
+
+
+def _remaining_blockers(records: list[PublicEvalRecord]) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    for record in records:
+        if record.success:
+            continue
+        blockers.append(
+            {
+                'suite': record.suite,
+                'case_id': record.case_id,
+                'failure_bucket': record.failure_bucket or _classify_failure_bucket(record),
+                'fallback_stage': record.fallback_stage,
+            }
+        )
+    return blockers
+
+
+def _checkpoint_record_key(record: PublicEvalRecord) -> str:
+    return f'{record.suite}:{record.case_id}'
+
+
+def _load_public_eval_checkpoint(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {'records': {}}
+    return cast(dict[str, Any], json.loads(path.read_text(encoding='utf-8')))
+
+
+def _save_public_eval_checkpoint(
+    path: Path,
+    *,
+    profile: str,
+    bfcl_version: str,
+    records: list[PublicEvalRecord],
+    run_status: str,
+    interrupted: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        'profile': profile,
+        'bfcl_version': bfcl_version,
+        'run_status': run_status,
+        'interrupted': interrupted,
+        'records': {
+            _checkpoint_record_key(record): asdict(record)
+            for record in records
+        },
+    }
+    _write_json_path(path, payload)
+
+
+def _restore_checkpoint_records(path: Path, *, profile: str, bfcl_version: str) -> dict[str, PublicEvalRecord]:
+    checkpoint = _load_public_eval_checkpoint(path)
+    if checkpoint.get('profile') != profile or checkpoint.get('bfcl_version') != bfcl_version:
+        return {}
+    restored: dict[str, PublicEvalRecord] = {}
+    for key, payload in cast(dict[str, Any], checkpoint.get('records', {})).items():
+        if isinstance(payload, dict):
+            restored[key] = PublicEvalRecord(**payload)
+    return restored
+
+
+def _checkpoint_path_for_run(base_config: AppConfig) -> Path:
+    return Path(base_config.evaluation.public_eval.official_dataset.checkpoint_path)
+
+
+def _run_public_eval_records(
+    base_config: AppConfig,
+    *,
+    profile: str,
+    bfcl_version: str,
+    bfcl_cases: list[dict[str, Any]],
+    tau_cases: list[dict[str, Any]],
+) -> tuple[list[PublicEvalRecord], dict[str, Any]]:
+    checkpoint_path = _checkpoint_path_for_run(base_config)
+    restore_enabled = base_config.evaluation.public_eval.official_dataset.resume
+    restored = _restore_checkpoint_records(checkpoint_path, profile=profile, bfcl_version=bfcl_version) if restore_enabled else {}
     records: list[PublicEvalRecord] = []
+    resumed_records = 0
+    interrupted: dict[str, Any] | None = None
+
     for case in bfcl_cases:
-        records.append(asyncio.run(_run_bfcl_case(base_config, case)))
-    for case in tau_cases:
-        records.append(asyncio.run(_run_tau_case(base_config, case)))
+        record_key = f"bfcl_{case['suite']}:{case['id']}"
+        cached = restored.get(record_key)
+        if cached is not None:
+            records.append(cached)
+            resumed_records += 1
+            continue
+        try:
+            record = asyncio.run(_run_bfcl_case(base_config, case))
+        except WebSearchQuotaExceeded as exc:
+            interrupted = {
+                'reason': 'web_search_quota',
+                'wait_seconds': exc.wait_seconds,
+                'scope': exc.scope,
+                'completed_records': len(records),
+            }
+            _save_public_eval_checkpoint(
+                checkpoint_path,
+                profile=profile,
+                bfcl_version=bfcl_version,
+                records=records,
+                run_status='interrupted_quota',
+                interrupted=interrupted,
+            )
+            break
+        records.append(record)
+        _save_public_eval_checkpoint(
+            checkpoint_path,
+            profile=profile,
+            bfcl_version=bfcl_version,
+            records=records,
+            run_status='running',
+        )
+    else:
+        for case in tau_cases:
+            record_key = f"tau2_mock:{case['id']}"
+            cached = restored.get(record_key)
+            if cached is not None:
+                records.append(cached)
+                resumed_records += 1
+                continue
+            record = asyncio.run(_run_tau_case(base_config, case))
+            records.append(record)
+            _save_public_eval_checkpoint(
+                checkpoint_path,
+                profile=profile,
+                bfcl_version=bfcl_version,
+                records=records,
+                run_status='running',
+            )
+
+    final_status = 'interrupted_quota' if interrupted is not None else 'completed'
+    _save_public_eval_checkpoint(
+        checkpoint_path,
+        profile=profile,
+        bfcl_version=bfcl_version,
+        records=records,
+        run_status=final_status,
+        interrupted=interrupted,
+    )
+    return records, {
+        'checkpoint_path': str(checkpoint_path),
+        'resume_enabled': restore_enabled,
+        'resumed_records': resumed_records,
+        'completed_records': len(records),
+        'interrupted': interrupted,
+        'run_status': final_status,
+    }
+
+
+def _public_eval_sources(base_config: AppConfig, selected_profile: str) -> dict[str, Any]:
+    sources: dict[str, Any] = {
+        'bfcl': 'https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard',
+        'bfcl_v4': 'https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html',
+        'serpapi_search': 'https://serpapi.com/search-api',
+        'web_contents_fetch': 'https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Methods/GET',
+        'tau2': 'https://github.com/sierra-research/tau2-bench',
+    }
+    if selected_profile == 'official_full_v4':
+        official = base_config.evaluation.public_eval.official_dataset
+        sources['official_manifest_path'] = official.manifest_path
+        if official.source_url:
+            sources['official_manifest_url'] = official.source_url
+    return sources
+
+
+def run_public_eval_suite(
+    config_path: str | Path,
+    *,
+    profile: Literal['subset', 'full_v4', 'official_full_v4'] | None = None,
+) -> dict[str, Any]:
+    base_config = load_config(config_path)
+    if profile is not None:
+        base_config.evaluation.public_eval.profile = profile
+    selected_profile, bfcl_version, bfcl_cases, tau_cases = _load_public_eval_inputs(base_config)
+    records, progress = _run_public_eval_records(
+        base_config,
+        profile=selected_profile,
+        bfcl_version=bfcl_version,
+        bfcl_cases=bfcl_cases,
+        tau_cases=tau_cases,
+    )
     _annotate_failure_buckets(records)
     return {
+        'profile': selected_profile,
+        'scope': 'official_manifest' if selected_profile == 'official_full_v4' else 'repo_pinned',
+        'bfcl_version': bfcl_version,
+        'case_counts': {
+            'bfcl': len(bfcl_cases),
+            'tau2_mock': len(tau_cases),
+            'completed_records': len(records),
+        },
+        'progress': progress,
         'records': [asdict(record) for record in records],
         'summary': _aggregate_summary(records),
+        'suite_summary': _aggregate_summary(records),
+        'category_summary': _aggregate_category_summary(records),
+        'agentic_summary': _aggregate_agentic_summary(records),
         'stage_summary': _aggregate_stage_summary(records),
         'failure_buckets': _aggregate_failure_buckets(records),
+        'remaining_blockers': _remaining_blockers(records),
         'provider_schema_matrix': _provider_schema_matrix(),
-        'sources': {
-            'bfcl': 'https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard',
-            'tau2': 'https://github.com/sierra-research/tau2-bench',
-        },
+        'sources': _public_eval_sources(base_config, selected_profile),
     }
 
 

@@ -9,34 +9,66 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
-- Added explicit `model.function_calling` config with `strict` and `parallel_tool_calls` controls for OpenAI-compatible providers.
-- Added strict-schema compatibility coverage for:
-  - recursive `additionalProperties: false`
-  - required nullable modeling for optional fields
-  - explicit nullable field preservation
-  - single-call versus parallel-call control surfaces
-- Added regression coverage for duplicate tool-call suppression when a later call is an optional subset of an earlier successful call.
+- Added SERPAPI-backed public-eval web-search configuration with nested `evaluation.public_eval.web_search` settings for:
+  - `provider`
+  - `api_key_env`
+  - `endpoint_url`
+  - search locale controls
+  - timeout and quota limits
+  - a persistent usage ledger
+- Added `evaluation.public_eval.official_dataset` settings for cached `official_full_v4` manifest loading, checkpointing, and resumable reruns.
+- Added public-eval checkpoint persistence and restore so repo-pinned or official-manifest BFCL runs can resume without discarding completed records.
+- Added federation OAuth/OIDC token acquisition and refresh support for:
+  - `client_credentials`
+  - `authorization_code`
+  - persisted refresh-token reuse
+  - CLI auth lifecycle helpers under `easy-agent federation auth *`
+- Added federation JWT/JWKS trust-chain support for:
+  - server JWKS publishing
+  - signed agent cards
+  - signed callback JWS verification
+  - stricter tenant/task authorization boundaries on task and subscription state
+- Added warm-start latency budgets, cache telemetry, and history append support for container and microVM rows in the real-network suite.
+- Added focused regression coverage for:
+  - SERPAPI search normalization and replay fallback
+  - official-manifest loading
+  - public-eval checkpoint round-trips
+  - federation OAuth state persistence
+  - signed-card and tenant/task authorization behavior
+  - benchmark retry stability
+  - real-network telemetry aggregation
+  - README comparison snapshot rows
 
 ### Changed
 
-- Hardened the shared JSON-schema normalizer so the OpenAI-compatible path can emit strict-friendly schemas while keeping the broader non-strict cleanup path for other providers.
-- Updated the OpenAI-compatible adapter to emit `strict: true` by default, forward `parallel_tool_calls`, and keep the schema payload aligned with the stricter OpenAI function-calling and structured-output constraints.
-- Updated the public-eval harness so BFCL and tau runs can control `parallel_tool_calls` per scenario, and refreshed the provider schema matrix to report strict-mode capabilities more explicitly.
-- Tightened benchmark execution defaults around function-calling strictness and serialized tool execution so the live benchmark suite stays more stable.
-- Refreshed `README.md` and `README.zh-CN.md` together for the April 9, 2026 verification pass, including the latest benchmark, public-eval, and real-network artifacts plus expanded `Next Reinforcement` items.
+- Updated `run_public_eval_suite(...)` and the integration CLI so public eval can select `subset`, `full_v4`, or `official_full_v4`.
+- Reworked the public-eval report shape to include:
+  - `scope`
+  - `case_counts`
+  - `progress`
+  - refreshed source metadata for BFCL, tau2, and SERPAPI-backed web search
+- Switched the README snapshot and bilingual documentation to the latest April 9, 2026 artifacts, including:
+  - the refreshed benchmark snapshot
+  - the refreshed repo-pinned public-eval snapshot
+  - the refreshed real-network telemetry matrix
+  - a docs-mapped similar-project comparison section
+- Tightened live benchmark stability by giving each benchmark mode one bounded retry before recording failure, and mirrored that bounded retry in the flaky long-run real integration test.
+- Restored public-facing README and changelog wording to SERPAPI so the tracked repository no longer advertises the previous temporary web-search test surface.
+- Kept this round unreleased on top of `0.3.3`; no package version or release entry was bumped.
 
 ### Verified
 
 - `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
 - `.\.venv\Scripts\python.exe -m mypy src tests scripts`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `117 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_public_eval_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-public-eval-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `140 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` with `1 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_teams_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-teams-<timestamp>` with `1 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `5 passed`
-- `.\.venv\Scripts\python.exe scripts\benchmark_modes.py --config easy-agent.yml --repeat 1 --output .easy-agent\benchmark-report.json`
-- Repo-local Python helper refreshed `.easy-agent/public-eval-report.json` with `overall.bfcl_pass_rate = 0.9167` and `tau2_mock_pass_rate = 1.0000`
-- `.easy-agent/real-network-report.json` refreshed with `10 passed`, `0 failed`, `0 skipped`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `5 passed`, `5 warnings`
+- Retained `.easy-agent/benchmark-report.json` from the April 9, 2026 snapshot.
+- Retained `.easy-agent/public-eval-report.json` from the April 9, 2026 snapshot with:
+  - `overall.bfcl_pass_rate = 0.7879`
+  - `overall.bfcl_tool_name_match_rate = 0.9091`
+  - `overall.bfcl_argument_match_rate = 0.8182`
+- Refreshed `.easy-agent/real-network-report.json` with `10 passed`, `0 failed`, `0 skipped`, and updated warm-start telemetry summary fields
 
 ## [0.3.3] - 2026-04-01
 

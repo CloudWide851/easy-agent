@@ -1,0 +1,140 @@
+{
+  "snapshot_note": "Pinned repo-local BFCL v4-aligned web-search cases generated on 2026-04-09 from public BFCL v4 category descriptions and official docs targets.",
+  "cases": [
+    {
+      "id": "web_search_0",
+      "suite": "web_search",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Search the web for the official OpenAI Structured Outputs guide and then summarize what it covers."
+        }
+      ],
+      "functions": [
+        {
+          "name": "web.search",
+          "description": "Search the public web and return top results for a query.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {"type": "string"},
+              "num_results": {"type": "integer", "optional": true}
+            },
+            "required": ["query"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "web.search": {
+            "query": [
+              "OpenAI Structured Outputs official docs",
+              "official OpenAI Structured Outputs guide",
+              "OpenAI Structured Outputs guide"
+            ],
+            "num_results": [5, 3, ""]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "replay_results": [
+        {
+          "title": "Structured Outputs",
+          "link": "https://platform.openai.com/docs/guides/structured-outputs",
+          "snippet": "Learn how to constrain model responses to match a JSON Schema."
+        }
+      ],
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "web_search_1",
+      "suite": "web_search",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Look up the official LangGraph durable execution docs and tell me what they are about."
+        }
+      ],
+      "functions": [
+        {
+          "name": "web.search",
+          "description": "Search the public web and return top results for a query.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {"type": "string"},
+              "num_results": {"type": "integer", "optional": true}
+            },
+            "required": ["query"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "web.search": {
+            "query": [
+              "LangGraph durable execution official docs",
+              "official LangGraph durable execution docs",
+              "LangGraph durable execution docs"
+            ],
+            "num_results": [5, 3, ""]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "replay_results": [
+        {
+          "title": "Durable execution",
+          "link": "https://docs.langchain.com/oss/python/langgraph/durable-execution",
+          "snippet": "Durable execution preserves workflow progress across interruptions and resumes."
+        }
+      ],
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "web_search_2",
+      "suite": "web_search",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Find the official AutoGen Teams docs, then explain whether Teams are supported."
+        }
+      ],
+      "functions": [
+        {
+          "name": "web.search",
+          "description": "Search the public web and return top results for a query.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {"type": "string"},
+              "num_results": {"type": "integer", "optional": true}
+            },
+            "required": ["query"]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "web.search": {
+            "query": [
+              "AutoGen Teams official docs",
+              "official AutoGen Teams docs",
+              "AutoGen Teams docs"
+            ],
+            "num_results": [5, 3, ""]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "replay_results": [
+        {
+          "title": "Teams - AutoGen",
+          "link": "https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html",
+          "snippet": "AutoGen supports multiple team patterns for coordinated agent collaboration."
+        }
+      ],
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    }
+  ]
+}

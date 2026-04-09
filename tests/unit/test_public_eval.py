@@ -1,19 +1,34 @@
+import json
+from pathlib import Path
+
 import httpx
+import pytest
+import respx
 
 from agent_config.app import AppConfig
 from agent_runtime.public_eval import (
     PublicEvalRecord,
+    WebSearchQuotaExceeded,
+    _aggregate_agentic_summary,
     _aggregate_failure_buckets,
     _aggregate_stage_summary,
     _build_tool_name_map,
     _classify_failure_bucket,
     _extract_tau_tasks_from_history,
+    _fetch_web_contents,
     _is_retryable_provider_400,
+    _load_official_full_v4_inputs,
+    _load_public_eval_inputs,
     _normalize_schema,
+    _normalize_serpapi_search_results,
     _provider_schema_matrix,
+    _record_web_search_usage,
+    _restore_checkpoint_records,
+    _save_public_eval_checkpoint,
     _score_bfcl_case,
     _score_tau_case,
     _select_bfcl_candidate_functions,
+    _serpapi_search,
     _strict_normalize_schema,
     _tau_history_memory_message,
     _tau_prompt_with_grounding,
@@ -222,6 +237,28 @@ def test_provider_schema_matrix_reflects_adapter_behavior() -> None:
     assert matrix['anthropic']['features']['strict_flag']['supported'] is False
 
 
+def test_load_public_eval_inputs_expands_full_v4_profile() -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {
+                'entrypoint': 'coordinator',
+                'agents': [{'name': 'coordinator'}],
+                'nodes': [],
+            },
+            'evaluation': {'public_eval': {'profile': 'full_v4'}},
+        }
+    )
+
+    profile, bfcl_version, bfcl_cases, tau_cases = _load_public_eval_inputs(config)
+
+    assert profile == 'full_v4'
+    assert bfcl_version == 'v4'
+    assert any(case['suite'] == 'web_search' for case in bfcl_cases)
+    assert any(case['suite'] == 'memory' for case in bfcl_cases)
+    assert any(case['suite'] == 'format_sensitivity' for case in bfcl_cases)
+    assert tau_cases
+
+
 def test_aggregate_stage_summary_counts_transitions_and_recoveries() -> None:
     records = [
         PublicEvalRecord(
@@ -294,3 +331,301 @@ def test_failure_bucket_classification_handles_duplicate_and_history_cases() -> 
 
     assert buckets['duplicate_call']['count'] == 1
     assert buckets['history_grounding_miss']['count'] == 1
+
+
+def test_failure_bucket_classification_handles_agentic_v4_cases() -> None:
+    search = PublicEvalRecord(
+        suite='bfcl_web_search',
+        case_id='web_search_0',
+        success=False,
+        duration_seconds=1.0,
+        tool_name_match=0.0,
+        argument_match=0.0,
+        expected_call_count=1,
+        actual_call_count=0,
+        result_summary='',
+        error='missing SERPAPI_API_KEY for BFCL web search evaluation',
+    )
+    memory = PublicEvalRecord(
+        suite='bfcl_memory',
+        case_id='memory_0',
+        success=False,
+        duration_seconds=1.0,
+        tool_name_match=0.0,
+        argument_match=0.0,
+        expected_call_count=1,
+        actual_call_count=0,
+        result_summary='',
+        error='memory miss',
+    )
+    format_case = PublicEvalRecord(
+        suite='bfcl_format_sensitivity',
+        case_id='format_0',
+        success=False,
+        duration_seconds=1.0,
+        tool_name_match=0.0,
+        argument_match=0.0,
+        expected_call_count=1,
+        actual_call_count=0,
+        result_summary='',
+        error='format mismatch',
+    )
+
+    assert _classify_failure_bucket(search) == 'search_tool_miss'
+    assert _classify_failure_bucket(memory) == 'memory_backend_miss'
+    assert _classify_failure_bucket(format_case) == 'format_variant_miss'
+
+
+def test_aggregate_agentic_summary_counts_v4_suites() -> None:
+    summary = _aggregate_agentic_summary(
+        [
+            PublicEvalRecord('bfcl_web_search', 'a', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
+            PublicEvalRecord('bfcl_memory', 'b', False, 1.0, 0.0, 0.0, 1, 0, ''),
+            PublicEvalRecord('bfcl_format_sensitivity', 'c', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
+        ]
+    )
+
+    assert summary['bfcl_web_search']['pass_rate'] == 1.0
+    assert summary['bfcl_memory']['failures'] == 1
+
+
+def test_load_public_eval_inputs_supports_official_profile(tmp_path: Path) -> None:
+    manifest_path = tmp_path / 'bfcl_v4_manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'categories': {
+                    'web_search': {
+                        'cases': [
+                            {
+                                'id': 'official_web_0',
+                                'suite': 'web_search',
+                                'messages': [{'role': 'user', 'content': 'Search the web.'}],
+                                'functions': [],
+                                'ground_truth': [],
+                                'expect_no_tool': True,
+                            }
+                        ]
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {
+                'public_eval': {
+                    'profile': 'official_full_v4',
+                    'official_dataset': {'manifest_path': str(manifest_path)},
+                }
+            },
+        }
+    )
+
+    profile, bfcl_version, bfcl_cases, tau_cases = _load_public_eval_inputs(config)
+
+    assert profile == 'official_full_v4'
+    assert bfcl_version == 'v4'
+    assert bfcl_cases[0]['id'] == 'official_web_0'
+    assert tau_cases
+
+
+def test_normalize_serpapi_search_results_keeps_title_link_and_text() -> None:
+    results = _normalize_serpapi_search_results(
+        {
+            'organic_results': [
+                {'title': 'Structured Outputs', 'link': 'https://example.com', 'snippet': 'Schema constrained output.'}
+            ]
+        },
+        num_results=3,
+    )
+
+    assert results == [
+        {'title': 'Structured Outputs', 'link': 'https://example.com', 'snippet': 'Schema constrained output.'}
+    ]
+
+
+@respx.mock
+def test_serpapi_search_uses_api_and_normalizes_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('SERPAPI_API_KEY', 'test-key')
+    route = respx.get('https://serpapi.example/search.json').mock(
+        return_value=httpx.Response(
+            200,
+            json={'organic_results': [{'title': 'OpenAI', 'link': 'https://platform.openai.com', 'snippet': 'Docs'}]},
+        )
+    )
+    result = _serpapi_search(
+        {'query': 'OpenAI Structured Outputs', 'num_results': 3},
+        {'replay_results': []},
+        AppConfig.model_validate(
+            {
+                'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+                'evaluation': {
+                    'public_eval': {
+                        'web_search': {
+                            'endpoint_url': 'https://serpapi.example/search.json',
+                            'usage_path': str(tmp_path / 'usage.json'),
+                            'api_key_env': 'SERPAPI_API_KEY',
+                        }
+                    }
+                },
+            }
+        ).evaluation.public_eval.web_search,
+    )
+
+    assert route.called is True
+    assert result['backend'] == 'serpapi'
+    assert result['results'][0]['link'] == 'https://platform.openai.com'
+
+
+@respx.mock
+def test_fetch_web_contents_uses_http_fetch_and_normalizes_response(tmp_path: Path) -> None:
+    route = respx.get('https://example.com/doc').mock(
+        return_value=httpx.Response(
+            200,
+            text='<html><body><main>Body</main></body></html>',
+            headers={'content-type': 'text/html; charset=utf-8'},
+        )
+    )
+    result = _fetch_web_contents(
+        {'urls': ['https://example.com/doc']},
+        {'replay_contents': []},
+        AppConfig.model_validate(
+            {
+                'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+                'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+            }
+        ).evaluation.public_eval.web_search,
+    )
+
+    assert route.called is True
+    assert result['results'][0]['text'] == 'Body'
+
+
+@respx.mock
+def test_serpapi_search_replays_when_service_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('SERPAPI_API_KEY', 'test-key')
+    respx.get('https://serpapi.example/search.json').mock(
+        return_value=httpx.Response(503, text='service unavailable')
+    )
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {
+                'public_eval': {
+                    'web_search': {
+                        'endpoint_url': 'https://serpapi.example/search.json',
+                        'usage_path': str(tmp_path / 'usage.json'),
+                        'api_key_env': 'SERPAPI_API_KEY',
+                    }
+                }
+            },
+        }
+    )
+
+    result = _serpapi_search(
+        {'query': 'OpenAI', 'num_results': 1},
+        {'replay_results': [{'title': 'Replay', 'link': 'https://example.com', 'snippet': 'cached'}]},
+        config.evaluation.public_eval.web_search,
+    )
+
+    assert result['backend'] == 'service_unavailable_replay'
+    assert result['results'][0]['title'] == 'Replay'
+
+
+def test_serpapi_search_replays_when_api_key_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('SERPAPI_API_KEY', raising=False)
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+        }
+    )
+
+    result = _serpapi_search(
+        {'query': 'OpenAI', 'num_results': 2},
+        {'replay_results': [{'title': 'Replay', 'link': 'https://example.com', 'snippet': 'cached'}]},
+        config.evaluation.public_eval.web_search,
+    )
+
+    assert result['backend'] == 'replay'
+    assert result['results'][0]['title'] == 'Replay'
+
+
+def test_record_web_search_usage_enforces_quota(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {
+                'public_eval': {
+                    'web_search': {
+                        'usage_path': str(tmp_path / 'usage.json'),
+                        'hourly_limit': 1,
+                        'daily_limit': 1,
+                        'quota_policy': 'resume_later',
+                    }
+                }
+            },
+        }
+    ).evaluation.public_eval.web_search
+
+    _record_web_search_usage(config, kind='search', now=100.0)
+    try:
+        _record_web_search_usage(config, kind='search', now=101.0)
+    except WebSearchQuotaExceeded as exc:
+        assert exc.wait_seconds > 0
+    else:
+        raise AssertionError('expected quota exhaustion')
+
+
+def test_public_eval_checkpoint_round_trip_restores_records(tmp_path: Path) -> None:
+    checkpoint = tmp_path / 'progress.json'
+    records = [PublicEvalRecord('bfcl_web_search', 'case_1', True, 1.0, 1.0, 1.0, 1, 1, 'ok')]
+
+    _save_public_eval_checkpoint(
+        checkpoint,
+        profile='full_v4',
+        bfcl_version='v4',
+        records=records,
+        run_status='completed',
+    )
+    restored = _restore_checkpoint_records(checkpoint, profile='full_v4', bfcl_version='v4')
+
+    assert 'bfcl_web_search:case_1' in restored
+    assert restored['bfcl_web_search:case_1'].success is True
+
+
+def test_load_official_full_v4_inputs_reads_manifest_path(tmp_path: Path) -> None:
+    manifest_path = tmp_path / 'bfcl_v4_manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'bfcl_cases': [
+                    {
+                        'id': 'official_memory_0',
+                        'suite': 'memory',
+                        'messages': [{'role': 'user', 'content': 'Remember this.'}],
+                        'functions': [],
+                        'ground_truth': [],
+                        'expect_no_tool': True,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'official_dataset': {'manifest_path': str(manifest_path)}}},
+        }
+    )
+
+    bfcl_cases, tau_cases = _load_official_full_v4_inputs(config)
+
+    assert bfcl_cases[0]['suite'] == 'memory'
+    assert tau_cases

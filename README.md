@@ -86,7 +86,7 @@ Many agent repositories jump straight from "call a model" to "ship a product". T
 - A2A-style remote agent federation with exported local targets, remote inspection, task send or stream flows, durable task state, and CLI federation tooling.
 - Executor and workbench isolation for long-lived command skills, MCP subprocesses, execution manifests, TTL cleanup, and fork-safe resume snapshots.
 - MCP roots, risk-aware sampling and elicitation approvals, richer form or URL elicitation handling, `streamable_http`, and authorization-aware remote transports with persisted OAuth state.
-- Public evaluation helpers for BFCL subset cases and tau2 mock cases, with stage-aware fallback analytics, failure buckets, and per-provider schema compatibility telemetry for OpenAI-compatible schema failures.
+- Public evaluation helpers for repo-pinned BFCL v4 cases, cached `official_full_v4` manifest resume paths, SERPAPI-backed web-search cases, tau2 mock cases, checkpointed reruns, and per-provider schema telemetry for OpenAI-compatible schema failures.
 
 ## Human Loop, Replay, and MCP
 
@@ -105,10 +105,13 @@ The current runtime already ships the reliability controls that were previously 
 - `federation.remotes` can inspect remote cards and prefer SSE push or fall back to polling with `push_preference = auto|sse|poll`.
 - Federated delivery now includes well-known discovery, persisted task event logs, SSE event streaming, webhook push delivery, retry with backoff, lease renewal, cancellation, `pushNotificationConfig` set/get/list/delete compatibility, and reconnect-safe `sendSubscribe` or resubscribe flows.
 - `agent-card` and `extended-agent-card` now expose camelCase-first `defaultInputModes` / `defaultOutputModes`, richer artifact or part metadata, `notificationCompatibility`, pagination hints, and `securitySchemes` plus `security` requirements alongside the easy-agent compatibility fields.
+- Federation auth now supports first-class OAuth/OIDC token acquisition and refresh for both `client_credentials` and `authorization_code` flows, with durable token state reused by runtime and CLI surfaces.
+- Signed cards and signed callback payloads can now be verified through JWKS/JWS metadata, and federated task or subscription access is constrained by stricter tenant/task authorization boundaries before state is revealed or mutated.
 - Remote inspection stays available even when a remote requires auth that this client is not configured to satisfy, while actionable calls now fail fast with card-driven readiness checks for bearer, header, OAuth/OIDC, callback audience or signature expectations, and optional client-side mTLS handshakes.
 - Federated task and event listing now support cursor pagination through `pageToken` / `nextPageToken`, and the CLI accepts `--page-token` / `--page-size` for `easy-agent federation tasks` and `easy-agent federation events`.
 - Federated task state plus subscription state is persisted in SQLite so remote execution, backlog replay, and push delivery can be inspected after the initial request completes.
 - The CLI now exposes `easy-agent federation list|inspect|tasks|events|cancel-task|subscriptions|renew-subscription|cancel-subscription|push-set|push-get|push-list|push-delete|send-subscribe|resubscribe|serve`.
+- Federation auth CLI helpers now expose `easy-agent federation auth status|login|refresh|logout` for remote token inspection and lifecycle control.
 
 Example shape:
 
@@ -373,11 +376,22 @@ The repository currently uses these verification paths on this machine:
 
 Python CLI smoke is also verified through `CliRunner` against `agent_cli.app:app` for `--help`, `doctor`, `teams list`, `harness list`, and `federation list`.
 
+### Docs-Mapped Similar Project Comparison
+
+This is a documentation-mapped capability comparison against official project docs, not an apples-to-apples benchmark or leaderboard.
+
+| Project | Basis | Sessions / State | Teams / Handoffs | Resume / Replay | Isolation | Eval Surface |
+| --- | --- | --- | --- | --- | --- | --- |
+| `easy-agent` | repo-local tested evidence | `session_id`, `session_messages`, `session_state`, `harness_state` | agent teams, graph handoff, harness worker routing | resume, replay, fork, checkpoints | process / container / microVM workbench executors | repo-pinned BFCL, `official_full_v4` resume path, tau2, real-network telemetry |
+| `OpenAI Agents SDK` | official docs mapping | sessions documented | handoffs documented | not positioned as graph replay or time-travel runtime | not a first-class executor matrix in docs | official function-calling and structured-output surface, but no BFCL-style built-in eval matrix in docs |
+| `AutoGen` | official docs mapping | memory and state patterns documented | teams documented | stateful workflows documented, less replay-centric than `easy-agent` | code execution documented | no repo-local BFCL or real-network matrix in docs |
+| `LangGraph` | official docs mapping | state persistence documented | graph routing documented | durable execution and time-travel documented | not a built-in container / microVM executor matrix in docs | no built-in BFCL or real-network matrix in docs |
+
 ## Real Network Test Set Results
 
-Snapshot date: April 9, 2026.
+Snapshot date: April 10, 2026.
 
-This snapshot combines a fresh full Python verification pass from April 9, 2026. The real-network, public-eval, and benchmark artifacts were all refreshed in this round.
+This snapshot combines a fresh full Python verification pass from April 10, 2026. The real-network artifact was refreshed in this round, while the benchmark and public-eval artifacts below are retained April 9, 2026 snapshots. The retained public-eval artifact still targets the repo-pinned `full_v4` profile; the shipped `official_full_v4` manifest cache and checkpoint path are implemented, but that broader manifest was not the live artifact refreshed in this verification pass.
 
 ### Python Verification Snapshot
 
@@ -385,95 +399,111 @@ This snapshot combines a fresh full Python verification pass from April 9, 2026.
 | --- | --- | --- |
 | Static checks | `.\.venv\Scripts\python.exe -m ruff check src tests scripts` | passed |
 | Typing | `.\.venv\Scripts\python.exe -m mypy src tests scripts` | passed |
-| Full unit suite | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `117 passed` |
-| Full real integration suite | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` | `5 passed`, with 4 known Windows cleanup warnings |
+| Full unit suite | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `140 passed` |
 | Focused real-network pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` | `1 passed` |
-| Focused public-eval pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_public_eval_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-public-eval-<timestamp>` | `1 passed` |
-| Focused live team benchmark pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_teams_real.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-teams-<timestamp>` | `1 passed` |
-| Live real-network artifact | `.easy-agent/real-network-report.json` | refreshed on April 9, 2026 |
-| Live public-eval artifact | `.easy-agent/public-eval-report.json` | refreshed on April 9, 2026 |
-| Live benchmark artifact | `.easy-agent/benchmark-report.json` | refreshed on April 9, 2026 |
+| Full real integration suite | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` | `5 passed`, with 5 known Windows cleanup warnings |
+| Live real-network artifact | `.easy-agent/real-network-report.json` | refreshed on April 10, 2026 |
+| Retained public-eval artifact | `.easy-agent/public-eval-report.json` | retained April 9, 2026 snapshot |
+| Retained benchmark artifact | `.easy-agent/benchmark-report.json` | retained April 9, 2026 snapshot |
 
-The live public-eval artifact was refreshed through a repo-local Python helper calling `run_public_eval_suite('easy-agent.yml')`, the benchmark artifact was refreshed through `scripts/benchmark_modes.py`, and the real-network artifact was refreshed through the focused Python real-network suite included in the live verification pass.
+This verification pass reran the full real integration suite and refreshed `.easy-agent/real-network-report.json`; the benchmark and public-eval snapshots shown below are retained from the previous April 9, 2026 refresh. BFCL web-search evaluation now routes through the SERPAPI configuration surface in `easy-agent.yml`, while the runtime still preserves replay fallback behavior when credentials are missing, quotas are exhausted, or a compatible backend becomes temporarily unavailable.
 
 ### Real Network Matrix
 
 | Scenario | Transport | Status | Duration (s) | Notes |
 | --- | --- | --- | --- | --- |
-| `cross_process_federation` | `http_poll` | passed | `1.4032` | cross-process well-known discovery and send/poll federation passed |
-| `live_model_federation_roundtrip` | `http_poll` | passed | `7.4190` | live-model loopback federation completed through the local A2A surface after preflighting API-key, TCP reachability, and HTTP reachability |
-| `disconnect_retry_chaos` | `http_webhook` | passed | `4.1993` | callback retry, `pushNotificationConfig`, `sendSubscribe`, signed webhook delivery, and resubscribe passed |
-| `duplicate_delivery_replay_resilience` | `http_webhook` | passed | `3.7237` | duplicate delivery, signed callback replay, and stable federated task event logs passed |
-| `workbench_reuse_process` | `local_process` | passed | `1.9306` | process workbench reused the same long-lived session root |
-| `workbench_reuse_container` | `podman_exec` | passed | `29.5252` | container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image |
-| `workbench_incremental_snapshot_reuse_container` | `podman_exec` | passed | `48.4886` | container repeated checkpoint restore preserved incremental state across restart cycles |
-| `workbench_reuse_microvm` | `podman_machine_ssh` | passed | `17.2082` | microVM executor reused the podman machine over SSH and recovered after a disconnect-style restart |
-| `workbench_incremental_snapshot_reuse_microvm` | `podman_machine_ssh` | passed | `25.3954` | microVM repeated checkpoint restore preserved incremental state across restart cycles |
-| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `5.5155` | resume, replay, and fork recovery passed under injected failure |
+| `cross_process_federation` | `http_poll` | passed | `1.2584` | cross-process well-known discovery and send/poll federation passed |
+| `live_model_federation_roundtrip` | `http_poll` | passed | `38.0432` | live-model loopback federation completed through the local A2A surface after API-key, TCP, and HTTP preflight checks |
+| `disconnect_retry_chaos` | `http_webhook` | passed | `5.0479` | callback retry, `pushNotificationConfig`, `sendSubscribe`, signed webhook delivery, and resubscribe passed |
+| `duplicate_delivery_replay_resilience` | `http_webhook` | passed | `3.9962` | duplicate delivery, signed callback replay, and stable federated task event logs passed |
+| `workbench_reuse_process` | `local_process` | passed | `1.8405` | process workbench reused the same long-lived session root |
+| `workbench_reuse_container` | `podman_exec` | passed | `31.3088` | container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image |
+| `workbench_incremental_snapshot_reuse_container` | `podman_exec` | passed | `51.0611` | container repeated checkpoint restore preserved incremental state across restart cycles |
+| `workbench_reuse_microvm` | `podman_machine_ssh` | passed | `19.7863` | microVM executor reused the podman machine over SSH and recovered after a disconnect-style restart |
+| `workbench_incremental_snapshot_reuse_microvm` | `podman_machine_ssh` | passed | `28.5456` | microVM repeated checkpoint restore preserved incremental state across restart cycles |
+| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `6.5586` | resume, replay, and fork recovery passed under injected failure |
 
 Summary: `10 passed`, `0 failed`, `0 skipped`.
-Source: `.easy-agent/real-network-report.json` generated at `2026-04-09T07:10:12Z`.
+Source: `.easy-agent/real-network-report.json` generated at `2026-04-10T00:08:24Z`.
+
+### Warm-Start Telemetry Snapshot
+
+| Metric | Value | Notes |
+| --- | --- | --- |
+| Telemetry-bearing scenarios | `4` | container and microVM warm-start or snapshot-restore rows emit telemetry |
+| Cache hit rate | `1.0000` | all four warm-start rows hit a reusable warm cache |
+| Warm-start budget status | `within_budget=4` | latency budgets were met for all four warm-start rows |
+| Container warm-start average | `5.6515s` | average across container warm-start and incremental snapshot reuse |
+| microVM warm-start average | `8.3451s` | average across microVM warm-start and incremental snapshot reuse |
+| Snapshot drift ratio average | `0.4222` | average absolute drift versus cold-start baseline |
+| Snapshot drift ratio max | `0.6873` | current worst-case container restart drift |
 
 ### Live Benchmark Snapshot
 
 | Mode | Success | Average Duration (s) |
 | --- | --- | --- |
-| `single_agent` | yes | `4.7150` |
-| `sub_agent` | yes | `43.4971` |
-| `multi_agent_graph` | yes | `13.6622` |
-| `team_round_robin` | yes | `9.5407` |
-| `team_selector` | yes | `13.3906` |
-| `team_swarm` | yes | `8.5783` |
+| `single_agent` | yes | `4.2843` |
+| `sub_agent` | yes | `20.7399` |
+| `multi_agent_graph` | yes | `9.8910` |
+| `team_round_robin` | yes | `7.7402` |
+| `team_selector` | yes | `9.7480` |
+| `team_swarm` | yes | `8.2819` |
 
-Source: `.easy-agent/benchmark-report.json` refreshed on April 9, 2026.
+Source: `.easy-agent/benchmark-report.json` retained from the April 9, 2026 snapshot.
 
 ### Public Eval Snapshot
 
 | Suite | Pass Rate | Notes |
 | --- | --- | --- |
-| `bfcl_simple` | `0.8750` | 7 of 8 cases passed |
+| `bfcl_simple` | `1.0000` | 8 of 8 cases passed |
 | `bfcl_multiple` | `0.8750` | 7 of 8 cases passed |
 | `bfcl_parallel_multiple` | `1.0000` | 4 of 4 cases passed |
 | `bfcl_irrelevance` | `1.0000` | 4 of 4 cases passed |
+| `bfcl_format_sensitivity` | `1.0000` | 3 of 3 cases passed |
+| `bfcl_memory` | `0.0000` | 0 of 3 cases passed; current misses are memory-key semantics and replay grounding |
+| `bfcl_web_search` | `0.0000` | 0 of 3 cases passed; current misses are duplicate-call and query-shaping drift |
 | `tau2_mock` | `1.0000` | 3 of 3 cases passed |
-| `overall.bfcl_pass_rate` | `0.9167` | current misses are down to one duplicate-call case and one optional-selector case |
+| `overall.bfcl_pass_rate` | `0.7879` | current blockers have shifted to memory and web-search rather than strict-schema transport failures |
+
+Current artifact scope: `profile=full_v4`, `scope=repo_pinned`, `completed_records=36`, `resume_enabled=false`. The runtime now also ships a cached `official_full_v4` manifest path with checkpoint resume, but that broader manifest was not part of the retained snapshot shown in this pass.
 
 ### Stage-Aware Public Eval Analytics
 
 | Metric | Value | Notes |
 | --- | --- | --- |
-| Base-stage terminal pass rate | `0.9259` | 25 of 27 cases completed successfully without leaving the base stage |
-| Retry-stage transitions | `0` | no `strict_schema_retry` or `candidate_pruned_retry` transitions were needed in this live pass |
-| Failure buckets | `duplicate_call=1`, `other=1` | `schema_or_provider_failure=0`, `history_grounding_miss=0` in the refreshed live report |
+| Base-stage terminal pass rate | `0.8056` | 29 of 36 records completed successfully without leaving the base stage |
+| Retry-stage transitions | `0` | no extra fallback stages fired in the retained repo-pinned snapshot |
+| Failure buckets | `memory_backend_miss=3`, `duplicate_call=2`, `other=2` | current misses are behavior or grounding issues, not provider-side schema transport failures |
 
 ### Provider Schema Compatibility Matrix
 
 | Provider | Protocol | Compatibility Summary | Notes |
 | --- | --- | --- | --- |
-| `openai_compatible` | `openai` | normalized, strict, and pruned | flattens root object aliases, tuple arrays, and `anyOf`, emits `strict: true`, sets recursive `additionalProperties: false`, promotes optional fields to required nullable fields, and exposes `parallel_tool_calls` control |
+| `openai_compatible` | `openai` | strict path observed | live capability telemetry reports `strict_flag`, nullable preservation, optional-to-required nullable promotion, and `parallel_tool_calls` control; unit regression still covers recursive `additionalProperties: false` on the strict path |
 | `anthropic` | `anthropic` | provider-native passthrough | current adapter intentionally preserves the original schema shape instead of coercing it into the OpenAI-compatible subset |
 | `gemini` | `gemini` | normalized and pruned | keeps the OpenAI-like normalization path for broad schema cleanup, but does not currently expose OpenAI-only strict or parallel-call controls |
 
-Source: `.easy-agent/public-eval-report.json` refreshed on April 9, 2026.
+Source: `.easy-agent/public-eval-report.json` retained from the April 9, 2026 snapshot.
 
 Current caveats:
 
-- The full real integration suite still emits Windows asyncio subprocess cleanup warnings after success; on this machine they remain cleanup debt rather than functional failures.
-- The remaining BFCL misses in the refreshed live public-eval run are concentrated in one duplicate multi-intent case and one optional selector case (`root_type='all'`), not provider-side schema failures.
-- The refreshed benchmark is fully green, but the `sub_agent` path is still materially slower than the other benchmark modes because it pays for both a live coordinator turn and a live delegated turn.
+- The full real integration suite still emits Windows asyncio subprocess cleanup warnings after success; on this machine they remain cleanup debt rather than functional failures and accounted for 5 warnings in the latest April 10 pass.
+- The retained public-eval snapshot is still weakest in `bfcl_memory` and `bfcl_web_search`; the web-search misses include duplicate-call, query-shaping, and result-grounding errors, while the memory misses are key-shape or grounding issues.
+- The retained benchmark snapshot is fully green, but the `sub_agent` path is still materially slower than the other benchmark modes because it pays for both a live coordinator turn and a live delegated turn.
 
 ## Next Reinforcement
 
 These next steps are based on the current public A2A, MCP, and OpenAI tool-calling surfaces, not just internal backlog notes.
 
-- Continue aligning federation with the latest public A2A surface around richer agent-card metadata, signed-card verification, push-notification authentication details, task history filters, and status-timestamp fidelity so remote inspection and replay stay closer to the evolving protocol contract.
-- Push federation trust beyond readiness checks by adding first-class OAuth/OIDC token acquisition and refresh, JWKS/JWS verification for signed cards or callbacks, and stricter per-tenant or per-task authorization boundaries.
-- Extend provider compatibility hardening around the official OpenAI function-calling and structured-output constraints by adding explicit regression coverage for `strict: true`, `additionalProperties: false`, nullable-vs-optional argument shaping, and single-call versus parallel-call enforcement.
+- Close the current BFCL memory misses by aligning memory-tool key conventions, replaying cross-turn state more faithfully, and adding regression cases that distinguish memory-backend misses from plain argument mismatch.
+- Reduce BFCL web-search misses by tightening single-call behavior, query shaping, and result grounding for the SERPAPI-backed `/search.json` flow and replay-backed contents retrieval, while preserving the quota ledger and replay fallback path.
+- Expand the shipped `official_full_v4` manifest acquisition and cache-resume path into a repeatable verification flow so repo-pinned and official-manifest snapshots can be compared over time.
+- Continue provider compatibility hardening around the official OpenAI function-calling and structured-output constraints with deeper regression coverage for `strict: true`, recursive `additionalProperties: false`, nullable-vs-optional modeling, and single-call versus parallel-call enforcement.
 - Carry OpenAI structured-output refusal, incomplete, and schema-unsupported states into durable runtime events and public-eval telemetry so provider incompatibility can be separated cleanly from model refusal or truncation behavior.
-- Extend the OpenAI-compatible call-control surface beyond `tool_choice='auto'` by adding explicit regression coverage for forced-none, forced-single-tool, and serialized multi-step tool plans under the same strict schema path.
+- Extend real-network telemetry from the latest warm-start budgets into trendable history so cache-hit rate, recovery speed, and snapshot drift can be compared across runs instead of living only in the latest report.
+- Continue aligning federation with the latest public A2A surface around richer agent-card metadata, signed-card rotation telemetry, OAuth/OIDC discovery caching, push-notification authentication details, task history filters, and status-timestamp fidelity.
+- Keep hardening federated trust boundaries with stricter tenant/task scope regression coverage, callback JWKS rotation handling, and clearer auth-readiness diagnostics before remote task creation.
 - Expand MCP roots support from list retrieval to full `notifications/roots/list_changed` propagation plus root-diff reconciliation, and carry URL-mode elicitation completion plus explicit `accept` / `decline` / `cancel` outcomes through the same durable approval state.
-- Turn the current public-eval analytics into trendable history across runs so stage summaries, failure buckets, and provider schema matrices can be compared over time instead of living only in the latest snapshot.
-- Add latency budgets and cache telemetry for container and microVM warm-start paths so the real-network matrix tracks recovery speed and snapshot drift, not just pass/fail state.
 
 ## Design References
 
@@ -484,12 +514,16 @@ These next steps are based on the current public A2A, MCP, and OpenAI tool-calli
 - OpenAI Agents SDK Tracing: [https://openai.github.io/openai-agents-python/tracing/](https://openai.github.io/openai-agents-python/tracing/)
 - OpenAI Function Calling: [https://platform.openai.com/docs/guides/function-calling](https://platform.openai.com/docs/guides/function-calling)
 - OpenAI Structured Outputs: [https://platform.openai.com/docs/guides/structured-outputs](https://platform.openai.com/docs/guides/structured-outputs)
+- SerpApi Google Search API: [https://serpapi.com/search-api](https://serpapi.com/search-api)
 - AutoGen Teams: [https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html)
 - LangGraph Durable Execution: [https://docs.langchain.com/oss/python/langgraph/durable-execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)
 - Google Developers Blog, [Announcing the Agent2Agent Protocol (A2A)](https://developers.googleblog.com/es/a2a-a-new-era-of-agent-interoperability/)
 - A2A Protocol: [https://a2aprotocol.ai/](https://a2aprotocol.ai/)
 - A2A Latest Specification: [https://a2a-protocol.org/latest/specification/](https://a2a-protocol.org/latest/specification/)
 - A2A Reference Implementation: [https://github.com/a2aproject/A2A](https://github.com/a2aproject/A2A)
+- OpenID Connect Discovery 1.0: [https://openid.net/specs/openid-connect-discovery-1_0-final.html](https://openid.net/specs/openid-connect-discovery-1_0-final.html)
+- RFC 7515 JSON Web Signature (JWS): [https://www.rfc-editor.org/rfc/rfc7515](https://www.rfc-editor.org/rfc/rfc7515)
+- RFC 7517 JSON Web Key (JWK): [https://datatracker.ietf.org/doc/html/rfc7517](https://datatracker.ietf.org/doc/html/rfc7517)
 - MCP Roots: [https://modelcontextprotocol.io/docs/concepts/roots](https://modelcontextprotocol.io/docs/concepts/roots)
 - MCP Sampling: [https://modelcontextprotocol.io/docs/concepts/sampling](https://modelcontextprotocol.io/docs/concepts/sampling)
 - MCP Elicitation: [https://modelcontextprotocol.io/docs/concepts/elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation)

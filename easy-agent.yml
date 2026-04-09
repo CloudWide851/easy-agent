@@ -7,6 +7,7 @@ model:
   timeout_seconds: 60
   max_tokens: 2048
   temperature: 0.1
+  # Keep strict tool schemas on by default for OpenAI-compatible providers.
   function_calling:
     strict: true
     parallel_tool_calls: true
@@ -64,6 +65,41 @@ storage:
 
 logging:
   level: INFO
+
+evaluation:
+  public_eval:
+    # full_v4 extends the legacy subset with web-search, memory, and format-sensitivity suites.
+    profile: full_v4
+    bfcl_version: v4
+    enable_full_bfcl: true
+    web_search:
+      # Live web-search uses SERPAPI; keep the real key in env only.
+      provider: serpapi
+      api_key_env: SERPAPI_API_KEY
+      endpoint_url: https://serpapi.com/search.json
+      engine: google
+      google_domain: google.com
+      hl: en
+      gl: us
+      usage_path: .easy-agent/public-eval-web-search-usage.json
+      hourly_limit: 50
+      daily_limit: 300
+      quota_policy: resume_later
+    official_dataset:
+      # official_full_v4 reads from a cached local manifest or downloads one when source_url is set.
+      cache_dir: .easy-agent/public-eval-cache
+      manifest_path: .easy-agent/public-eval-cache/bfcl_v4_manifest.json
+      checkpoint_path: .easy-agent/public-eval-progress.json
+      resume: true
+  real_network:
+    # Persist history so warm-start latency and snapshot drift can be compared across runs.
+    history_path: .easy-agent/real-network-history.jsonl
+    latency_budgets:
+      container_warm_start_seconds: 35
+      microvm_warm_start_seconds: 25
+      container_snapshot_restore_seconds: 8
+      microvm_snapshot_restore_seconds: 12
+    snapshot_drift_ratio_limit: 0.5
 
 security:
   allowed_commands:

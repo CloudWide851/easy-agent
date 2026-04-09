@@ -10,10 +10,11 @@ import sys
 import textwrap
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from statistics import mean
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -45,6 +46,13 @@ class RealNetworkRecord:
     status: str
     duration_seconds: float
     notes: str
+    telemetry: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ScenarioOutcome:
+    notes: str
+    telemetry: dict[str, Any] = field(default_factory=dict)
 
 
 class _CallbackCollector:
@@ -94,6 +102,36 @@ class _CallbackCollector:
             self._thread.join(timeout=2)
         self._server = None
         self._thread = None
+
+
+def _cache_hit_from_note(note: str) -> bool:
+    lowered = note.lower()
+    return 'already present' in lowered or 'ssh ready' in lowered
+
+
+def _cache_source_from_note(note: str) -> str:
+    lowered = note.lower()
+    if 'already present' in lowered:
+        return 'warm_cache'
+    if 'loaded image' in lowered:
+        return 'archive_load'
+    if 'ssh ready' in lowered:
+        return 'ssh_warm_cache'
+    return 'unknown'
+
+
+def _budget_status(value: float | None, budget: float | None) -> str:
+    if value is None or budget is None:
+        return 'not_applicable'
+    return 'within_budget' if value <= budget else 'exceeds_budget'
+
+
+def _snapshot_drift(cold_start: float | None, warm_start: float | None) -> tuple[float | None, float | None]:
+    if cold_start is None or warm_start is None:
+        return None, None
+    drift = abs(warm_start - cold_start)
+    base = cold_start if cold_start > 0 else 0.001
+    return round(drift, 4), round(drift / base, 4)
 
 
 class _FakeRuntime:
@@ -231,8 +269,14 @@ _CROSS_PROCESS_SERVER = textwrap.dedent(
 
 def _record(scenario: str, transport: str, host_dependency: str, runner: Any, *, live_model: bool = False) -> RealNetworkRecord:
     start = time.perf_counter()
+    telemetry: dict[str, Any] = {}
     try:
-        notes = runner()
+        outcome = runner()
+        if isinstance(outcome, ScenarioOutcome):
+            notes = outcome.notes
+            telemetry = dict(outcome.telemetry)
+        else:
+            notes = str(outcome)
         status = 'passed'
     except RuntimeError as exc:
         status = 'skipped'
@@ -248,6 +292,7 @@ def _record(scenario: str, transport: str, host_dependency: str, runner: Any, *,
         status=status,
         duration_seconds=round(time.perf_counter() - start, 4),
         notes=notes,
+        telemetry=telemetry,
     )
 
 
@@ -646,12 +691,13 @@ def _scenario_process_workbench_reuse(tmp_path: Path) -> str:
     return 'process workbench reused the same long-lived session root'
 
 
-def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
+def _scenario_container_workbench_reuse(base_config: AppConfig, tmp_path: Path) -> ScenarioOutcome:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
     preflight = _podman_preflight(podman_executable)
     archive = _ensure_offline_container_archive(Path('.easy-agent/offline-images'), podman_executable)
     image = os.environ.get('EASY_AGENT_CONTAINER_IMAGE', 'localhost/easy-agent/offline-python:latest')
     warm_cache_note = _ensure_container_image_available(podman_executable, image, archive)
+    budgets = base_config.evaluation.real_network.latency_budgets
     manager = _workbench_manager(
         tmp_path,
         [
@@ -675,6 +721,7 @@ def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
         'containerized',
     )
     session = manager.ensure_session('run-container', 'skill-echo')
+    cold_start_begin = time.perf_counter()
     result = manager.run_command(
         session.session_id,
         ['python3', '-c', "from pathlib import Path; Path('container-marker.txt').write_text('container-checkpoint', encoding='utf-8'); print('container-ok')"],
@@ -682,11 +729,13 @@ def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
         timeout_seconds=120,
         target=SandboxTarget.COMMAND_SKILL,
     )
+    cold_start_seconds = time.perf_counter() - cold_start_begin
     if result.returncode != 0 or 'container-ok' not in result.stdout:
         raise AssertionError(result.stderr or result.stdout)
     shutdown = manager.shutdown_session(session.session_id)
     if shutdown.runtime_state.get('status') != 'checkpointed':
         raise AssertionError('container checkpoint state was not recorded')
+    warm_start_begin = time.perf_counter()
     restarted = manager.restart_session(session.session_id)
     result_after = manager.run_command(
         restarted.session_id,
@@ -695,21 +744,41 @@ def _scenario_container_workbench_reuse(tmp_path: Path) -> str:
         timeout_seconds=120,
         target=SandboxTarget.COMMAND_SKILL,
     )
+    warm_start_seconds = time.perf_counter() - warm_start_begin
     if result_after.returncode != 0 or 'container-checkpoint' not in result_after.stdout:
         raise AssertionError(result_after.stderr or result_after.stdout)
     if restarted.runtime_state.get('image') != restarted.runtime_state.get('snapshot_image'):
         raise AssertionError('container restart did not restore from the snapshot image')
-    return (
+    drift_seconds, drift_ratio = _snapshot_drift(cold_start_seconds, warm_start_seconds)
+    telemetry = {
+        'cache_hit': _cache_hit_from_note(warm_cache_note),
+        'cache_source': _cache_source_from_note(warm_cache_note),
+        'cold_start_seconds': round(cold_start_seconds, 4),
+        'warm_start_seconds': round(warm_start_seconds, 4),
+        'snapshot_restore_seconds': round(warm_start_seconds, 4),
+        'latency_budget_seconds': budgets.container_warm_start_seconds,
+        'snapshot_restore_budget_seconds': budgets.container_snapshot_restore_seconds,
+        'budget_status': _budget_status(warm_start_seconds, budgets.container_warm_start_seconds),
+        'snapshot_restore_budget_status': _budget_status(
+            warm_start_seconds,
+            budgets.container_snapshot_restore_seconds,
+        ),
+        'snapshot_drift_seconds': drift_seconds,
+        'snapshot_drift_ratio': drift_ratio,
+    }
+    return ScenarioOutcome(
         'container executor loaded an offline image archive, enforced quotas, and resumed from a snapshot image '
-        f"({preflight['note']}; {warm_cache_note})"
+        f"({preflight['note']}; {warm_cache_note})",
+        telemetry=telemetry,
     )
 
 
-def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
+def _scenario_microvm_workbench_reuse(base_config: AppConfig, tmp_path: Path) -> ScenarioOutcome:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
     preflight = _podman_preflight(podman_executable)
     machine = cast(dict[str, Any], preflight['machine'])
     warm_cache_note = _warm_microvm_ssh(machine)
+    budgets = base_config.evaluation.real_network.latency_budgets
     manager = _workbench_manager(
         tmp_path,
         [
@@ -731,6 +800,7 @@ def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
         'microvm-machine',
     )
     session = manager.ensure_session('run-microvm', 'skill-echo')
+    cold_start_begin = time.perf_counter()
     result = manager.run_command(
         session.session_id,
         ['python3', '-c', "from pathlib import Path; Path('microvm-marker.txt').write_text('microvm-checkpoint', encoding='utf-8'); print('microvm-ok')"],
@@ -738,9 +808,11 @@ def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
         timeout_seconds=90,
         target=SandboxTarget.COMMAND_SKILL,
     )
+    cold_start_seconds = time.perf_counter() - cold_start_begin
     if result.returncode != 0 or 'microvm-ok' not in result.stdout:
         raise AssertionError(result.stderr or result.stdout)
     manager.shutdown_session(session.session_id)
+    warm_start_begin = time.perf_counter()
     restarted = manager.restart_session(session.session_id)
     result_after = manager.run_command(
         restarted.session_id,
@@ -749,11 +821,30 @@ def _scenario_microvm_workbench_reuse(tmp_path: Path) -> str:
         timeout_seconds=90,
         target=SandboxTarget.COMMAND_SKILL,
     )
+    warm_start_seconds = time.perf_counter() - warm_start_begin
     if result_after.returncode != 0 or 'microvm-checkpoint' not in result_after.stdout:
         raise AssertionError(result_after.stderr or result_after.stdout)
-    return (
+    drift_seconds, drift_ratio = _snapshot_drift(cold_start_seconds, warm_start_seconds)
+    telemetry = {
+        'cache_hit': _cache_hit_from_note(warm_cache_note),
+        'cache_source': _cache_source_from_note(warm_cache_note),
+        'cold_start_seconds': round(cold_start_seconds, 4),
+        'warm_start_seconds': round(warm_start_seconds, 4),
+        'snapshot_restore_seconds': round(warm_start_seconds, 4),
+        'latency_budget_seconds': budgets.microvm_warm_start_seconds,
+        'snapshot_restore_budget_seconds': budgets.microvm_snapshot_restore_seconds,
+        'budget_status': _budget_status(warm_start_seconds, budgets.microvm_warm_start_seconds),
+        'snapshot_restore_budget_status': _budget_status(
+            warm_start_seconds,
+            budgets.microvm_snapshot_restore_seconds,
+        ),
+        'snapshot_drift_seconds': drift_seconds,
+        'snapshot_drift_ratio': drift_ratio,
+    }
+    return ScenarioOutcome(
         'microvm executor reused the podman machine over SSH and recovered after a disconnect-style restart '
-        f"({preflight['note']}; {warm_cache_note})"
+        f"({preflight['note']}; {warm_cache_note})",
+        telemetry=telemetry,
     )
 
 
@@ -782,6 +873,22 @@ def _scenario_duplicate_delivery_replay_resilience(tmp_path: Path) -> str:
         )
         await manager.start()
         try:
+            async def _collect_all_events(task_id: str, *, after_sequence: int = 0) -> list[dict[str, Any]]:
+                page_token: str | None = None
+                events: list[dict[str, Any]] = []
+                while True:
+                    payload = await manager.list_task_events(
+                        'loopback',
+                        task_id,
+                        after_sequence=after_sequence,
+                        page_token=page_token,
+                        page_size=10,
+                    )
+                    events.extend(cast(list[dict[str, Any]], payload.get('events', [])))
+                    page_token = cast(str | None, payload.get('nextPageToken'))
+                    if not page_token:
+                        return events
+
             response = await manager.send_subscribe('loopback', 'local_echo', 'stable-delivery', callback_url, from_sequence=0)
             task_id = str(response['task']['task_id'])
             deadline = time.monotonic() + 5.0
@@ -793,18 +900,18 @@ def _scenario_duplicate_delivery_replay_resilience(tmp_path: Path) -> str:
                 await asyncio.sleep(0.1)
             if task_payload is None or task_payload['status'] != 'succeeded':
                 raise AssertionError('task did not reach a terminal state')
-            events_before = await manager.list_task_events('loopback', task_id, after_sequence=0, page_size=10)
+            events_before = await _collect_all_events(task_id)
             replay_full = await manager.resubscribe_task('loopback', task_id, from_sequence=0)
             replay_tail = await manager.resubscribe_task('loopback', task_id, from_sequence=1)
-            events_after = await manager.list_task_events('loopback', task_id, after_sequence=0, page_size=10)
-            sequences_before = [int(item['sequence']) for item in events_before['events']]
+            events_after = await _collect_all_events(task_id)
+            sequences_before = [int(item['sequence']) for item in events_before]
             if sequences_before != sorted(set(sequences_before)):
                 raise AssertionError('event sequences are not unique and ordered')
             if [int(item['sequence']) for item in replay_full['events']] != sequences_before:
                 raise AssertionError('full replay did not preserve the event backlog')
             if any(int(item['sequence']) <= 1 for item in replay_tail['events']):
                 raise AssertionError('tail replay returned duplicate early events')
-            if len(events_before['events']) != len(events_after['events']):
+            if len(events_before) != len(events_after):
                 raise AssertionError('replay mutated the persisted task event log')
             if not callback.requests:
                 raise AssertionError('expected a callback delivery')
@@ -839,12 +946,13 @@ def _scenario_duplicate_delivery_replay_resilience(tmp_path: Path) -> str:
 
 
 
-def _scenario_container_incremental_snapshot_reuse(tmp_path: Path) -> str:
+def _scenario_container_incremental_snapshot_reuse(base_config: AppConfig, tmp_path: Path) -> ScenarioOutcome:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
     preflight = _podman_preflight(podman_executable)
     archive = _ensure_offline_container_archive(Path('.easy-agent/offline-images'), podman_executable)
     image = os.environ.get('EASY_AGENT_CONTAINER_IMAGE', 'localhost/easy-agent/offline-python:latest')
     warm_cache_note = _ensure_container_image_available(podman_executable, image, archive)
+    budgets = base_config.evaluation.real_network.latency_budgets
     manager = _workbench_manager(
         tmp_path,
         [
@@ -903,18 +1011,36 @@ def _scenario_container_incremental_snapshot_reuse(tmp_path: Path) -> str:
     )
     if verify.returncode != 0 or 'one-two' not in verify.stdout:
         raise AssertionError(verify.stderr or verify.stdout)
-    return (
+    drift_seconds, drift_ratio = _snapshot_drift(first_duration, second_duration)
+    telemetry = {
+        'cache_hit': _cache_hit_from_note(warm_cache_note),
+        'cache_source': _cache_source_from_note(warm_cache_note),
+        'cold_start_seconds': round(first_duration, 4),
+        'warm_start_seconds': round(second_duration, 4),
+        'snapshot_restore_seconds': round(second_duration, 4),
+        'latency_budget_seconds': budgets.container_warm_start_seconds,
+        'snapshot_restore_budget_seconds': budgets.container_snapshot_restore_seconds,
+        'budget_status': _budget_status(second_duration, budgets.container_warm_start_seconds),
+        'snapshot_restore_budget_status': _budget_status(
+            second_duration,
+            budgets.container_snapshot_restore_seconds,
+        ),
+        'snapshot_drift_seconds': drift_seconds,
+        'snapshot_drift_ratio': drift_ratio,
+    }
+    return ScenarioOutcome(
         'container repeated checkpoint restore preserved incremental state '
-        f'(first_cycle={first_duration:.3f}s, second_cycle={second_duration:.3f}s; {preflight['note']}; {warm_cache_note})'
+        f"(first_cycle={first_duration:.3f}s, second_cycle={second_duration:.3f}s; {preflight['note']}; {warm_cache_note})",
+        telemetry=telemetry,
     )
 
 
-
-def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
+def _scenario_microvm_incremental_snapshot_reuse(base_config: AppConfig, tmp_path: Path) -> ScenarioOutcome:
     podman_executable = os.environ.get('EASY_AGENT_PODMAN_EXE', 'podman')
     preflight = _podman_preflight(podman_executable)
     machine = cast(dict[str, Any], preflight['machine'])
     warm_cache_note = _warm_microvm_ssh(machine)
+    budgets = base_config.evaluation.real_network.latency_budgets
     manager = _workbench_manager(
         tmp_path,
         [
@@ -936,6 +1062,7 @@ def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
         'microvm-machine',
     )
     session = manager.ensure_session('run-microvm-delta', 'skill-echo')
+    first_start = time.perf_counter()
     first = manager.run_command(
         session.session_id,
         ['python3', '-c', "from pathlib import Path; Path('delta1.txt').write_text('one', encoding='utf-8'); print('delta1')"],
@@ -943,9 +1070,11 @@ def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
         timeout_seconds=90,
         target=SandboxTarget.COMMAND_SKILL,
     )
+    first_duration = time.perf_counter() - first_start
     if first.returncode != 0:
         raise AssertionError(first.stderr or first.stdout)
     manager.shutdown_session(session.session_id)
+    second_start = time.perf_counter()
     restart_one = manager.restart_session(session.session_id)
     second = manager.run_command(
         restart_one.session_id,
@@ -954,6 +1083,7 @@ def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
         timeout_seconds=90,
         target=SandboxTarget.COMMAND_SKILL,
     )
+    second_duration = time.perf_counter() - second_start
     if second.returncode != 0 or 'one-two' not in second.stdout:
         raise AssertionError(second.stderr or second.stdout)
     manager.shutdown_session(session.session_id)
@@ -967,9 +1097,27 @@ def _scenario_microvm_incremental_snapshot_reuse(tmp_path: Path) -> str:
     )
     if verify.returncode != 0 or 'one-two' not in verify.stdout:
         raise AssertionError(verify.stderr or verify.stdout)
-    return (
+    drift_seconds, drift_ratio = _snapshot_drift(first_duration, second_duration)
+    telemetry = {
+        'cache_hit': _cache_hit_from_note(warm_cache_note),
+        'cache_source': _cache_source_from_note(warm_cache_note),
+        'cold_start_seconds': round(first_duration, 4),
+        'warm_start_seconds': round(second_duration, 4),
+        'snapshot_restore_seconds': round(second_duration, 4),
+        'latency_budget_seconds': budgets.microvm_warm_start_seconds,
+        'snapshot_restore_budget_seconds': budgets.microvm_snapshot_restore_seconds,
+        'budget_status': _budget_status(second_duration, budgets.microvm_warm_start_seconds),
+        'snapshot_restore_budget_status': _budget_status(
+            second_duration,
+            budgets.microvm_snapshot_restore_seconds,
+        ),
+        'snapshot_drift_seconds': drift_seconds,
+        'snapshot_drift_ratio': drift_ratio,
+    }
+    return ScenarioOutcome(
         'microvm repeated checkpoint restore preserved incremental state across restart cycles '
-        f"({preflight['note']}; {warm_cache_note})"
+        f"({preflight['note']}; {warm_cache_note})",
+        telemetry=telemetry,
     )
 
 
@@ -1033,6 +1181,54 @@ def _scenario_replay_resume_failure_injection(tmp_path: Path) -> str:
     return asyncio.run(_run_async())
 
 
+def _aggregate_telemetry_summary(records: list[RealNetworkRecord]) -> dict[str, Any]:
+    telemetry_records = [record for record in records if record.telemetry]
+    budget_statuses: dict[str, int] = {}
+    cache_hits = 0
+    container_warm: list[float] = []
+    microvm_warm: list[float] = []
+    drift_values: list[float] = []
+    for record in telemetry_records:
+        telemetry = record.telemetry
+        if telemetry.get('cache_hit') is True:
+            cache_hits += 1
+        status = str(telemetry.get('budget_status') or 'not_applicable')
+        budget_statuses[status] = budget_statuses.get(status, 0) + 1
+        warm_start = telemetry.get('warm_start_seconds')
+        if isinstance(warm_start, (int, float)):
+            if 'container' in record.scenario:
+                container_warm.append(float(warm_start))
+            if 'microvm' in record.scenario:
+                microvm_warm.append(float(warm_start))
+        drift_ratio = telemetry.get('snapshot_drift_ratio')
+        if isinstance(drift_ratio, (int, float)):
+            drift_values.append(float(drift_ratio))
+    return {
+        'telemetry_records': len(telemetry_records),
+        'cache_hit_rate': round(cache_hits / len(telemetry_records), 4) if telemetry_records else 0.0,
+        'budget_statuses': budget_statuses,
+        'container_warm_start_average_seconds': round(mean(container_warm), 4) if container_warm else None,
+        'microvm_warm_start_average_seconds': round(mean(microvm_warm), 4) if microvm_warm else None,
+        'snapshot_drift_ratio_average': round(mean(drift_values), 4) if drift_values else None,
+        'snapshot_drift_ratio_max': round(max(drift_values), 4) if drift_values else None,
+    }
+
+
+def _append_real_network_history(history_path: Path, generated_at: str, records: list[RealNetworkRecord]) -> None:
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with history_path.open('a', encoding='utf-8') as handle:
+        for record in records:
+            payload = {
+                'generated_at': generated_at,
+                'scenario': record.scenario,
+                'transport': record.transport,
+                'status': record.status,
+                'duration_seconds': record.duration_seconds,
+                'telemetry': record.telemetry,
+            }
+            handle.write(json.dumps(payload, ensure_ascii=False) + '\n')
+
+
 def run_real_network_suite(config_path: str | Path = 'easy-agent.yml') -> dict[str, Any]:
     base_config = load_config(config_path)
     output_root = Path('.easy-agent')
@@ -1046,10 +1242,10 @@ def run_real_network_suite(config_path: str | Path = 'easy-agent.yml') -> dict[s
             _record('disconnect_retry_chaos', 'http_webhook', 'loopback callback server', lambda: _scenario_federation_retry_and_reconnect(tmp_root / 'federation')),
             _record('duplicate_delivery_replay_resilience', 'http_webhook', 'loopback callback server', lambda: _scenario_duplicate_delivery_replay_resilience(tmp_root / 'federation-replay')),
             _record('workbench_reuse_process', 'local_process', 'none', lambda: _scenario_process_workbench_reuse(tmp_root / 'process')),
-            _record('workbench_reuse_container', 'podman_exec', 'podman machine rootfs import', lambda: _scenario_container_workbench_reuse(tmp_root / 'container')),
-            _record('workbench_incremental_snapshot_reuse_container', 'podman_exec', 'podman machine rootfs import', lambda: _scenario_container_incremental_snapshot_reuse(tmp_root / 'container-delta')),
-            _record('workbench_reuse_microvm', 'podman_machine_ssh', 'podman machine ssh', lambda: _scenario_microvm_workbench_reuse(tmp_root / 'microvm')),
-            _record('workbench_incremental_snapshot_reuse_microvm', 'podman_machine_ssh', 'podman machine ssh', lambda: _scenario_microvm_incremental_snapshot_reuse(tmp_root / 'microvm-delta')),
+            _record('workbench_reuse_container', 'podman_exec', 'podman machine rootfs import', lambda: _scenario_container_workbench_reuse(base_config, tmp_root / 'container')),
+            _record('workbench_incremental_snapshot_reuse_container', 'podman_exec', 'podman machine rootfs import', lambda: _scenario_container_incremental_snapshot_reuse(base_config, tmp_root / 'container-delta')),
+            _record('workbench_reuse_microvm', 'podman_machine_ssh', 'podman machine ssh', lambda: _scenario_microvm_workbench_reuse(base_config, tmp_root / 'microvm')),
+            _record('workbench_incremental_snapshot_reuse_microvm', 'podman_machine_ssh', 'podman machine ssh', lambda: _scenario_microvm_incremental_snapshot_reuse(base_config, tmp_root / 'microvm-delta')),
             _record('replay_resume_failure_injection', 'sqlite_checkpoint', 'none', lambda: _scenario_replay_resume_failure_injection(tmp_root / 'resume')),
         ]
     finally:
@@ -1060,11 +1256,15 @@ def run_real_network_suite(config_path: str | Path = 'easy-agent.yml') -> dict[s
         'failed': sum(1 for item in records if item.status == 'failed'),
         'skipped': sum(1 for item in records if item.status == 'skipped'),
     }
+    generated_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    history_path = Path(base_config.evaluation.real_network.history_path)
     report = {
         'records': [asdict(item) for item in records],
         'summary': summary,
-        'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'telemetry_summary': _aggregate_telemetry_summary(records),
+        'generated_at': generated_at,
     }
     report_path = output_root / 'real-network-report.json'
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    _append_real_network_history(history_path, generated_at, records)
     return report

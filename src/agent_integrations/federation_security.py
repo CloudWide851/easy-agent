@@ -8,13 +8,18 @@ import json
 import os
 import time
 from collections.abc import Mapping
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
+
+import jwt
+from cryptography.hazmat.primitives import serialization
 
 from agent_config.app import (
     FederationMtlsConfig,
     FederationPushSecurityConfig,
     FederationSecuritySchemeConfig,
+    FederationServerJwtConfig,
 )
 
 
@@ -179,3 +184,144 @@ def verify_callback_headers(
         expected_digest = hmac.new(expected_secret.encode('utf-8'), signed, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(digest, expected_digest):
             raise RuntimeError('callback signature mismatch')
+
+
+def build_callback_jws(
+    callback_url: str,
+    payload_bytes: bytes,
+    jwt_config: FederationServerJwtConfig,
+    *,
+    audience: str | None = None,
+) -> str:
+    parsed = urlparse(callback_url)
+    claims = {
+        'path': parsed.path or '/',
+        'payload_sha256': hashlib.sha256(payload_bytes).hexdigest(),
+    }
+    if audience:
+        claims['aud'] = audience
+    return sign_server_token(jwt_config, claims)
+
+
+def verify_callback_jws(
+    token: str,
+    *,
+    payload_bytes: bytes,
+    callback_path: str,
+    jwks: dict[str, Any],
+    audience: str | None = None,
+    issuer: str | None = None,
+    allowed_algorithms: list[str] | None = None,
+    leeway_seconds: int = 0,
+) -> dict[str, Any]:
+    claims = verify_jwt(
+        token,
+        jwks=jwks,
+        audience=audience,
+        issuer=issuer,
+        allowed_algorithms=allowed_algorithms,
+        leeway_seconds=leeway_seconds,
+    )
+    if str(claims.get('path') or '') != callback_path:
+        raise RuntimeError('callback JWS path mismatch')
+    if str(claims.get('payload_sha256') or '') != hashlib.sha256(payload_bytes).hexdigest():
+        raise RuntimeError('callback JWS payload hash mismatch')
+    return claims
+
+
+def load_jwt_private_key(path: str) -> Any:
+    return serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+
+
+def load_jwt_public_key(path: str) -> Any:
+    return serialization.load_pem_public_key(Path(path).read_bytes())
+
+
+def build_jwk(public_key: Any, *, key_id: str, algorithm: str) -> dict[str, Any]:
+    jwk = cast(dict[str, Any], json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(public_key)))
+    jwk['kid'] = key_id
+    jwk['alg'] = algorithm
+    jwk['use'] = 'sig'
+    return jwk
+
+
+def build_jwks(public_key: Any, *, key_id: str, algorithm: str, issuer: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {'keys': [build_jwk(public_key, key_id=key_id, algorithm=algorithm)]}
+    if issuer:
+        payload['issuer'] = issuer
+    return payload
+
+
+def sign_jwt(
+    claims: dict[str, Any],
+    *,
+    private_key: Any,
+    algorithm: str,
+    key_id: str,
+) -> str:
+    return str(jwt.encode(claims, private_key, algorithm=algorithm, headers={'kid': key_id}))
+
+
+def verify_jwt(
+    token: str,
+    *,
+    jwks: dict[str, Any],
+    audience: str | None = None,
+    issuer: str | None = None,
+    allowed_algorithms: list[str] | None = None,
+    leeway_seconds: int = 0,
+) -> dict[str, Any]:
+    headers = jwt.get_unverified_header(token)
+    key_id = str(headers.get('kid') or '')
+    key_payload: dict[str, Any] | None = None
+    for item in cast(list[dict[str, Any]], jwks.get('keys', [])):
+        if not key_id or str(item.get('kid') or '') == key_id:
+            key_payload = item
+            break
+    if key_payload is None:
+        raise RuntimeError('no matching JWK found for token')
+    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_payload))
+    options = {'verify_aud': audience is not None, 'verify_iss': issuer is not None}
+    decoded: Any = jwt.decode(
+        token,
+        cast(Any, public_key),
+        algorithms=allowed_algorithms or [str(key_payload.get('alg') or 'RS256')],
+        audience=audience,
+        issuer=issuer,
+        leeway=leeway_seconds,
+        options=cast(Any, options),
+    )
+    return cast(dict[str, Any], decoded)
+
+
+def build_server_jwks(config: FederationServerJwtConfig) -> dict[str, Any]:
+    if not config.enabled:
+        return {'keys': []}
+    if config.public_key_path:
+        public_key = load_jwt_public_key(config.public_key_path)
+    elif config.private_key_path:
+        public_key = load_jwt_private_key(config.private_key_path).public_key()
+    else:
+        return {'keys': []}
+    return build_jwks(public_key, key_id=config.key_id, algorithm=config.algorithm, issuer=config.issuer)
+
+
+def sign_server_token(
+    config: FederationServerJwtConfig,
+    claims: dict[str, Any],
+    *,
+    expires_in_seconds: int | None = None,
+) -> str:
+    if not config.enabled or not config.private_key_path:
+        raise RuntimeError('server JWT signing is not configured')
+    now = int(time.time())
+    payload = dict(claims)
+    payload.setdefault('iat', now)
+    payload.setdefault('nbf', now)
+    payload.setdefault('exp', now + int(expires_in_seconds or config.token_ttl_seconds))
+    if config.issuer:
+        payload.setdefault('iss', config.issuer)
+    if config.audience:
+        payload.setdefault('aud', config.audience)
+    private_key = load_jwt_private_key(config.private_key_path)
+    return sign_jwt(payload, private_key=private_key, algorithm=config.algorithm, key_id=config.key_id)

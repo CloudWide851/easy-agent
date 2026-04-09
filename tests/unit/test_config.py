@@ -61,6 +61,42 @@ def test_load_config_reads_function_calling_defaults() -> None:
     assert config.model.function_calling.parallel_tool_calls is False
 
 
+def test_load_config_reads_evaluation_defaults() -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {
+                'entrypoint': 'agent-a',
+                'agents': [{'name': 'agent-a'}],
+                'nodes': [],
+            },
+            'evaluation': {
+                'public_eval': {
+                    'profile': 'full_v4',
+                    'web_search': {
+                        'api_key_env': 'SERPAPI_API_KEY',
+                    },
+                    'official_dataset': {
+                        'manifest_path': '.easy-agent/public-eval-cache/bfcl_v4_manifest.json',
+                    },
+                },
+                'real_network': {
+                    'history_path': '.easy-agent/real-network-history.jsonl',
+                    'latency_budgets': {
+                        'container_warm_start_seconds': 40,
+                        'microvm_warm_start_seconds': 30,
+                    },
+                },
+            },
+        }
+    )
+
+    assert config.evaluation.public_eval.profile == 'full_v4'
+    assert config.evaluation.public_eval.web_search.api_key_env == 'SERPAPI_API_KEY'
+    assert config.evaluation.public_eval.official_dataset.manifest_path.endswith('bfcl_v4_manifest.json')
+    assert config.evaluation.real_network.history_path.endswith('real-network-history.jsonl')
+    assert config.evaluation.real_network.latency_budgets.container_warm_start_seconds == 40
+
+
 def test_graph_allows_team_entrypoint() -> None:
     config = AppConfig.model_validate(
         {
@@ -349,6 +385,7 @@ def test_federation_validation_rejects_unknown_security_requirement_scheme() -> 
         ({'callback_url_policy': 'allowlist'}, 'allowlist callback policy requires callback_allowlist_hosts'),
         ({'require_signature': True}, 'push signature requires signature_secret_env'),
         ({'require_audience': True}, 'push audience validation requires audience'),
+        ({'jws_enabled': True}, 'push JWS verification requires jwks_url'),
     ],
 )
 def test_federation_push_security_validation(push_security: dict[str, object], message: str) -> None:
@@ -369,11 +406,33 @@ def test_federation_push_security_validation(push_security: dict[str, object], m
         )
 
 
+def test_federation_server_jwt_validation_requires_private_key_when_enabled() -> None:
+    with pytest.raises(ValueError, match='federation server jwt requires private_key_path when enabled'):
+        AppConfig.model_validate(
+            {
+                'graph': {
+                    'entrypoint': 'planner',
+                    'agents': [{'name': 'planner'}],
+                    'teams': [],
+                    'nodes': [],
+                },
+                'federation': {
+                    'server': {'jwt': {'enabled': True}},
+                    'exports': [{'name': 'agent_export', 'target_type': 'agent', 'target': 'planner'}],
+                },
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ('auth_config', 'message'),
     [
-        ({'type': 'oauth'}, 'oauth/oidc federation auth currently requires token_env or header_env'),
-        ({'type': 'oidc'}, 'oauth/oidc federation auth currently requires token_env or header_env'),
+        ({'type': 'oauth'}, 'oauth/oidc federation auth requires client_id or client_id_env when env headers are not used'),
+        ({'type': 'oidc'}, 'oauth/oidc federation auth requires client_id or client_id_env when env headers are not used'),
+        (
+            {'type': 'oauth', 'oauth': {'client_id': 'client-id'}},
+            'client_credentials federation auth requires client_secret or client_secret_env',
+        ),
         ({'type': 'mtls'}, 'mtls federation auth requires client_cert and client_key'),
     ],
 )

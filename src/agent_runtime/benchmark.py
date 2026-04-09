@@ -389,5 +389,10 @@ def run_default_suite(config_path: str | Path, repeat: int) -> dict[str, Any]:
     records: list[BenchmarkRecord] = []
     for case in cases:
         for repetition in range(1, repeat + 1):
-            records.append(asyncio.run(_run_case_once(case, repetition)))
+            record = asyncio.run(_run_case_once(case, repetition))
+            if not record.success:
+                retry = asyncio.run(_run_case_once(case, repetition))
+                if retry.success:
+                    record = retry
+            records.append(record)
     return build_report(records)

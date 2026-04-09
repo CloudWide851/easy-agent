@@ -73,6 +73,12 @@ def test_sqlite_run_store_tracks_human_requests_interrupts_and_oauth_state(tmp_p
     second_interrupt = store.consume_interrupt('run_3')
     store.save_oauth_client_info('remote', {'client_id': 'abc'})
     store.save_oauth_tokens('remote', {'access_token': 'secret-token'})
+    store.save_federation_auth_state(
+        'federation-remote',
+        tokens={'access_token': 'fed-token'},
+        metadata={'token_endpoint': 'https://issuer.example/token'},
+        jwks={'keys': []},
+    )
 
     trace = store.load_trace('run_3')
 
@@ -82,6 +88,7 @@ def test_sqlite_run_store_tracks_human_requests_interrupts_and_oauth_state(tmp_p
     assert second_interrupt is None
     assert store.load_oauth_client_info('remote') == {'client_id': 'abc'}
     assert store.load_oauth_tokens('remote') == {'access_token': 'secret-token'}
+    assert store.load_federation_auth_state('federation-remote') is not None
     assert trace['human_requests'][0]['status'] == HumanRequestStatus.APPROVED
 
 
@@ -104,7 +111,16 @@ def test_sqlite_run_store_tracks_workbench_and_federated_tasks(tmp_path: Path) -
         stdout='ok',
         stderr='',
     )
-    store.create_federated_task('task-1', 'agent_export', 'agent', 'queued', {'input': 'hello'})
+    store.create_federated_task(
+        'task-1',
+        'agent_export',
+        'agent',
+        'queued',
+        {'input': 'hello'},
+        tenant_id='tenant-a',
+        subject_id='user-a',
+        task_scope=['task-1'],
+    )
     store.update_federated_task('task-1', status='succeeded', response_payload={'result': 'done'}, local_run_id='run-4')
 
     workbench = store.load_workbench_session('wb-1')
@@ -117,11 +133,14 @@ def test_sqlite_run_store_tracks_workbench_and_federated_tasks(tmp_path: Path) -
     assert federated['status'] == 'succeeded'
     assert federated['response_payload'] == {'result': 'done'}
     assert federated['local_run_id'] == 'run-4'
+    assert federated['tenant_id'] == 'tenant-a'
+    assert federated['subject_id'] == 'user-a'
+    assert federated['task_scope'] == ['task-1']
 
 
 def test_sqlite_run_store_tracks_federated_events_and_subscriptions(tmp_path: Path) -> None:
     store = SQLiteRunStore(tmp_path, 'state.db')
-    store.create_federated_task('task-2', 'agent_export', 'agent', 'queued', {'input': 'hello'})
+    store.create_federated_task('task-2', 'agent_export', 'agent', 'queued', {'input': 'hello'}, tenant_id='tenant-b', subject_id='user-b')
     event = store.create_federated_task_event('task-2', 'task_queued', {'task': {'task_id': 'task-2', 'status': 'queued'}})
     store.create_federated_subscription(
         subscription_id='sub-1',
@@ -129,6 +148,8 @@ def test_sqlite_run_store_tracks_federated_events_and_subscriptions(tmp_path: Pa
         mode='webhook',
         callback_url='http://127.0.0.1:9999/callback',
         status='active',
+        tenant_id='tenant-b',
+        subject_id='user-b',
         lease_expires_at='2099-01-01T00:00:00+00:00',
         from_sequence=event['sequence'],
     )
@@ -148,3 +169,5 @@ def test_sqlite_run_store_tracks_federated_events_and_subscriptions(tmp_path: Pa
     assert subscription['last_delivered_sequence'] == event['sequence']
     assert subscription['delivery_attempts'] == 1
     assert subscription['last_error'] == 'temporary failure'
+    assert subscription['tenant_id'] == 'tenant-b'
+    assert subscription['subject_id'] == 'user-b'
