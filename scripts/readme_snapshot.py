@@ -12,7 +12,7 @@ COMPARISON_ROWS: list[dict[str, str]] = [
         'handoffs_teams': 'agent teams, graph handoff, harness worker routing',
         'guardrails': 'tool-input and final-output hooks',
         'resume_replay': 'resume, replay, fork, checkpoints',
-        'tool_calling': 'OpenAI-compatible strict function calling + Exa-backed web search eval + provider schema matrix',
+        'tool_calling': 'OpenAI-compatible strict function calling + SerpApi-backed web search eval + provider schema matrix',
         'isolation': 'process / container / microvm workbench executors',
         'evals': 'repo-pinned BFCL + official_full_v4 resume path + tau2 + real-network telemetry',
     },

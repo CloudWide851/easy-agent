@@ -12,6 +12,7 @@ from agent_runtime.public_eval import (
     _aggregate_agentic_summary,
     _aggregate_failure_buckets,
     _aggregate_stage_summary,
+    _build_eval_tool_handler,
     _build_tool_name_map,
     _classify_failure_bucket,
     _extract_tau_tasks_from_history,
@@ -28,6 +29,7 @@ from agent_runtime.public_eval import (
     _score_bfcl_case,
     _score_tau_case,
     _select_bfcl_candidate_functions,
+    _serpapi_query_params,
     _serpapi_search,
     _strict_normalize_schema,
     _tau_history_memory_message,
@@ -444,7 +446,13 @@ def test_normalize_serpapi_search_results_keeps_title_link_and_text() -> None:
     )
 
     assert results == [
-        {'title': 'Structured Outputs', 'link': 'https://example.com', 'snippet': 'Schema constrained output.'}
+        {
+            'position': 1,
+            'title': 'Structured Outputs',
+            'link': 'https://example.com',
+            'source': 'example.com',
+            'snippet': 'Schema constrained output.',
+        }
     ]
 
 
@@ -478,7 +486,27 @@ def test_serpapi_search_uses_api_and_normalizes_response(tmp_path: Path, monkeyp
 
     assert route.called is True
     assert result['backend'] == 'serpapi'
+    assert result['query'] == 'OpenAI Structured Outputs'
     assert result['results'][0]['link'] == 'https://platform.openai.com'
+    assert result['results'][0]['position'] == 1
+
+
+def test_serpapi_query_params_shapes_query_from_bfcl_wrapper() -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': 'usage.json'}}},
+        }
+    ).evaluation.public_eval.web_search
+
+    params = _serpapi_query_params(
+        {'query': 'Search the web for OpenAI structured outputs latest notes', 'num_results': 20},
+        {'messages': [{'role': 'user', 'content': 'fallback prompt'}]},
+        config,
+    )
+
+    assert params['q'] == 'OpenAI structured outputs latest notes'
+    assert params['num'] == 10
 
 
 @respx.mock
@@ -503,6 +531,23 @@ def test_fetch_web_contents_uses_http_fetch_and_normalizes_response(tmp_path: Pa
 
     assert route.called is True
     assert result['results'][0]['text'] == 'Body'
+
+
+def test_fetch_web_contents_rejects_ungrounded_urls(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+        }
+    ).evaluation.public_eval.web_search
+
+    with pytest.raises(RuntimeError, match='grounded urls'):
+        _fetch_web_contents(
+            {'urls': ['https://example.com/doc']},
+            {'replay_contents': []},
+            config,
+            grounded_urls={'https://example.com/allowed'},
+        )
 
 
 @respx.mock
@@ -579,6 +624,30 @@ def test_record_web_search_usage_enforces_quota(tmp_path: Path) -> None:
         assert exc.wait_seconds > 0
     else:
         raise AssertionError('expected quota exhaustion')
+
+
+def test_build_eval_tool_handler_blocks_calls_beyond_bfcl_budget(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+        }
+    ).evaluation.public_eval.web_search
+    handler = _build_eval_tool_handler(
+        {'replay_results': [{'title': 'Replay', 'link': 'https://example.com', 'snippet': 'cached'}], 'ground_truth': [{}]},
+        'web.search',
+        'web_search',
+        web_search=config,
+        memory_state={},
+        budget_state={'allowed_calls': 1, 'successful_calls': 1},
+        search_state={'latest_results': []},
+    )
+
+    class _Context:
+        run_id = 'run-1'
+
+    with pytest.raises(RuntimeError, match='budget exhausted'):
+        handler({'query': 'OpenAI'}, _Context())
 
 
 def test_public_eval_checkpoint_round_trip_restores_records(tmp_path: Path) -> None:

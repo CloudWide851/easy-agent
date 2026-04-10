@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import tempfile
 import time
@@ -17,6 +16,27 @@ from agent_common.models import ChatMessage, Protocol, ToolCall, ToolSpec
 from agent_common.schema_utils import normalize_json_schema
 from agent_config.app import AppConfig, ModelConfig, PublicEvalWebSearchConfig, load_config
 from agent_protocols.client import AnthropicAdapter, GeminiAdapter, OpenAIAdapter
+from agent_runtime.public_eval_web_search import (
+    WebSearchQuotaExceeded,
+)
+from agent_runtime.public_eval_web_search import (
+    _case_prompt as _web_case_prompt,
+)
+from agent_runtime.public_eval_web_search import (
+    _fetch_web_contents as _web_fetch_contents,
+)
+from agent_runtime.public_eval_web_search import (
+    _normalize_serpapi_search_results as _web_normalize_serpapi_search_results,
+)
+from agent_runtime.public_eval_web_search import (
+    _record_web_search_usage as _web_record_web_search_usage,
+)
+from agent_runtime.public_eval_web_search import (
+    _serpapi_query_params as _web_serpapi_query_params,
+)
+from agent_runtime.public_eval_web_search import (
+    _serpapi_search as _web_serpapi_search,
+)
 from agent_runtime.runtime import build_runtime_from_config
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[2] / 'public_evals' / 'fixtures'
@@ -123,14 +143,6 @@ class _BfclAttemptResult:
     error: Exception | None = None
     duration_seconds: float = 0.0
     retryable_provider_400: bool = False
-
-
-class WebSearchQuotaExceeded(RuntimeError):
-    def __init__(self, wait_seconds: float, *, scope: str) -> None:
-        rounded = max(0.0, round(wait_seconds, 2))
-        super().__init__(f'web search quota exceeded for {scope}; retry after {rounded:.2f}s')
-        self.wait_seconds = rounded
-        self.scope = scope
 
 
 def _shared_payload(base: AppConfig) -> dict[str, Any]:
@@ -719,23 +731,25 @@ def _is_duplicate_call_failure(record: PublicEvalRecord) -> bool:
 def _classify_failure_bucket(record: PublicEvalRecord) -> str:
     if record.success:
         return 'passed'
+    error_text = (record.error or '').lower()
     if record.suite == 'tau2_mock' and 'history' in record.case_id and record.actual_call_count == 0:
         return 'history_grounding_miss'
-    if record.suite == 'bfcl_web_search' and any(
-        token in (record.error or '').lower()
-        for token in ('serpapi', 'web search', 'web contents', 'api_key', 'quota', 'search.json')
-    ):
-        return 'search_tool_miss'
+    if record.suite == 'bfcl_web_search':
+        if 'grounded urls' in error_text or 'grounded in search results' in error_text:
+            return 'ungrounded_contents'
+        if 'tool call budget exhausted' in error_text:
+            return 'single_call_constraint_miss'
+        if any(token in error_text for token in ('serpapi', 'web search', 'web contents', 'api_key', 'quota', 'search.json')):
+            return 'search_tool_miss'
     if record.suite == 'bfcl_memory':
         return 'memory_backend_miss'
     if record.suite == 'bfcl_format_sensitivity':
         return 'format_variant_miss'
     if _is_duplicate_call_failure(record):
         return 'duplicate_call'
-    error_text = record.error or ''
-    if 'refusal' in error_text.lower() or 'incomplete' in error_text.lower():
+    if 'refusal' in error_text or 'incomplete' in error_text:
         return 'refusal_or_incomplete'
-    if '400 Bad Request' in error_text or 'HTTPStatusError' in error_text or record.fallback_stage != 'base':
+    if '400 bad request' in error_text or 'httpstatuserror' in error_text or record.fallback_stage != 'base':
         return 'schema_or_provider_failure'
     return 'other'
 
@@ -805,223 +819,37 @@ def _make_bfcl_failure_record(
 
 
 def _case_prompt(case: dict[str, Any]) -> str:
-    messages = cast(list[dict[str, Any]], case.get('messages', []))
-    if messages:
-        return str(messages[0].get('content', ''))
-    return str(case.get('prompt', ''))
-
-
-def _load_web_search_usage(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    payload = json.loads(path.read_text(encoding='utf-8'))
-    entries = payload.get('requests', [])
-    if isinstance(entries, list):
-        return [cast(dict[str, Any], item) for item in entries if isinstance(item, dict)]
-    return []
-
-
-def _save_web_search_usage(path: Path, entries: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {'requests': entries}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
-
-
-def _prune_web_search_usage(entries: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
-    return [
-        item
-        for item in entries
-        if now - float(item.get('timestamp', 0.0)) < 86400.0
-    ]
-
-
-def _window_wait_seconds(entries: list[dict[str, Any]], now: float, *, seconds: float, limit: int) -> float:
-    if limit <= 0:
-        return 0.0
-    window_entries = sorted(
-        float(item.get('timestamp', 0.0))
-        for item in entries
-        if now - float(item.get('timestamp', 0.0)) < seconds
-    )
-    if len(window_entries) < limit:
-        return 0.0
-    oldest_relevant = window_entries[-limit]
-    return max(0.0, seconds - (now - oldest_relevant))
+    return _web_case_prompt(case)
 
 
 def _record_web_search_usage(config: PublicEvalWebSearchConfig, *, kind: str, now: float | None = None) -> None:
-    moment = time.time() if now is None else now
-    usage_path = Path(config.usage_path)
-    entries = _prune_web_search_usage(_load_web_search_usage(usage_path), moment)
-    hourly_wait = _window_wait_seconds(entries, moment, seconds=3600.0, limit=config.hourly_limit)
-    daily_wait = _window_wait_seconds(entries, moment, seconds=86400.0, limit=config.daily_limit)
-    wait_seconds = max(hourly_wait, daily_wait)
-    if wait_seconds > 0:
-        if config.quota_policy == 'replay':
-            raise WebSearchQuotaExceeded(wait_seconds, scope='quota_replay_fallback')
-        if config.quota_policy in {'resume_later', 'fail'}:
-            raise WebSearchQuotaExceeded(wait_seconds, scope='quota_resume')
-    entries.append({'timestamp': moment, 'kind': kind})
-    _save_web_search_usage(usage_path, entries)
-
-
-def _should_use_replay_results(case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> bool:
-    return web_search.provider == 'replay_only' or bool(case.get('replay_results'))
-
-
-def _replay_web_search(case: dict[str, Any], *, query: str, num_results: int, backend: str) -> dict[str, Any]:
-    replay_results = cast(list[dict[str, Any]], case.get('replay_results', []))
-    if not replay_results:
-        raise RuntimeError('missing replay_results for BFCL web search evaluation')
-    return {'query': query, 'results': replay_results[:num_results], 'backend': backend}
+    _web_record_web_search_usage(config, kind=kind, now=now)
 
 
 def _normalize_serpapi_search_results(payload: dict[str, Any], *, num_results: int) -> list[dict[str, Any]]:
-    raw_results = payload.get('organic_results', [])
-    if not isinstance(raw_results, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in raw_results[:num_results]:
-        if not isinstance(item, dict):
-            continue
-        normalized.append(
-            {
-                'title': str(item.get('title') or item.get('name') or ''),
-                'link': str(item.get('link') or item.get('url') or ''),
-                'snippet': str(item.get('text') or item.get('snippet') or ''),
-            }
-        )
-    return normalized
+    return _web_normalize_serpapi_search_results(payload, num_results=num_results)
 
 
-def _normalize_web_contents_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_results = payload.get('results', [])
-    if not isinstance(raw_results, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in raw_results:
-        if not isinstance(item, dict):
-            continue
-        normalized.append(
-            {
-                'title': str(item.get('title') or ''),
-                'link': str(item.get('url') or ''),
-                'text': str(item.get('text') or item.get('snippet') or ''),
-            }
-        )
-    return normalized
-
-
-def _strip_html_text(value: str) -> str:
-    collapsed = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', value, flags=re.IGNORECASE | re.DOTALL)
-    collapsed = re.sub(r'<[^>]+>', ' ', collapsed)
-    collapsed = re.sub(r'\s+', ' ', collapsed)
-    return collapsed.strip()
+def _serpapi_search(arguments: dict[str, Any], case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> dict[str, Any]:
+    return _web_serpapi_search(arguments, case, web_search)
 
 
 def _serpapi_query_params(
     arguments: dict[str, Any],
+    case: dict[str, Any],
     web_search: PublicEvalWebSearchConfig,
 ) -> dict[str, Any]:
-    query = str(arguments.get('query') or '').strip()
-    num_results = int(arguments.get('num_results') or 5)
-    return {
-        'engine': web_search.engine,
-        'q': query,
-        'num': num_results,
-        'google_domain': web_search.google_domain,
-        'hl': web_search.hl,
-        'gl': web_search.gl,
-    }
+    return _web_serpapi_query_params(arguments, case, web_search)
 
 
-def _is_retryable_search_unavailable(response: httpx.Response) -> bool:
-    if response.status_code not in {429, 503}:
-        return False
-    lowered = response.text.lower()
-    return (
-        'quota' in lowered
-        or 'rate limit' in lowered
-        or 'service unavailable' in lowered
-        or 'temporarily unavailable' in lowered
-    )
-
-
-def _serpapi_search(arguments: dict[str, Any], case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> dict[str, Any]:
-    query = str(arguments.get('query') or '').strip()
-    num_results = int(arguments.get('num_results') or 5)
-    api_key = os.environ.get(web_search.api_key_env, '').strip()
-    if not api_key:
-        if _should_use_replay_results(case, web_search):
-            return _replay_web_search(case, query=query, num_results=num_results, backend='replay')
-        raise RuntimeError(f'missing {web_search.api_key_env} for BFCL web search evaluation')
-    try:
-        _record_web_search_usage(web_search, kind='search')
-    except WebSearchQuotaExceeded:
-        if web_search.quota_policy == 'replay' and case.get('replay_results'):
-            return _replay_web_search(case, query=query, num_results=num_results, backend='quota_replay')
-        raise
-    response = httpx.get(
-        web_search.endpoint_url,
-        params={**_serpapi_query_params(arguments, web_search), 'api_key': api_key},
-        timeout=web_search.timeout_seconds,
-    )
-    if _is_retryable_search_unavailable(response) and case.get('replay_results'):
-        return _replay_web_search(case, query=query, num_results=num_results, backend='service_unavailable_replay')
-    response.raise_for_status()
-    payload = cast(dict[str, Any], response.json())
-    return {'query': query, 'results': _normalize_serpapi_search_results(payload, num_results=num_results), 'backend': 'serpapi'}
-
-
-def _resolve_content_urls(arguments: dict[str, Any], case: dict[str, Any]) -> list[str]:
-    urls = arguments.get('urls') or arguments.get('links') or []
-    if isinstance(urls, list):
-        direct_urls = [str(item).strip() for item in urls if str(item).strip()]
-        if direct_urls:
-            return direct_urls
-    result_ids = arguments.get('ids') or arguments.get('result_ids') or []
-    replay_results = cast(list[dict[str, Any]], case.get('replay_results', []))
-    resolved: list[str] = []
-    if isinstance(result_ids, list):
-        for item in result_ids:
-            if isinstance(item, int) and 0 <= item < len(replay_results):
-                link = str(replay_results[item].get('link') or '').strip()
-                if link:
-                    resolved.append(link)
-            else:
-                text = str(item).strip()
-                if text.startswith('http'):
-                    resolved.append(text)
-    return resolved
-
-
-def _fetch_web_contents(arguments: dict[str, Any], case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> dict[str, Any]:
-    replay_contents = cast(list[dict[str, Any]], case.get('replay_contents', []))
-    urls = _resolve_content_urls(arguments, case)
-    if not urls:
-        if replay_contents:
-            return {'results': replay_contents, 'backend': 'replay'}
-        raise RuntimeError('web.contents requires urls/links or replay_contents')
-    try:
-        _record_web_search_usage(web_search, kind='contents')
-    except WebSearchQuotaExceeded:
-        if web_search.quota_policy == 'replay' and replay_contents:
-            return {'results': replay_contents, 'backend': 'quota_replay'}
-        raise
-    results: list[dict[str, Any]] = []
-    for url in urls:
-        try:
-            response = httpx.get(url, timeout=web_search.timeout_seconds, follow_redirects=True)
-            response.raise_for_status()
-        except httpx.HTTPError:
-            continue
-        content_type = response.headers.get('content-type', '').lower()
-        body = response.text
-        text = _strip_html_text(body) if 'html' in content_type or '<html' in body.lower() else body.strip()
-        results.append({'title': url, 'link': url, 'text': text[:4000]})
-    if not results and replay_contents:
-        return {'results': replay_contents, 'backend': 'service_unavailable_replay'}
-    return {'results': _normalize_web_contents_results({'results': results}), 'backend': 'http_fetch'}
+def _fetch_web_contents(
+    arguments: dict[str, Any],
+    case: dict[str, Any],
+    web_search: PublicEvalWebSearchConfig,
+    *,
+    grounded_urls: set[str] | None = None,
+) -> dict[str, Any]:
+    return _web_fetch_contents(arguments, case, web_search, grounded_urls=grounded_urls)
 
 
 def _build_eval_tool_handler(
@@ -1031,10 +859,19 @@ def _build_eval_tool_handler(
     *,
     web_search: PublicEvalWebSearchConfig,
     memory_state: dict[str, str],
+    budget_state: dict[str, int],
+    search_state: dict[str, Any],
 ) -> Any:
+    def guard_call_budget() -> None:
+        if budget_state['successful_calls'] >= budget_state['allowed_calls']:
+            raise RuntimeError('tool call budget exhausted for this BFCL case')
+
     if original_name == 'web.search':
         def search_handler(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
-            result = _serpapi_search(arguments, case, web_search)
+            guard_call_budget()
+            result = _web_serpapi_search(arguments, case, web_search)
+            search_state['latest_results'] = list(result.get('results', []))
+            budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
             return result
@@ -1042,7 +879,14 @@ def _build_eval_tool_handler(
         return search_handler
     if original_name == 'web.contents':
         def contents_handler(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
-            result = _fetch_web_contents(arguments, case, web_search)
+            guard_call_budget()
+            grounded_urls = {
+                str(item.get('link') or '').strip()
+                for item in cast(list[dict[str, Any]], search_state.get('latest_results', []))
+                if str(item.get('link') or '').strip()
+            } or None
+            result = _web_fetch_contents(arguments, case, web_search, grounded_urls=grounded_urls)
+            budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
             return result
@@ -1050,15 +894,19 @@ def _build_eval_tool_handler(
         return contents_handler
     if original_name == 'memory.put':
         def memory_put(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            guard_call_budget()
             key = str(arguments['key'])
             value = str(arguments['value'])
             memory_state[key] = value
+            budget_state['successful_calls'] += 1
             return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'value': value}
 
         return memory_put
     if original_name == 'memory.get':
         def memory_get(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            guard_call_budget()
             key = str(arguments['key'])
+            budget_state['successful_calls'] += 1
             return {
                 'tool': tool_name,
                 'run_id': context.run_id,
@@ -1070,20 +918,26 @@ def _build_eval_tool_handler(
         return memory_get
     if original_name == 'memory.delete':
         def memory_delete(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            guard_call_budget()
             key = str(arguments['key'])
             removed = memory_state.pop(key, None)
+            budget_state['successful_calls'] += 1
             return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'removed': removed is not None}
 
         return memory_delete
     if original_name == 'memory.list':
         def memory_list(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+            guard_call_budget()
             prefix = str(arguments.get('prefix') or '')
             keys = sorted(key for key in memory_state if key.startswith(prefix))
+            budget_state['successful_calls'] += 1
             return {'tool': tool_name, 'run_id': context.run_id, 'prefix': prefix, 'keys': keys}
 
         return memory_list
 
     def record_tool_call(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+        guard_call_budget()
+        budget_state['successful_calls'] += 1
         return {
             'tool': tool_name,
             'arguments': arguments,
@@ -1135,6 +989,8 @@ async def _run_bfcl_case_attempt(
             str(key): str(value)
             for key, value in cast(dict[str, Any], case.get('initial_state', {}).get('memory', {})).items()
         }
+        budget_state = {'allowed_calls': len(case.get('ground_truth', [])), 'successful_calls': 0}
+        search_state: dict[str, Any] = {'latest_results': []}
         for function in functions:
             original_name = str(function['name'])
             tool_name = tool_name_map[original_name]
@@ -1156,6 +1012,8 @@ async def _run_bfcl_case_attempt(
                     tool_name,
                     web_search=web_search,
                     memory_state=memory_state,
+                    budget_state=budget_state,
+                    search_state=search_state,
                 ),
             )
         start = time.perf_counter()
@@ -1678,5 +1536,12 @@ def run_public_eval_suite(
         'provider_schema_matrix': _provider_schema_matrix(),
         'sources': _public_eval_sources(base_config, selected_profile),
     }
+
+
+__all__ = [
+    'PublicEvalRecord',
+    'WebSearchQuotaExceeded',
+    'run_public_eval_suite',
+]
 
 

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -17,6 +15,18 @@ from agent_common.models import (
     HumanRequestStatus,
     RunStatus,
     RuntimeEvent,
+)
+from agent_integrations.storage_utils import (
+    decode_payload as _decode,
+)
+from agent_integrations.storage_utils import (
+    encode_payload as _encode,
+)
+from agent_integrations.storage_utils import (
+    now_iso as _now,
+)
+from agent_integrations.storage_utils import (
+    upsert_session as _upsert_session,
 )
 
 
@@ -1361,34 +1371,18 @@ class SQLiteRunStore:
 
     @staticmethod
     def _encode(payload: Any) -> str | None:
-        if payload is None:
-            return None
-        return json.dumps(payload, ensure_ascii=False)
+        return _encode(payload)
 
     @staticmethod
     def _decode(payload: str | None) -> Any:
-        if payload is None:
-            return None
-        return json.loads(payload)
+        return _decode(payload)
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(UTC).isoformat()
+        return _now()
 
     @staticmethod
     def _upsert_session(connection: sqlite3.Connection, session_id: str, graph_name: str, updated_at: str) -> None:
-        existing = connection.execute(
-            'SELECT session_id FROM sessions WHERE session_id = ?',
-            (session_id,),
-        ).fetchone()
-        if existing is None:
-            connection.execute(
-                'INSERT INTO sessions(session_id, graph_name, created_at, updated_at) VALUES (?, ?, ?, ?)',
-                (session_id, graph_name, updated_at, updated_at),
-            )
-            return
-        connection.execute(
-            'UPDATE sessions SET graph_name = ?, updated_at = ? WHERE session_id = ?',
-            (graph_name, updated_at, session_id),
-        )
+        _upsert_session(connection, session_id, graph_name, updated_at)
+
 

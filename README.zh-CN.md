@@ -1,189 +1,105 @@
-# easy-agent
+<p align="center">
+  <img src="./logo.svg" alt="easy-agent logo" width="160">
+</p>
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+<h1 align="center">easy-agent</h1>
 
-`easy-agent` 是一个白盒、可检查、可扩展的 Python Agent 运行时底座。
+<p align="center">
+  一个可检查、可测试、可扩展的白盒 Python Agent 运行时底座。
+</p>
 
-它不是某个具体业务产品，而是产品下面的那层 Agent 基础设施。这个仓库关注的是如何稳定地运行单 Agent、sub-agent、多 Agent graph、teams、tools、skills、MCP、plugins，以及长时间运行的 harness，而不是把业务逻辑直接写死在框架里。
+<p align="center">
+  <a href="./README.md">English</a> |
+  <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-当前发布线：`0.3.x`。最新已发布的小版本是 `0.3.3`。
+<p align="center">
+  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="uv managed" src="https://img.shields.io/badge/uv-managed-4B5563">
+  <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-059669">
+  <img alt="Release line" src="https://img.shields.io/badge/Release-0.3.x-2563EB">
+</p>
+
+`easy-agent` 面向的是 Agent 产品下面的那层运行时基础设施，而不是具体业务应用本身。它把编排、工具调用、持久化、人审、联邦与评测能力显式保留在框架里，方便团队持续演进而不是被黑盒抽象锁死。
+
+最新已发布的小版本仍然是 `0.3.3`。当前仓库状态包含其上的未发布工作。
 
 ## 这个项目到底是什么
 
-很多 Agent 项目会直接从“调用模型”跳到“交付业务功能”。中间那层运行时工程往往会越来越乱：工具调用难以约束，长任务全靠超长 prompt，状态难恢复，协议变化还会渗透进业务代码。
+很多 Agent 项目会很快从“调用模型”走到“交付应用”。中间的运行时层随后会堆积大量隐式假设，例如工具调用约束、记忆、审批、传输和恢复流程。
 
-`easy-agent` 的目标，就是把这层中间件显式做出来。
+`easy-agent` 的目标就是把这层中间件做成显式能力：
 
-- 把运行时工程和业务逻辑彻底拆开。
-- 把调度、编排、状态、协议适配这些能力保留为白盒，而不是藏进黑盒抽象。
-- 让 tools、skills、MCP servers、plugins 可以继续挂载，而不是每次都重写核心能力。
-- 让长任务有真正的 harness，而不是继续堆一个更大的 prompt。
+- 把运行时工程与业务逻辑分离。
+- 让调度、编排、协议适配保持可检查。
+- 让 tools、skills、MCP servers、plugins 可以持续挂载，而不是反复重写核心。
+- 用真实的 harness、checkpoint 与 replay 取代一个越来越大的 prompt。
 
 ## 适合谁用
 
-- 需要做 Agent 产品、内部自动化平台、Agent 工作流系统的工程团队。
-- 希望自己掌控调度、工具、状态恢复、协议适配的开发者。
-- 需要随着模型厂商、协议、工具 schema、MCP 和多 Agent 模式演进而持续扩展的项目。
-
-## 你能直接得到什么
-
-- 一套显式的 `scheduler`、`orchestrator`、`registry`、`storage`、`protocol adapter` 运行时分层。
-- 一套同时支持 `single_agent`、`sub_agent`、graph workflows 和 `Agent Teams` 的运行时。
-- 一个真正的一等公民长任务 harness：`initializer -> worker -> evaluator`，支持可恢复 checkpoints 和持久化工件。
-- 面向 `OpenAI`、`Anthropic`、`Gemini` 风格载荷的统一模型调用适配层。
-- 面向 Tool Calling 2.0 的统一执行层，能承接 direct tools、command skills、Python hook skills、MCP tools 和 plugin mounting。
-- 内置 session memory、event streaming、tracing、guardrails、human approval、replay 工具、A2A 风格联邦、隔离 workbench 执行层和 public evaluation 能力。
+- 需要一套可复用运行时而不是一次性 demo 的 Agent 工程团队。
+- 希望直接掌控工具调用、审批、持久化和恢复流程的开发者。
+- 需要随着模型 API、MCP 和多 Agent 模式持续演进的项目。
 
 ## 技术栈
 
-<table>
-  <tr>
-    <td valign="top" width="25%">
-      <strong>Runtime</strong><br>
-      <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"><br>
-      <img alt="uv" src="https://img.shields.io/badge/uv-managed-4B5563"><br>
-      <img alt="AnyIO" src="https://img.shields.io/badge/AnyIO-async-0F766E"><br>
-      <img alt="Typer" src="https://img.shields.io/badge/Typer-CLI-059669">
-    </td>
-    <td valign="top" width="25%">
-      <strong>Model Layer</strong><br>
-      <img alt="Protocols" src="https://img.shields.io/badge/Protocols-OpenAI%20%7C%20Anthropic%20%7C%20Gemini-2563EB"><br>
-      <img alt="Client" src="https://img.shields.io/badge/Client-HTTP%20model%20adapter-1D4ED8"><br>
-      <img alt="Guardrails" src="https://img.shields.io/badge/Guardrails-tool%20input%20%2B%20final%20output-DC2626"><br>
-      <img alt="Streaming" src="https://img.shields.io/badge/Streaming-runtime%20events-0284C7">
-    </td>
-    <td valign="top" width="25%">
-      <strong>Execution</strong><br>
-      <img alt="Modes" src="https://img.shields.io/badge/Modes-single%20%7C%20sub%20%7C%20graph%20%7C%20teams-7C3AED"><br>
-      <img alt="Harness" src="https://img.shields.io/badge/Harness-initializer%20worker%20evaluator-F59E0B"><br>
-      <img alt="Teams" src="https://img.shields.io/badge/Teams-round__robin%20%7C%20selector%20%7C%20swarm-9333EA"><br>
-      <img alt="Recovery" src="https://img.shields.io/badge/Recovery-session%20memory%20%2B%20checkpoints-16A34A">
-    </td>
-    <td valign="top" width="25%">
-      <strong>Integration</strong><br>
-      <img alt="Tools" src="https://img.shields.io/badge/Tools-direct%20tools-0891B2"><br>
-      <img alt="Skills" src="https://img.shields.io/badge/Skills-command%20%7C%20Python%20hook-F97316"><br>
-      <img alt="MCP" src="https://img.shields.io/badge/MCP-stdio%20%7C%20HTTP%2FSSE%20%7C%20streamable__HTTP-DC2626"><br>
-      <img alt="Plugins" src="https://img.shields.io/badge/Plugins-path%20%7C%20manifest%20%7C%20entry%20point-0EA5E9">
-    </td>
-  </tr>
-</table>
+- Runtime：Python `3.12`、`uv`、`AnyIO`、`Typer`
+- Model Surface：OpenAI-compatible、Anthropic-style、Gemini-style 载荷适配
+- Persistence：SQLite + JSONL traces
+- Integration Surface：direct tools、command skills、Python hook skills、MCP、plugins
+- Isolation Surface：process、container、microVM workbench executors
 
 ## 能力一览
 
-- 显式运行时分层，核心保留 `scheduler`、`orchestrator`、`registry`、`storage`、`protocol adapter` 等白盒能力。
-- 统一适配 `OpenAI`、`Anthropic`、`Gemini` 风格的模型请求与响应。
-- Tool Calling 2.0 运行时可同时承接 direct tools、command skills、Python hook skills、MCP tools 和 mounted plugins。
-- 支持 `single_agent`、`sub_agent`、`multi_agent_graph`、`Agent Teams` 多种协作模式。
-- 增加了一等公民的长任务 harness，具备持久化工件、显式 completion contract、由 evaluator 驱动的 continue 或 replan、resumable checkpoints，以及带审批的人审恢复门。
-- 对直接运行、顶层 team 运行、harness 状态复用提供 session-oriented memory。
-- 对敏感工具、swarm handoff、harness resume、MCP sampling 与 elicitation 提供 human approval 和 safe-point interrupt。
-- 在工具执行前和最终输出前都有显式 guardrail hooks。
-- 对模型输出的工具参数做 schema-aware validation，并提供 repair loop。
-- tracing 与 event streaming 已覆盖 agent、team、tool、guardrail、harness、MCP 边界。
-- 使用 SQLite 与 JSONL 持久化 runs、traces、checkpoints、session state、harness state、approval requests、interrupts 和 resume lineage。
-- 为 graph 与 team workflow 提供历史 checkpoint 列表、time-travel replay，以及可分支的 `--fork` resume。
-- 增加了 A2A 风格的远程 Agent 联邦，可导出本地目标、探测远程 agent card、发送或流式跟踪任务，并持久化联邦任务状态。
-- 增加 executor / workbench 隔离层，用于长生命周期的 command skill、MCP 子进程、执行清单快照、TTL 清理和可分支恢复。
-- MCP 已支持 root snapshot、`notifications/roots/list_changed` 传播、root diff 回传、带风险分级的 sampling / elicitation 审批、持久化的 URL completion 与 `accept` / `decline` / `cancel` 审批结果、`streamable_http`，以及带授权感知的远程传输和 OAuth state 持久化。
-- 内置 repo-pinned BFCL v4、带缓存与断点恢复的 `official_full_v4` 清单路径、基于 SERPAPI 的 web search、tau2 mock、checkpointed rerun，以及面向 OpenAI-compatible schema 失败路径的 provider 级兼容遥测。
+- 白盒运行时分层，明确暴露 scheduler、orchestrator、tool registry、storage 和 protocol adapters。
+- 同时支持 `single_agent`、`sub_agent`、graph workflows、`Agent Teams` 与长任务 harness。
+- 提供 session memory、checkpoints、replay、branchable resume 与审批感知恢复。
+- 内置 guardrails、schema-aware tool validation、runtime event streaming 与 traces。
+- 提供 A2A 风格远程联邦、持久化联邦任务状态以及签名 callback 校验。
+- 提供 benchmark、BFCL、tau2 mock、provider schema compatibility 与 real-network 回归能力。
 
 ## Human Loop、Replay 与 MCP
 
-这些能力现在已经是仓库的已实现功能，不再只是 roadmap 条目。
+`easy-agent` 已经把很多项目还停留在 roadmap 的可靠性能力做成了已实现特性：
 
-- 敏感工具在执行前可以进入人工审批，swarm handoff 与 harness resume 也会通过同一套 human loop 暂停。
-- 运行时暴露 safe-point interrupt、approval queue、checkpoint list、历史 replay，以及可分支的 `resume --fork` 恢复路径。
-- MCP 集成已支持显式 roots、针对 stdio filesystem server 的后向兼容 roots 推断、持久化 root snapshot、带 diff 的 refresh 输出、在服务端能力允许时发送 `notifications/roots/list_changed`、带风险分级的 sampling callback、更完整的 form / URL elicitation callback、`streamable_http`，以及带 OAuth 持久化状态的授权感知远程传输。
-- 高风险 MCP sampling 和 URL elicitation 请求现在会强制进入 deferred approval，而不会绕过 human loop；URL 模式的 completion 与显式 `accept` / `decline` / `cancel` 结果也会落到同一条 durable approval record。CLI 已提供 `approvals`、`checkpoints`、`replay`、`interrupt`、`mcp roots`、`mcp auth` 等命令，无需额外写胶水代码。
+- 敏感工具、swarm handoff 与 resume 可以进入同一套 durable approval 流程。
+- 运行支持 safe-point interrupt、checkpoint list、replay 与 forked resume。
+- MCP 已支持显式 roots、root snapshot、`notifications/roots/list_changed`、elicitation 审批状态、`streamable_http` 与持久化 OAuth state。
+
+参考文档：
+- 详细使用说明：[reference/zh/usage-guide.md](./reference/zh/usage-guide.md)
+- 详细补强路线：[reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)
 
 ## A2A Remote Agent Federation
 
-`easy-agent` 现在提供的是一个更耐用的 A2A 风格联邦层，而不只是轮询桥接。
+联邦层可以把本地 agents、teams、harnesses 通过耐用的 A2A 风格接口公开出去：
 
-- `federation.server` 可以把本地 agent、team 或 harness 作为 exported target 对外发布。
-- `federation.remotes` 可以探测远端 agent card，并通过 `push_preference = auto|sse|poll` 优先使用 SSE push，必要时回退到轮询。
-- 联邦投递现在已经包含 well-known discovery、持久化 task event log、SSE 事件流、webhook push delivery、带退避的重试、租约续期、取消、`pushNotificationConfig` set/get/list/delete 兼容接口，以及可断线恢复的 `sendSubscribe` / resubscribe 流程。
-- `agent-card` 与 `extended-agent-card` 现在会暴露 camelCase 优先的 `defaultInputModes` / `defaultOutputModes`、更丰富的 artifact / part 元数据、`notificationCompatibility`、分页提示，以及 `securitySchemes` / `security` 等安全协商字段，同时保留 easy-agent 的兼容字段。
-- federation auth 现在一等支持 OAuth/OIDC token 获取与刷新，覆盖 `client_credentials` 和 `authorization_code` 两条链路，并把持久化 token state 复用到 runtime 与 CLI。
-- 签名 card 与签名 callback payload 现在可基于 JWKS / JWS 元数据完成校验；联邦 task / subscription 的读取与变更也会先经过更严格的 tenant / task 授权边界检查。
-- 即使远端 card 声明了当前客户端尚未满足的安全要求，`inspect` 仍然可用；但真正的联邦调用现在会基于 card 做前置 readiness 检查，对 bearer、header、OAuth/OIDC、callback audience / signature 预期，以及可选 client-side mTLS 做快速失败。
-- 联邦 task / event 列表现在支持通过 `pageToken` / `nextPageToken` 做 cursor 分页，CLI 也为 `easy-agent federation tasks` 和 `easy-agent federation events` 增加了 `--page-token` / `--page-size`。
-- 联邦任务状态与订阅状态都会持久化到 SQLite，初始请求结束后依然可以继续检查远程执行、backlog replay 和 push 交付状态。
-- CLI 现在提供 `easy-agent federation list|inspect|tasks|events|cancel-task|subscriptions|renew-subscription|cancel-subscription|push-set|push-get|push-list|push-delete|send-subscribe|resubscribe|serve`。
-- federation auth 相关 CLI 现已暴露 `easy-agent federation auth status|login|refresh|logout`，便于直接检查与管理远端 token 生命周期。
+- 支持 well-known discovery、丰富 card、push/poll 投递、retry 与 resubscribe。
+- 支持远端 federation client 的 OAuth/OIDC token 获取与刷新。
+- 支持 signed card 与 signed callback 的 JWKS/JWS 校验。
+- 在暴露或修改联邦状态之前，先执行更严格的 tenant/task 授权边界检查。
 
-配置形态示例：
-
-```yaml
-federation:
-  server:
-    enabled: true
-    host: <LOCAL_HOST>
-    port: 8787
-    base_path: /a2a
-    public_url: https://agent.example.com/a2a
-    protocol_version: "0.3"
-    card_schema_version: "1.0"
-    retry_max_attempts: 4
-    retry_initial_backoff_seconds: 0.5
-    security_schemes:
-      - name: oidc_main
-        type: oidc
-        openid_config_url: https://login.example.com/.well-known/openid-configuration
-        audience: https://agent.example.com/a2a
-    security_requirements:
-      - oidc_main: []
-    push_security:
-      callback_url_policy: public_only
-      signature_secret_env: FEDERATION_CALLBACK_SECRET
-      require_signature: true
-      audience: repo-delivery-callback
-      require_audience: true
-  exports:
-    - name: repo_delivery
-      target_type: harness
-      target: delivery_loop
-      modalities: [text]
-      capabilities: [streaming, interrupts]
-  remotes:
-    - name: partner
-      base_url: https://partner.example.com/a2a
-      push_preference: auto
-      auth:
-        type: oidc
-        token_env: PARTNER_AGENT_TOKEN
-        oauth:
-          audience: https://partner.example.com/a2a
-          openid_config_url: https://login.partner.example.com/.well-known/openid-configuration
-```
+运行细节与同类项目对比详见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
 ## Executor / Workbench Isolation
 
-运行时现在具备专门的 executor / workbench 隔离层，用来承接长生命周期代码执行、工具运行和环境任务。
+executor/workbench 层给长生命周期工具和 MCP 子进程提供了可复用的运行边界：
 
-- `WorkbenchManager` 会在 `.easy-agent/workbench` 下为每个 run 准备隔离根目录，并持久化每个后端 session 的 runtime state。
-- `executors` 现在统一支持 `process`、`container`、`microvm` 三类后端，接口保持一致。
-- `container` 后端现在可以预载离线镜像归档、从 bootstrap context 自动构建、施加 `memory` / `cpu` 配额，并通过提交后的 snapshot image 做稳定复验。
-- `microvm` 后端现在同时支持经典 `qemu` 和基于 `podman_machine` 的 SSH provider，因此在已经存在 Podman machine 资产的宿主机上也能走同一套隔离接口。
-- command skill 和 stdio MCP server 可以通过 `skill.metadata.executor` 或 `mcp[*].executor` 绑定命名 executor，并复用同一个长生命周期 workbench session。
-- graph 与 harness checkpoint 现在都会记录 workbench manifest，`resume --fork` 会把这些 manifest 克隆到新的 session root，同时保留原始 lineage。
-- SQLite 会持久化 `workbench_sessions`、`workbench_executions`、runtime-state payload，以及联邦任务相关状态，便于事后追查。
-- 真实网络评测矩阵现在已经把 process 复用、离线 container 恢复和 podman-machine microVM 恢复都转成了真实宿主机覆盖，而不再停留在 `skipped`。
-- CLI 新增了 `easy-agent workbench list` 和 `easy-agent workbench gc`。
+- 统一命名 executor：`process`、`container`、`microvm`
+- 持久化 workbench sessions、manifests、snapshots 与 TTL cleanup
+- 针对 warm-start latency 与 snapshot drift 提供 real-network 回归覆盖
+
+详细操作说明见 [reference/zh/usage-guide.md](./reference/zh/usage-guide.md)。
 
 ## 架构说明
 
-这个运行时刻意保持白盒。关键层次是可以看见、可以替换、可以测试的。
+这个运行时是刻意模块化、可观测的：
 
-- `scheduler` 负责 direct-agent 和 graph workflows 的调度。
-- `harness` 负责长任务的 initializer、worker、evaluator 循环。
-- `orchestrator` 负责 agent turn 和 team turn 的执行。
-- `registry` 负责统一暴露 direct tools、skills、MCP tools 和 mounted plugin tools。
-- `storage` 负责持久化 runs、traces、checkpoints、session state、harness state。
-- `protocol adapters` 负责把不同模型厂商的请求和响应统一到同一个运行时接口上。
-
-### Runtime Topology
+- `scheduler` 负责 direct-agent 与 graph 执行
+- `orchestrator` 负责 agent 和 team turn
+- `harness` 负责 initializer、worker、evaluator 循环
+- `registry` 负责 tools、skills、MCP tools、plugins
+- `storage` 负责 runs、checkpoints、approvals、sessions、federation state、workbench state
 
 ```mermaid
 flowchart LR
@@ -198,345 +114,132 @@ flowchart LR
     Orchestrator --> Client[HttpModelClient]
     Client --> Adapter[ProtocolAdapter]
     Adapter --> Provider[Provider API]
-    Registry --> DirectTools[Direct Tools]
-    Registry --> CommandSkills[Command Skills]
-    Registry --> PythonSkills[Python Hook Skills]
-    Registry --> MCPTools[MCP Tools]
-    Runtime --> Plugins[Plugin Host]
-    Plugins --> Registry
-    Runtime --> Events[Event Stream]
-    Events --> CLI
 ```
 
 ## 长任务 Harness 设计
 
-长任务不应该继续依赖一个越来越大的 prompt。在这个仓库里，harness 已经是运行时能力，而不是文档约定。
-
-每个 harness 会显式定义：
+Harness 不是 prompt 约定，而是运行时的一等公民。每个 harness 会显式定义：
 
 - `initializer_agent`
-- `worker_target`，可以是 agent，也可以是 team
+- `worker_target`
 - `evaluator_agent`
 - `completion_contract`
-- durable artifact 路径
-- 有边界的 `max_cycles` 和 `max_replans`
 
-每个 session 会落三类可恢复工件：
-
-- `bootstrap.md`：给人看的启动与恢复说明
-- `progress.md`：按 cycle 记录的进度日志
-- `features.json`：给程序读取的结构化状态、决策和计数器
-
-### Harness Loop
-
-```mermaid
-flowchart TD
-    Start[Start Run] --> Init[Initializer]
-    Init --> Files[Write Bootstrap and State Files]
-    Files --> Worker[Worker]
-    Worker --> Eval[Evaluator]
-    Eval -->|CONTINUE| Worker
-    Eval -->|REPLAN| Init
-    Eval -->|COMPLETE| Finish[Finish Run]
-```
-
-这部分设计参考了 Anthropic 于 2025-11-26 发布的文章 [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)。核心思想很直接：长任务真正需要的是显式协调代码、清晰的完成判定和可恢复工件，而不是只换一个更强的模型。
+worker 循环会把 artifacts 与 checkpoints 持久化下来，因此长任务可以继续、replan 或 resume，而不会丢失状态。
 
 ## 协议与工具模型
 
-### 模型协议
+- 模型协议：OpenAI-compatible、Anthropic-style、Gemini-style 载荷归一化
+- 工具调用：strict schema normalization、validation-repair loops、provider-schema telemetry
+- web-search 评测补强：SerpApi `/search.json`、replay-backed contents、quota ledger、result grounding、single-call regression guards
 
-- `OpenAI` 风格载荷，也包括 DeepSeek 这类 OpenAI-compatible 接口路径。
-- `Anthropic` 风格载荷。
-- `Gemini` 风格载荷。
-
-### Tool Calling 2.0 运行时
-
-同一个 registry 可以统一暴露多种来源的工具：
-
-- direct in-process tools
-- command skills
-- Python hook skills
-- `stdio`、`HTTP/SSE` 或 `streamable_http` 的 MCP tools
-- 来自本地路径、manifest 或 entry point 的 mounted plugins
+Provider 行为细节与 structured outputs 约束说明见 [reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)。
 
 ## 项目结构
 
 ```text
 src/
-  agent_cli/           CLI entrypoints and commands
-  agent_common/        shared models and tool abstractions
-  agent_config/        typed config models and validation
-  agent_graph/         orchestration, graph scheduling, team runtime
-  agent_integrations/  skills, MCP, plugins, sandbox, storage, guardrails, federation, workbench
-  agent_protocols/     protocol adapters and model client
-  agent_runtime/       runtime assembly, harnesses, benchmarks, long-run flows, public eval
+  agent_cli/
+  agent_common/
+  agent_config/
+  agent_graph/
+  agent_integrations/
+  agent_protocols/
+  agent_runtime/
 skills/
-  examples/            本地演示 skills
-  real/                真实验证 skills
 configs/
-  harness.example.yml  长任务 harness 示例
-  longrun.example.yml  真实 MCP + skill 验证
-  teams.example.yml    Agent Teams 示例
 tests/
-  unit/                快速隔离测试
-  integration/         真实服务集成测试
+reference/
+  en/
+  zh/
 ```
 
 ## 快速开始
 
-### 环境准备
-
-```powershell
+```bash
 uv venv --python 3.12
 uv sync --dev
-```
-
-### 本地凭据
-
-运行时会自动加载本地 `.env.local` 文件。这样可以把机器私有凭据留在本地，而不用每次重新 export。
-
-示例：
-
-```dotenv
-DEEPSEEK_API_KEY=your-key
-PG_HOST=<LOCAL_HOST>
-PG_PORT=5432
-PG_USER=postgres
-PG_PASSWORD=your-password
-PG_DATABASE=postgres
-REDIS_URL=redis://<LOCAL_HOST>:6379/0
-```
-
-### 常用命令
-
-```powershell
+uv run easy-agent --help
 uv run easy-agent doctor -c easy-agent.yml
-uv run easy-agent skills list -c easy-agent.yml
-uv run easy-agent plugins list -c easy-agent.yml
-uv run easy-agent teams list -c configs/teams.example.yml
-uv run easy-agent harness list -c configs/harness.example.yml
-uv run easy-agent federation list -c easy-agent.yml
-uv run easy-agent workbench list -c easy-agent.yml
-uv run easy-agent run "summarize the repository" --session-id demo-session --approval-mode deferred -c easy-agent.yml
-uv run easy-agent approvals list --status pending -c easy-agent.yml
-uv run easy-agent approvals cancel <request_id> -c easy-agent.yml
-uv run easy-agent checkpoints <run_id> -c configs/teams.example.yml
-uv run easy-agent replay <run_id> --checkpoint-id <checkpoint_id> -c configs/teams.example.yml
-uv run easy-agent resume <run_id> --checkpoint-id <checkpoint_id> --fork -c configs/teams.example.yml
-uv run easy-agent interrupt <run_id> --reason "human stop" -c configs/teams.example.yml
-uv run easy-agent harness run delivery_loop "Create a release summary for this repository" -c configs/harness.example.yml --session-id demo-harness --approval-mode deferred
-uv run easy-agent harness resume <run_id> -c configs/harness.example.yml --approval-mode deferred
-uv run easy-agent mcp roots list filesystem -c configs/longrun.example.yml
-uv run easy-agent mcp roots refresh filesystem -c configs/longrun.example.yml
-uv run easy-agent mcp auth status filesystem -c configs/longrun.example.yml
 ```
 
-### 本地 GitHub Automation Skill Pack
-
-默认的 `easy-agent.yml` 现在会预留一个可选的本地 skill 根目录 `.easy-agent/local-skills/github_automation`。
-
-- 当这个本地 skill pack 存在时，coordinator 的工具列表会先放 `github_issue_list`、`github_issue_prepare_fix`、`git_commit_local`、`github_release_publish`，再放通用演示工具。
-- 这个 skill pack 故意保持未跟踪状态，方便把仓库私有的交付自动化能力留在当前 checkout 本地。
-- `github_issue_prepare_fix` 会在 `.easy-agent/github-automation/issues/<number>/` 下生成分支与任务包，而不是静默改代码。
-- 使用这些技能前，先本地安装并认证 GitHub CLI：`gh --version` 和 `gh auth login`。
-
-### Python Runtime Example
-
-```python
-from pathlib import Path
-
-from agent_runtime.runtime import build_runtime
-
-runtime = build_runtime('configs/harness.example.yml')
-runtime.load(Path('skills/examples'))
-runtime.load('third_party_plugin')
-```
+详细环境准备、本地凭据、CLI 示例与运行方式：
+- [reference/zh/usage-guide.md](./reference/zh/usage-guide.md)
 
 ## 一次 Harness 运行会留下什么
 
-成功的 harness 运行，不只是返回一段文本。
+一次 harness 运行会在 `.easy-agent/` 与 session storage 中持久化以下工件：
 
-- 它会把 run metadata 和 checkpoints 持久化到 SQLite。
-- 它会流式输出 runtime events，方便 CLI 和外部观测。
-- 它会落地 `bootstrap.md`、`progress.md`、`features.json`，让后续运行从显式状态继续。
-- 如果你继续传同一个 `--session-id`，就可以复用之前的 harness state。
+- bootstrap / progress markdown
+- feature snapshots
+- checkpoints 与 replay state
+- workbench session metadata
+
+详细说明见 [reference/zh/usage-guide.md](./reference/zh/usage-guide.md)。
 
 ## 验证方式
 
-当前仓库在这台机器上的主要验证路径是：
+这个未发布轮次沿用了之前的 benchmark 与 public-eval artifacts，同时把详细的 Python verification 与 real-network validation 分开记录。完整命令、artifact 说明与同类项目对比都放在 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
-```powershell
-.\.venv\Scripts\python.exe -m ruff check src tests scripts
-.\.venv\Scripts\python.exe -m mypy src tests scripts
-.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>
-.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>
-.\.venv\Scripts\python.exe scripts\benchmark_modes.py --config easy-agent.yml --repeat 1 --output .easy-agent\benchmark-report.json
-.\.venv\Scripts\python.exe -  # 调用 run_public_eval_suite('easy-agent.yml') 的辅助脚本
-.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>
-```
+### 分数摘要
 
-Python CLI smoke 也会通过 `CliRunner` 直接调用 `agent_cli.app:app` 验证 `--help`、`doctor`、`teams list`、`harness list`、`federation list`。
-
-### 基于官方文档映射的同类项目对比
-
-这是一份基于各项目官方文档的能力映射对比，不是 apples-to-apples 的跑分或排行榜。
-
-| 项目 | 对比依据 | Sessions / State | Teams / Handoffs | Resume / Replay | Isolation | Eval Surface |
-| --- | --- | --- | --- | --- | --- | --- |
-| `easy-agent` | 仓库内已验证证据 | `session_id`、`session_messages`、`session_state`、`harness_state` | agent teams、graph handoff、harness worker routing | resume、replay、fork、checkpoints | process / container / microVM workbench executors | repo-pinned BFCL、`official_full_v4` resume path、tau2、real-network telemetry |
-| `OpenAI Agents SDK` | 官方文档映射 | 官方已文档化 sessions | 官方已文档化 handoffs | 官方文档并不把它定位成 graph replay / time-travel runtime | 官方文档里没有一等公民 executor 矩阵 | 官方 function calling / structured outputs 能力明确，但文档里没有 BFCL 风格内建评测矩阵 |
-| `AutoGen` | 官方文档映射 | 官方已文档化 memory / state 模式 | 官方已文档化 teams | 官方有 stateful workflow，但不如 `easy-agent` 以 replay 为中心 | 官方已文档化 code execution | 官方文档里没有 repo-local BFCL 或 real-network 矩阵 |
-| `LangGraph` | 官方文档映射 | 官方已文档化 state persistence | 官方已文档化 graph routing | 官方已文档化 durable execution 与 time-travel | 官方文档里没有内建 container / microVM executor 矩阵 | 官方文档里没有内建 BFCL 或 real-network 矩阵 |
+| 测试集 | 分数 |
+| --- | ---: |
+| benchmark.single_agent | 100.0 |
+| benchmark.sub_agent | 100.0 |
+| benchmark.multi_agent_graph | 100.0 |
+| benchmark.team_round_robin | 100.0 |
+| benchmark.team_selector | 100.0 |
+| benchmark.team_swarm | 100.0 |
+| public_eval.bfcl_simple | 100.0 |
+| public_eval.bfcl_multiple | 87.5 |
+| public_eval.bfcl_parallel_multiple | 100.0 |
+| public_eval.bfcl_irrelevance | 100.0 |
+| public_eval.bfcl_web_search | 0.0 |
+| public_eval.bfcl_memory | 0.0 |
+| public_eval.bfcl_format_sensitivity | 100.0 |
+| public_eval.tau2_mock | 100.0 |
 
 ## 真实网络测试集结果
 
-快照日期：2026 年 4 月 10 日。
+README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 snapshot drift 的详细内容都放在 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
-这份快照合并了 2026-04-10 重新完成的完整 Python 验证。本轮刷新的是 real-network 工件；下方展示的 benchmark 与 public-eval 仍沿用 2026-04-09 的快照。需要特别说明的是：沿用的 public-eval 工件仍然针对 repo-pinned `full_v4`；虽然运行时已经实现了 `official_full_v4` manifest cache 与 checkpoint resume，但这次验证没有把它作为 live 刷新的产物写进快照。
-
-### Python 验证快照
-
-| 套件 | 命令 | 结果 |
-| --- | --- | --- |
-| 静态检查 | `.\.venv\Scripts\python.exe -m ruff check src tests scripts` | passed |
-| 类型检查 | `.\.venv\Scripts\python.exe -m mypy src tests scripts` | passed |
-| 完整 unit suite | `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` | `140 passed` |
-| Focused real-network pytest | `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` | `1 passed` |
-| 完整 real integration suite | `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` | `5 passed`，附带 5 条已知 Windows 清理告警 |
-| Live real-network 工件 | `.easy-agent/real-network-report.json` | 已于 2026-04-10 刷新 |
-| 保留的 public-eval 工件 | `.easy-agent/public-eval-report.json` | 沿用 2026-04-09 快照 |
-| 保留的 benchmark 工件 | `.easy-agent/benchmark-report.json` | 沿用 2026-04-09 快照 |
-
-本轮验证重新跑了完整 real integration suite，并刷新了 `.easy-agent/real-network-report.json`；下方 benchmark 与 public-eval 仍然沿用上一轮 2026-04-09 的快照。BFCL web-search 评测现在走 `easy-agent.yml` 里的 SERPAPI 配置面；当缺少凭证、触发配额限制，或兼容后端暂时不可用时，运行时仍会在存在 replay payload 的前提下走回放降级。
-
-### 真实网络矩阵
-
-| 场景 | 传输 | 状态 | 耗时 (s) | 说明 |
-| --- | --- | --- | --- | --- |
-| `cross_process_federation` | `http_poll` | passed | `1.2584` | 跨进程 well-known discovery 与 send/poll 联邦链路通过 |
-| `live_model_federation_roundtrip` | `http_poll` | passed | `38.0432` | live-model loopback federation 在 API key、TCP 与 HTTP 预检之后成功跑通 |
-| `disconnect_retry_chaos` | `http_webhook` | passed | `5.0479` | callback 重试、`pushNotificationConfig`、`sendSubscribe`、签名 webhook 交付与 resubscribe 链路通过 |
-| `duplicate_delivery_replay_resilience` | `http_webhook` | passed | `3.9962` | 重复投递、签名 callback replay 与稳定 federated task event log 读取链路通过 |
-| `workbench_reuse_process` | `local_process` | passed | `1.8405` | process workbench 成功复用同一个长生命周期 session root |
-| `workbench_reuse_container` | `podman_exec` | passed | `31.3088` | container executor 成功加载 offline image archive、施加配额并从 snapshot image 恢复 |
-| `workbench_incremental_snapshot_reuse_container` | `podman_exec` | passed | `51.0611` | container 多次 checkpoint restore 后仍能保留增量状态 |
-| `workbench_reuse_microvm` | `podman_machine_ssh` | passed | `19.7863` | microVM executor 通过 podman machine over SSH 复用并在断线式重启后恢复 |
-| `workbench_incremental_snapshot_reuse_microvm` | `podman_machine_ssh` | passed | `28.5456` | microVM 多次 checkpoint restore 后仍能保留增量状态 |
-| `replay_resume_failure_injection` | `sqlite_checkpoint` | passed | `6.5586` | 注入失败后的 resume、replay、fork 恢复链路通过 |
-
-汇总：`10 passed`、`0 failed`、`0 skipped`。
-来源：`.easy-agent/real-network-report.json`，生成时间 `2026-04-10T00:08:24Z`。
-
-### Warm-Start Telemetry 快照
-
-| 指标 | 数值 | 说明 |
-| --- | --- | --- |
-| 带 telemetry 的场景数 | `4` | container 与 microVM 的 warm-start / snapshot-restore 行会产出 telemetry |
-| Cache hit rate | `1.0000` | 4 条 warm-start 相关行全部命中可复用 cache |
-| Warm-start budget status | `within_budget=4` | 4 条 warm-start 相关行都落在延迟预算内 |
-| Container warm-start 平均值 | `5.6515s` | container warm-start 与增量 snapshot reuse 的平均值 |
-| microVM warm-start 平均值 | `8.3451s` | microVM warm-start 与增量 snapshot reuse 的平均值 |
-| Snapshot drift ratio 平均值 | `0.4222` | 相对 cold-start baseline 的平均漂移 |
-| Snapshot drift ratio 最大值 | `0.6873` | 当前最差的一次 container restart 漂移 |
-
-### Live Benchmark 快照
-
-| 模式 | 成功 | 平均耗时 (s) |
-| --- | --- | --- |
-| `single_agent` | yes | `4.2843` |
-| `sub_agent` | yes | `20.7399` |
-| `multi_agent_graph` | yes | `9.8910` |
-| `team_round_robin` | yes | `7.7402` |
-| `team_selector` | yes | `9.7480` |
-| `team_swarm` | yes | `8.2819` |
-
-来源：`.easy-agent/benchmark-report.json`，沿用 2026-04-09 快照。
-
-### Public Eval 快照
-
-| 套件 | 通过率 | 说明 |
-| --- | --- | --- |
-| `bfcl_simple` | `1.0000` | 8 个用例通过 8 个 |
-| `bfcl_multiple` | `0.8750` | 8 个用例通过 7 个 |
-| `bfcl_parallel_multiple` | `1.0000` | 4 个用例通过 4 个 |
-| `bfcl_irrelevance` | `1.0000` | 4 个用例通过 4 个 |
-| `bfcl_format_sensitivity` | `1.0000` | 3 个用例通过 3 个 |
-| `bfcl_memory` | `0.0000` | 3 个用例全部失败；当前阻塞集中在 memory key 语义和 replay grounding |
-| `bfcl_web_search` | `0.0000` | 3 个用例全部失败；当前阻塞集中在 duplicate-call 与 query shaping 漂移 |
-| `tau2_mock` | `1.0000` | 3 个用例通过 3 个 |
-| `overall.bfcl_pass_rate` | `0.7879` | 当前主要阻塞已转移到 memory 和 web-search，而不是 strict-schema 传输失败 |
-
-当前工件范围：`profile=full_v4`、`scope=repo_pinned`、`completed_records=36`、`resume_enabled=false`。运行时虽然已经内置了带缓存的 `official_full_v4` manifest 路径和 checkpoint resume，但本轮展示的仍是沿用的 repo-pinned 快照，并没有把那条更大的官方清单一起刷新。
-
-### 带阶段感知的 Public Eval 分析
-
-| 指标 | 数值 | 说明 |
-| --- | --- | --- |
-| Base 阶段终态通过率 | `0.8056` | 36 条记录里有 29 条在不离开 base stage 的情况下完成 |
-| Retry 阶段迁移数 | `0` | 这份沿用的 repo-pinned 快照没有进入额外 fallback stage |
-| Failure buckets | `memory_backend_miss=3`、`duplicate_call=2`、`other=2` | 当前 miss 更偏行为和 grounding，而不是 provider 侧 schema 传输失败 |
-
-### Provider Schema 兼容矩阵
-
-| Provider | Protocol | 兼容结论 | 说明 |
-| --- | --- | --- | --- |
-| `openai_compatible` | `openai` | live 工件已观测 strict 路径 | 当前 capability telemetry 已观测到 `strict_flag`、nullable 保留、optional 提升为 required nullable，以及 `parallel_tool_calls` 控制；递归 `additionalProperties: false` 仍由单元回归覆盖 |
-| `anthropic` | `anthropic` | 保持 provider-native 透传 | 当前 adapter 有意保留原始 schema 形态，而不是强行压到 OpenAI-compatible 子集 |
-| `gemini` | `gemini` | 已规范化并裁剪 | 保留类似 OpenAI 的广义 schema 清洗路径，但目前不暴露 OpenAI-only 的 strict 与并行调用控制 |
-
-来源：`.easy-agent/public-eval-report.json`，沿用 2026-04-09 快照。
-
-当前注意事项：
-
-- 完整 real integration suite 在成功后仍会出现 Windows asyncio subprocess cleanup warnings；在这台机器上它们依然是清理债务，而不是功能失败，本轮 2026-04-10 验证共记录到 5 条。
-- 当前沿用的 public-eval 快照里，最弱的仍然是 `bfcl_memory` 和 `bfcl_web_search`；其中 web-search miss 包含 duplicate-call、query shaping 与 result grounding 误差，memory miss 则是 key shape / grounding 问题。
-- 当前沿用的 benchmark 快照已经全绿，但 `sub_agent` 路径仍显著慢于其他 benchmark 模式，因为它同时支付了 live coordinator turn 和 live delegated turn 的成本。
+| 测试集 | 分数 |
+| --- | ---: |
+| real_network.cross_process_federation | 100.0 |
+| real_network.live_model_federation_roundtrip | 100.0 |
+| real_network.disconnect_retry_chaos | 100.0 |
+| real_network.duplicate_delivery_replay_resilience | 100.0 |
+| real_network.workbench_reuse_process | 100.0 |
+| real_network.workbench_reuse_container | 100.0 |
+| real_network.workbench_incremental_snapshot_reuse_container | 100.0 |
+| real_network.workbench_reuse_microvm | 100.0 |
+| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 |
+| real_network.replay_resume_failure_injection | 100.0 |
 
 ## 下一步补强
 
-这些下一步补强方向是根据当前公开的 A2A、MCP 和 OpenAI tool-calling 能力面整理出来的，而不是只来自仓库内部 backlog。
+完整补强路线见 [reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)。近期重点仍然是：
 
-- 先把当前 BFCL memory miss 清掉，对齐 memory tool 的 key 约定、更忠实地回放跨轮次状态，并补足能区分 memory backend miss 与普通 argument mismatch 的回归用例。
-- 继续压缩 BFCL web-search miss，重点加强基于 SERPAPI 的 `/search.json` 链路与基于 replay 的 contents 获取路径，在单调用约束、query shaping 与 result grounding 上继续补强，同时保留 quota ledger 与 replay fallback。
-- 把已经交付的 `official_full_v4` manifest 获取、缓存与断点恢复，推进成可重复执行的验证路径，让 repo-pinned 与 official-manifest 两类快照能长期对比。
-- 围绕 OpenAI 官方 function calling 与 structured outputs 约束继续补强 provider 兼容性，深入补齐 `strict: true`、递归 `additionalProperties: false`、nullable / optional 参数建模，以及单调用 / 并行调用约束的回归覆盖。
-- 把 OpenAI structured outputs 的 refusal、incomplete 与 schema-unsupported 状态继续带入 durable runtime event 和 public-eval telemetry，让 provider 兼容问题能和模型拒答或截断行为清晰分层。
-- 把这次新增的 warm-start latency budget 与 cache telemetry 继续推进成可趋势化的历史工件，让 cache hit rate、恢复速度与 snapshot drift 能跨轮次比较，而不是只停在最新报表。
-- 继续把 federation 贴近最新公开 A2A 面，补齐更丰富的 agent-card 元数据、signed-card 轮换遥测、OAuth/OIDC discovery cache、push-notification 鉴权细节、task history 过滤能力，以及 status timestamp 一致性。
-- 继续收紧联邦信任边界，补齐 tenant / task scope 的更强回归覆盖、callback JWKS 轮换处理，以及 remote task 创建前更清晰的 auth-readiness 诊断。
-- 继续补齐 MCP 在更新后的公共 server-feature 面上的兼容性，包括 `notifications/prompts/list_changed`、`notifications/resources/list_changed`、`notifications/tools/list_changed`、`resources/subscribe`，以及跨传输恢复时可重放的通知同步路径。
+- 继续压缩 BFCL web-search miss，聚焦 query shaping、grounding 与 replay-backed contents
+- 继续收紧围绕 OpenAI function calling 与 structured outputs 的 provider 兼容性
+- 在不随意扩展公开运行时表面的前提下，继续推进 durable MCP 与 federation 协调
 
 ## 设计参考
 
-- Anthropic, [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
-- OpenAI Agents SDK Sessions: [https://openai.github.io/openai-agents-python/sessions/](https://openai.github.io/openai-agents-python/sessions/)
-- OpenAI Agents SDK Handoffs: [https://openai.github.io/openai-agents-python/handoffs/](https://openai.github.io/openai-agents-python/handoffs/)
-- OpenAI Agents SDK Guardrails: [https://openai.github.io/openai-agents-python/guardrails/](https://openai.github.io/openai-agents-python/guardrails/)
-- OpenAI Agents SDK Tracing: [https://openai.github.io/openai-agents-python/tracing/](https://openai.github.io/openai-agents-python/tracing/)
-- OpenAI Function Calling: [https://platform.openai.com/docs/guides/function-calling](https://platform.openai.com/docs/guides/function-calling)
-- OpenAI Structured Outputs: [https://platform.openai.com/docs/guides/structured-outputs](https://platform.openai.com/docs/guides/structured-outputs)
-- SerpApi Google Search API: [https://serpapi.com/search-api](https://serpapi.com/search-api)
-- AutoGen Teams: [https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html)
-- LangGraph Durable Execution: [https://docs.langchain.com/oss/python/langgraph/durable-execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)
-- Google Developers Blog, [Announcing the Agent2Agent Protocol (A2A)](https://developers.googleblog.com/es/a2a-a-new-era-of-agent-interoperability/)
-- A2A Protocol: [https://a2aprotocol.ai/](https://a2aprotocol.ai/)
-- A2A Latest Specification: [https://a2a-protocol.org/latest/specification/](https://a2a-protocol.org/latest/specification/)
-- A2A Reference Implementation: [https://github.com/a2aproject/A2A](https://github.com/a2aproject/A2A)
-- OpenID Connect Discovery 1.0: [https://openid.net/specs/openid-connect-discovery-1_0-final.html](https://openid.net/specs/openid-connect-discovery-1_0-final.html)
-- RFC 7515 JSON Web Signature (JWS): [https://www.rfc-editor.org/rfc/rfc7515](https://www.rfc-editor.org/rfc/rfc7515)
-- RFC 7517 JSON Web Key (JWK): [https://datatracker.ietf.org/doc/html/rfc7517](https://datatracker.ietf.org/doc/html/rfc7517)
-- MCP Roots: [https://modelcontextprotocol.io/docs/concepts/roots](https://modelcontextprotocol.io/docs/concepts/roots)
-- MCP Sampling: [https://modelcontextprotocol.io/docs/concepts/sampling](https://modelcontextprotocol.io/docs/concepts/sampling)
-- MCP Elicitation: [https://modelcontextprotocol.io/docs/concepts/elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation)
-- MCP Transports: [https://modelcontextprotocol.io/docs/concepts/transports](https://modelcontextprotocol.io/docs/concepts/transports)
+- OpenAI function calling：<https://platform.openai.com/docs/guides/function-calling?api-mode=chat>
+- OpenAI structured outputs：<https://platform.openai.com/docs/guides/structured-outputs>
+- Model Context Protocol：<https://modelcontextprotocol.io/specification>
+- SerpApi Search API：<https://serpapi.com/search-api>
+- FastAPI README 风格参考：<https://github.com/fastapi/fastapi>
+- uv README 风格参考：<https://github.com/astral-sh/uv>
 
 ## 致谢
 
-- [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
-- [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) 为本仓库的真实验证流程提供模型端点基线。
+- 感谢 OpenAI、Anthropic、Google 与 MCP 生态提供持续演进的协议与互操作基础。
+- 感谢 SerpApi 提供可与 replay 路径协同的 BFCL web-search 评测搜索链路。
+- 感谢 Linux.do 社区早期围绕 Agent 工程化的实践讨论。
 
 ## License
 
-[Apache-2.0](https://github.com/CloudWide851/easy-agent?tab=Apache-2.0-1-ov-file#)
-
+MIT。详见 [LICENSE](./LICENSE)。

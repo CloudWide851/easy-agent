@@ -5,7 +5,6 @@ import os
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,7 +24,7 @@ from mcp.os.win32.utilities import (
     get_windows_executable_command,
     terminate_windows_process_tree,
 )
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.shared.auth import OAuthClientMetadata
 from mcp.shared.message import SessionMessage
 
 from agent_common.models import (
@@ -42,6 +41,15 @@ from agent_integrations.sandbox import SandboxManager, SandboxRequest, SandboxTa
 from agent_integrations.storage import SQLiteRunStore
 from agent_integrations.workbench import WorkbenchManager
 
+from .client_utils import (
+    OAuthTokenStore,
+)
+from .client_utils import (
+    build_mcp_tool_name as _build_mcp_tool_name,
+)
+from .client_utils import (
+    utcnow as _utcnow,
+)
 from .elicitation import (
     classify_elicitation_request,
     classify_sampling_request,
@@ -70,38 +78,7 @@ class _DefaultSamplingModelClient:
 
 
 def build_mcp_tool_name(server_name: str, tool_name: str) -> str:
-    import re
-
-    combined = f'mcp__{server_name}__{tool_name}'
-    return re.sub(r'[^a-zA-Z0-9_-]', '_', combined)
-
-
-def _utcnow() -> str:
-    return datetime.now(UTC).isoformat(timespec='seconds')
-
-
-class OAuthTokenStore:
-    def __init__(self, store: SQLiteRunStore, server_name: str) -> None:
-        self.store = store
-        self.server_name = server_name
-
-    async def get_tokens(self) -> OAuthToken | None:
-        payload = self.store.load_oauth_tokens(self.server_name)
-        if payload is None:
-            return None
-        return OAuthToken.model_validate(payload)
-
-    async def set_tokens(self, tokens: OAuthToken) -> None:
-        self.store.save_oauth_tokens(self.server_name, tokens.model_dump(mode='json', exclude_none=True))
-
-    async def get_client_info(self) -> OAuthClientInformationFull | None:
-        payload = self.store.load_oauth_client_info(self.server_name)
-        if payload is None:
-            return None
-        return OAuthClientInformationFull.model_validate(payload)
-
-    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
-        self.store.save_oauth_client_info(self.server_name, client_info.model_dump(mode='json', exclude_none=True))
+    return _build_mcp_tool_name(server_name, tool_name)
 
 
 class BaseMcpClient:
