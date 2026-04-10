@@ -79,9 +79,12 @@ class HumanLoopManager:
             return request.response_payload or {}
         if request.status is HumanRequestStatus.REJECTED:
             raise RunInterrupted(context.run_id, {'reason': f"approval rejected: {request.title}", 'request_id': request.request_id})
+        if request.status is HumanRequestStatus.CANCELLED:
+            raise RunInterrupted(context.run_id, {'reason': f"approval cancelled: {request.title}", 'request_id': request.request_id})
         mode = self._effective_mode(context.approval_mode)
         if mode is HumanLoopMode.INLINE and self._inline_resolver is not None:
             status, response_payload = await self._inline_resolver(request)
+            response_payload = normalize_human_request_resolution(request, status=status, response_payload=response_payload)
             resolved = self.store.resolve_human_request(
                 request.request_id,
                 status=status,
@@ -97,7 +100,8 @@ class HumanLoopManager:
             )
             if status is HumanRequestStatus.APPROVED:
                 return response_payload or {}
-            raise RunInterrupted(context.run_id, {'reason': f"approval rejected: {resolved.title}", 'request_id': resolved.request_id})
+            reason = 'approval cancelled' if status is HumanRequestStatus.CANCELLED else 'approval rejected'
+            raise RunInterrupted(context.run_id, {'reason': f"{reason}: {resolved.title}", 'request_id': resolved.request_id})
         raise ApprovalRequired(request)
 
     def approval_payload(self, **payload: Any) -> dict[str, Any]:
@@ -118,3 +122,28 @@ class HumanLoopManager:
         if requested is HumanLoopMode.DEFERRED:
             return HumanLoopMode.DEFERRED
         return HumanLoopMode.INLINE if self._inline_resolver is not None else HumanLoopMode.DEFERRED
+
+
+def normalize_human_request_resolution(
+    request: HumanRequest,
+    *,
+    status: HumanRequestStatus,
+    response_payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if request.kind != 'mcp_elicitation':
+        return response_payload
+    payload = dict(response_payload or {})
+    mode = str(request.payload.get('mode') or '').lower()
+    if status is HumanRequestStatus.APPROVED:
+        payload['action'] = 'accept'
+        if mode == 'url':
+            completion = dict(payload.get('completion') or {})
+            completion.setdefault('status', 'pending')
+            completion.setdefault('elicitation_id', request.payload.get('elicitation_id'))
+            payload['completion'] = completion
+        return payload
+    if status is HumanRequestStatus.REJECTED:
+        return {'action': 'decline'}
+    if status is HumanRequestStatus.CANCELLED:
+        return {'action': 'cancel'}
+    return payload

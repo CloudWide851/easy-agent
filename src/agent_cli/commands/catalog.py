@@ -75,8 +75,7 @@ def refresh_mcp_roots(
     config: str = typer.Option('easy-agent.yml', '-c', '--config'),
 ) -> None:
     async def _run(runtime: EasyAgentRuntime) -> None:
-        await runtime.mcp_manager.refresh_roots(server_name)
-        console.print_json(json.dumps({'server': server_name, 'status': 'roots_refreshed'}, ensure_ascii=False))
+        console.print_json(json.dumps(await runtime.mcp_manager.refresh_roots(server_name), ensure_ascii=False))
 
     asyncio.run(with_runtime(config, _run))
 

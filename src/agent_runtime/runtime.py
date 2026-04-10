@@ -13,7 +13,11 @@ from agent_graph import AgentOrchestrator, GraphScheduler
 from agent_integrations.executors import build_executor_backends
 from agent_integrations.federation import FederationClientManager, FederationServer
 from agent_integrations.guardrails import GuardrailEngine
-from agent_integrations.human_loop import HumanLoopManager, InlineApprovalResolver
+from agent_integrations.human_loop import (
+    HumanLoopManager,
+    InlineApprovalResolver,
+    normalize_human_request_resolution,
+)
 from agent_integrations.mcp import McpClientManager, build_mcp_tool_name
 from agent_integrations.plugins import InlineRuntimePlugin, RuntimePlugin, RuntimePluginHost
 from agent_integrations.sandbox import SandboxManager, SandboxMode
@@ -351,17 +355,39 @@ class EasyAgentRuntime:
         return self.store.load_human_request(request_id).model_dump()
 
     def approve_human_request(self, request_id: str, response_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = self.store.load_human_request(request_id)
         return self.store.resolve_human_request(
             request_id,
             status=HumanRequestStatus.APPROVED,
-            response_payload=response_payload,
+            response_payload=normalize_human_request_resolution(
+                request,
+                status=HumanRequestStatus.APPROVED,
+                response_payload=response_payload,
+            ),
         ).model_dump()
 
     def reject_human_request(self, request_id: str, response_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = self.store.load_human_request(request_id)
         return self.store.resolve_human_request(
             request_id,
             status=HumanRequestStatus.REJECTED,
-            response_payload=response_payload,
+            response_payload=normalize_human_request_resolution(
+                request,
+                status=HumanRequestStatus.REJECTED,
+                response_payload=response_payload,
+            ),
+        ).model_dump()
+
+    def cancel_human_request(self, request_id: str, response_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = self.store.load_human_request(request_id)
+        return self.store.resolve_human_request(
+            request_id,
+            status=HumanRequestStatus.CANCELLED,
+            response_payload=normalize_human_request_resolution(
+                request,
+                status=HumanRequestStatus.CANCELLED,
+                response_payload=response_payload,
+            ),
         ).model_dump()
 
     def interrupt_run(self, run_id: str, payload: dict[str, Any] | None = None) -> None:

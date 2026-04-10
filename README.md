@@ -85,7 +85,7 @@ Many agent repositories jump straight from "call a model" to "ship a product". T
 - Historical checkpoint listing, time-travel replay, and branchable `--fork` resume for graph and team workflows.
 - A2A-style remote agent federation with exported local targets, remote inspection, task send or stream flows, durable task state, and CLI federation tooling.
 - Executor and workbench isolation for long-lived command skills, MCP subprocesses, execution manifests, TTL cleanup, and fork-safe resume snapshots.
-- MCP roots, risk-aware sampling and elicitation approvals, richer form or URL elicitation handling, `streamable_http`, and authorization-aware remote transports with persisted OAuth state.
+- MCP root snapshots with `notifications/roots/list_changed` propagation, root-diff reporting, risk-aware sampling and elicitation approvals, durable URL completion and `accept` / `decline` / `cancel` approval outcomes, `streamable_http`, and authorization-aware remote transports with persisted OAuth state.
 - Public evaluation helpers for repo-pinned BFCL v4 cases, cached `official_full_v4` manifest resume paths, SERPAPI-backed web-search cases, tau2 mock cases, checkpointed reruns, and per-provider schema telemetry for OpenAI-compatible schema failures.
 
 ## Human Loop, Replay, and MCP
@@ -94,8 +94,8 @@ The current runtime already ships the reliability controls that were previously 
 
 - Sensitive tools can pause for human approval before execution, and swarm handoffs plus harness resumes can pause on the same human loop.
 - Runs expose safe-point interrupts, approval queues, checkpoint listing, historical replay, and branchable `resume --fork` flows.
-- MCP integrations now support explicit roots, backward-compatible filesystem root inference for stdio servers, risk-aware sampling callbacks, richer form or URL elicitation callbacks, `streamable_http`, and auth-aware remote transports with persisted OAuth state.
-- High-risk MCP sampling and URL elicitation requests are forced into deferred approval instead of silently bypassing the human loop, and the CLI exposes `approvals`, `checkpoints`, `replay`, `interrupt`, `mcp roots`, and `mcp auth` commands so these controls stay usable without custom code.
+- MCP integrations now support explicit roots, backward-compatible filesystem root inference for stdio servers, durable root snapshots, root-diff refresh output, `notifications/roots/list_changed` propagation when the server surface supports it, risk-aware sampling callbacks, richer form or URL elicitation callbacks, `streamable_http`, and auth-aware remote transports with persisted OAuth state.
+- High-risk MCP sampling and URL elicitation requests are forced into deferred approval instead of silently bypassing the human loop, and URL-mode elicitation completion plus explicit `accept` / `decline` / `cancel` outcomes now stay in the same durable approval record. The CLI exposes `approvals`, `checkpoints`, `replay`, `interrupt`, `mcp roots`, and `mcp auth` commands so these controls stay usable without custom code.
 
 ## A2A Remote Agent Federation
 
@@ -320,6 +320,7 @@ uv run easy-agent federation list -c easy-agent.yml
 uv run easy-agent workbench list -c easy-agent.yml
 uv run easy-agent run "summarize the repository" --session-id demo-session --approval-mode deferred -c easy-agent.yml
 uv run easy-agent approvals list --status pending -c easy-agent.yml
+uv run easy-agent approvals cancel <request_id> -c easy-agent.yml
 uv run easy-agent checkpoints <run_id> -c configs/teams.example.yml
 uv run easy-agent replay <run_id> --checkpoint-id <checkpoint_id> -c configs/teams.example.yml
 uv run easy-agent resume <run_id> --checkpoint-id <checkpoint_id> --fork -c configs/teams.example.yml
@@ -327,6 +328,7 @@ uv run easy-agent interrupt <run_id> --reason "human stop" -c configs/teams.exam
 uv run easy-agent harness run delivery_loop "Create a release summary for this repository" -c configs/harness.example.yml --session-id demo-harness --approval-mode deferred
 uv run easy-agent harness resume <run_id> -c configs/harness.example.yml --approval-mode deferred
 uv run easy-agent mcp roots list filesystem -c configs/longrun.example.yml
+uv run easy-agent mcp roots refresh filesystem -c configs/longrun.example.yml
 uv run easy-agent mcp auth status filesystem -c configs/longrun.example.yml
 ```
 
@@ -503,7 +505,7 @@ These next steps are based on the current public A2A, MCP, and OpenAI tool-calli
 - Extend real-network telemetry from the latest warm-start budgets into trendable history so cache-hit rate, recovery speed, and snapshot drift can be compared across runs instead of living only in the latest report.
 - Continue aligning federation with the latest public A2A surface around richer agent-card metadata, signed-card rotation telemetry, OAuth/OIDC discovery caching, push-notification authentication details, task history filters, and status-timestamp fidelity.
 - Keep hardening federated trust boundaries with stricter tenant/task scope regression coverage, callback JWKS rotation handling, and clearer auth-readiness diagnostics before remote task creation.
-- Expand MCP roots support from list retrieval to full `notifications/roots/list_changed` propagation plus root-diff reconciliation, and carry URL-mode elicitation completion plus explicit `accept` / `decline` / `cancel` outcomes through the same durable approval state.
+- Continue MCP parity against the newer public server-feature surface with `notifications/prompts/list_changed`, `notifications/resources/list_changed`, `notifications/tools/list_changed`, `resources/subscribe`, and reconnect-safe notification replay across transport resumes.
 
 ## Design References
 

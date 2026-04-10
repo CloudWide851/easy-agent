@@ -17,7 +17,7 @@ approvals_app = typer.Typer(help='Inspect and resolve human approval requests.')
 @approvals_app.command('list')
 def list_approvals(
     config: str = typer.Option('easy-agent.yml', '-c', '--config'),
-    status: str | None = typer.Option(None, '--status', help='pending, approved, or rejected'),
+    status: str | None = typer.Option(None, '--status', help='pending, approved, rejected, or cancelled'),
     run_id: str | None = typer.Option(None, '--run-id'),
 ) -> None:
     runtime = build_runtime(config)
@@ -73,5 +73,19 @@ def reject_approval(
     try:
         payload = json.loads(content_json) if content_json else None
         console.print_json(json.dumps(runtime.reject_human_request(request_id, payload), ensure_ascii=False))
+    finally:
+        asyncio.run(runtime.aclose())
+
+
+@approvals_app.command('cancel')
+def cancel_approval(
+    request_id: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+    content_json: str | None = typer.Option(None, '--content-json', help='Optional JSON response payload.'),
+) -> None:
+    runtime = build_runtime(config)
+    try:
+        payload = json.loads(content_json) if content_json else None
+        console.print_json(json.dumps(runtime.cancel_human_request(request_id, payload), ensure_ascii=False))
     finally:
         asyncio.run(runtime.aclose())

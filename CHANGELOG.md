@@ -29,6 +29,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - signed callback JWS verification
   - stricter tenant/task authorization boundaries on task and subscription state
 - Added warm-start latency budgets, cache telemetry, and history append support for container and microVM rows in the real-network suite.
+- Added durable MCP roots state handling with:
+  - persisted root snapshots
+  - root-diff refresh payloads
+  - `notifications/roots/list_changed` propagation when the transport session supports it
+- Added durable MCP URL elicitation completion handling so:
+  - `accept` / `decline` / `cancel` outcomes stay in one approval record
+  - URL completion notifications update the existing approval state instead of creating a second record
 - Added focused regression coverage for:
   - SERPAPI search normalization and replay fallback
   - official-manifest loading
@@ -38,6 +45,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - benchmark retry stability
   - real-network telemetry aggregation
   - README comparison snapshot rows
+  - MCP roots diff and notification behavior
+  - MCP durable elicitation completion state
+  - approval cancel mapping
 
 ### Changed
 
@@ -54,13 +64,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - a docs-mapped similar-project comparison section
 - Tightened live benchmark stability by giving each benchmark mode one bounded retry before recording failure, and mirrored that bounded retry in the flaky long-run real integration test.
 - Restored public-facing README and changelog wording to SERPAPI so the tracked repository no longer advertises the previous temporary web-search test surface.
+- Split the monolithic MCP integration module into `src/agent_integrations/mcp/` package files so roots, elicitation, clients, and manager logic are easier to evolve independently.
+- Updated both READMEs to mark MCP root-change propagation and durable URL elicitation approval state as shipped capabilities, and rewrote the MCP `Next Reinforcement` item toward prompt/resource/tool list-change parity on the newer public MCP surface.
 - Kept this round unreleased on top of `0.3.3`; no package version or release entry was bumped.
 
 ### Verified
 
 - `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
 - `.\.venv\Scripts\python.exe -m mypy src tests scripts`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `140 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests\unit\test_mcp.py tests\unit\test_storage.py tests\unit\test_human_loop.py tests\unit\test_cli_shared.py -q --basetemp=%TEMP%\easy-agent-pytest\unit-mcp-targeted-<timestamp>` with `21 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `148 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q -k "not public_eval" --basetemp=%TEMP%\easy-agent-pytest\integration-non-public-eval-<timestamp>` with `4 passed`, `1 deselected`, `5 warnings`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` with `1 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `5 passed`, `5 warnings`
 - Retained `.easy-agent/benchmark-report.json` from the April 9, 2026 snapshot.

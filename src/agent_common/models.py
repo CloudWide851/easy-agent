@@ -73,6 +73,7 @@ class HumanRequestStatus(StrEnum):
     PENDING = 'pending'
     APPROVED = 'approved'
     REJECTED = 'rejected'
+    CANCELLED = 'cancelled'
 
 
 class GuardrailDecision(BaseModel):

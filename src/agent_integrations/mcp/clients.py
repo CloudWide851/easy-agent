@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import contextvars
 import os
-import re
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,14 +28,35 @@ from mcp.os.win32.utilities import (
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from mcp.shared.message import SessionMessage
 
-from agent_common.models import ChatMessage, HumanLoopMode, McpAuthType, RunContext, ToolSpec
-from agent_common.schema_utils import normalize_json_schema
+from agent_common.models import (
+    ChatMessage,
+    HumanLoopMode,
+    HumanRequestStatus,
+    McpAuthType,
+    RunContext,
+    ToolSpec,
+)
 from agent_config.app import McpRootConfig, McpServerConfig
 from agent_integrations.human_loop import HumanLoopManager
 from agent_integrations.sandbox import SandboxManager, SandboxRequest, SandboxTarget
 from agent_integrations.storage import SQLiteRunStore
-from agent_integrations.tool_validation import normalize_and_validate_tool_arguments
 from agent_integrations.workbench import WorkbenchManager
+
+from .elicitation import (
+    classify_elicitation_request,
+    classify_sampling_request,
+    coerce_elicitation_result,
+    normalize_requested_schema,
+    sampling_message_to_text,
+    url_host,
+)
+from .roots import (
+    diff_root_entries,
+    infer_stdio_filesystem_roots,
+    normalize_root_entries,
+    root_payload,
+    root_to_uri,
+)
 
 RedirectHandler = Callable[[str], Awaitable[None]]
 CallbackHandler = Callable[[], Awaitable[tuple[str, str | None]]]
@@ -48,12 +69,15 @@ class _DefaultSamplingModelClient:
         return type('Response', (), {'text': text, 'tool_calls': []})()
 
 
-
 def build_mcp_tool_name(server_name: str, tool_name: str) -> str:
     import re
 
     combined = f'mcp__{server_name}__{tool_name}'
     return re.sub(r'[^a-zA-Z0-9_-]', '_', combined)
+
+
+def _utcnow() -> str:
+    return datetime.now(UTC).isoformat(timespec='seconds')
 
 
 class OAuthTokenStore:
@@ -112,10 +136,34 @@ class BaseMcpClient:
         raise NotImplementedError
 
     async def list_roots(self) -> list[dict[str, Any]]:
-        return [self._root_payload(item) for item in self._resolved_roots()]
+        roots = normalize_root_entries([root_payload(item) for item in self._resolved_roots()])
+        self._ensure_root_snapshot(roots)
+        return roots
 
-    async def refresh_roots(self) -> None:
-        return None
+    async def refresh_roots(self) -> dict[str, Any]:
+        roots = normalize_root_entries([root_payload(item) for item in self._resolved_roots()])
+        previous = self._load_root_snapshot()
+        if previous is None:
+            self._save_root_snapshot(roots)
+            return {
+                'server': self.config.name,
+                'changed': False,
+                'notification_sent': False,
+                'reason': 'snapshot_initialized',
+                'roots': roots,
+                'diff': {'added': [], 'removed': [], 'changed': []},
+            }
+        diff = diff_root_entries(previous['roots'], roots)
+        changed = bool(diff['added'] or diff['removed'] or diff['changed'])
+        self._save_root_snapshot(roots)
+        return {
+            'server': self.config.name,
+            'changed': changed,
+            'notification_sent': False,
+            'reason': 'notification_unsupported' if changed else 'unchanged',
+            'roots': roots,
+            'diff': diff,
+        }
 
     async def authorize(self) -> None:
         return None
@@ -200,13 +248,39 @@ class BaseMcpClient:
             return replace(context, approval_mode=HumanLoopMode.DEFERRED)
         return context
 
+    def _resolved_roots(self) -> list[McpRootConfig]:
+        if self.config.roots:
+            return list(self.config.roots)
+        return infer_stdio_filesystem_roots(self.config.transport, self.config.command)
+
+    def _supports_server_roots(self) -> bool:
+        return not self._is_stdio_filesystem_server()
+
+    def _is_stdio_filesystem_server(self) -> bool:
+        return self.config.transport == 'stdio' and any('server-filesystem' in item for item in self.config.command)
+
+    def _load_root_snapshot(self) -> dict[str, Any] | None:
+        if self._store is None:
+            return None
+        return self._store.load_mcp_root_snapshot(self.config.name)
+
+    def _ensure_root_snapshot(self, roots: list[dict[str, Any]]) -> None:
+        if self._store is None or self._store.load_mcp_root_snapshot(self.config.name) is not None:
+            return
+        self._store.save_mcp_root_snapshot(self.config.name, roots)
+
+    def _save_root_snapshot(self, roots: list[dict[str, Any]], *, last_notified_at: str | None = None) -> None:
+        if self._store is None:
+            return
+        self._store.save_mcp_root_snapshot(self.config.name, roots, last_notified_at=last_notified_at)
+
     def _sampling_approval_payload(
         self,
         params: mcp_types.CreateMessageRequestParams,
         risk_level: str,
         risk_reasons: list[str],
     ) -> dict[str, Any]:
-        preview_parts = [_sampling_message_to_text(item)[:200] for item in params.messages]
+        preview_parts = [sampling_message_to_text(item)[:200] for item in params.messages]
         tool_names = [str(item.name) for item in params.tools or []]
         return {
             'server': self.config.name,
@@ -234,11 +308,11 @@ class BaseMcpClient:
             'elicitation': params.model_dump(mode='json', exclude_none=True),
         }
         if params.mode == 'form':
-            payload['requested_schema'] = _normalize_requested_schema(params.requestedSchema)
+            payload['requested_schema'] = normalize_requested_schema(params.requestedSchema)
         else:
             payload['url'] = params.url
             payload['elicitation_id'] = params.elicitationId
-            payload['url_host'] = _url_host(params.url)
+            payload['url_host'] = url_host(params.url)
         return payload
 
     async def _sampling_callback(
@@ -247,7 +321,7 @@ class BaseMcpClient:
         params: mcp_types.CreateMessageRequestParams,
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
         del context
-        risk_level, risk_reasons = _classify_sampling_request(params)
+        risk_level, risk_reasons = classify_sampling_request(params)
         if self._human_loop is not None and self._human_loop.config.approve_mcp_sampling:
             approval_context = self._approval_context_for_risk(risk_level)
             await self._human_loop.require_approval(
@@ -264,13 +338,10 @@ class BaseMcpClient:
         if params.systemPrompt:
             messages.append(ChatMessage(role='system', content=params.systemPrompt))
         for item in params.messages:
-            text = _sampling_message_to_text(item)
+            text = sampling_message_to_text(item)
             if not text:
                 return mcp_types.ErrorData(code=mcp_types.INVALID_REQUEST, message='Only text-first sampling is supported')
-            if item.role == 'assistant':
-                messages.append(ChatMessage(role='assistant', content=text))
-            else:
-                messages.append(ChatMessage(role='user', content=text))
+            messages.append(ChatMessage(role='assistant' if item.role == 'assistant' else 'user', content=text))
         response = await self._model_client.complete(messages, [])
         return mcp_types.CreateMessageResult(
             role='assistant',
@@ -287,7 +358,7 @@ class BaseMcpClient:
         del context
         if self._human_loop is None:
             return mcp_types.ErrorData(code=mcp_types.INVALID_REQUEST, message='Elicitation requires a human loop')
-        risk_level, risk_reasons = _classify_elicitation_request(params)
+        risk_level, risk_reasons = classify_elicitation_request(params)
         approval_context = self._approval_context_for_risk(risk_level)
         response_payload = await self._human_loop.require_approval(
             approval_context,
@@ -299,10 +370,7 @@ class BaseMcpClient:
             title=f'Approve MCP elicitation request for {self.config.name}',
             payload=self._elicitation_approval_payload(params, risk_level, risk_reasons),
         )
-        result = _coerce_elicitation_result(params, response_payload)
-        if isinstance(result, mcp_types.ErrorData):
-            return result
-        return result
+        return coerce_elicitation_result(params, response_payload)
 
     async def _roots_callback(
         self,
@@ -310,40 +378,8 @@ class BaseMcpClient:
     ) -> mcp_types.ListRootsResult | mcp_types.ErrorData:
         del context
         return mcp_types.ListRootsResult(
-            roots=[
-                mcp_types.Root(uri=cast(Any, _root_to_uri(item.path)), name=item.name)
-                for item in self._resolved_roots()
-            ]
+            roots=[mcp_types.Root(uri=cast(Any, root_to_uri(item.path)), name=item.name) for item in self._resolved_roots()]
         )
-
-    def _resolved_roots(self) -> list[McpRootConfig]:
-        if self.config.roots:
-            return list(self.config.roots)
-        return self._infer_stdio_filesystem_roots()
-
-    def _infer_stdio_filesystem_roots(self) -> list[McpRootConfig]:
-        if self.config.transport != 'stdio' or not self.config.command:
-            return []
-        package_index = next((index for index, item in enumerate(self.config.command) if 'server-filesystem' in item), None)
-        if package_index is None:
-            return []
-        roots: list[McpRootConfig] = []
-        for raw in self.config.command[package_index + 1:]:
-            if raw.startswith('-'):
-                continue
-            name = Path(raw).name or None
-            roots.append(McpRootConfig(path=raw, name=name))
-        return roots
-
-    @staticmethod
-    def _root_payload(root: Any) -> dict[str, Any]:
-        return {'path': root.path, 'name': root.name, 'uri': _root_to_uri(root.path)}
-
-    def _supports_server_roots(self) -> bool:
-        return not self._is_stdio_filesystem_server()
-
-    def _is_stdio_filesystem_server(self) -> bool:
-        return self.config.transport == 'stdio' and any('server-filesystem' in item for item in self.config.command)
 
 
 class SessionBackedMcpClient(BaseMcpClient):
@@ -368,6 +404,7 @@ class SessionBackedMcpClient(BaseMcpClient):
             sampling_callback=self._sampling_callback,
             elicitation_callback=self._elicitation_callback,
             list_roots_callback=self._roots_callback if self._supports_server_roots() else None,
+            message_handler=self._message_handler,
         )
         self._session = await session.__aenter__()
         result = await self._session.initialize()
@@ -394,9 +431,43 @@ class SessionBackedMcpClient(BaseMcpClient):
             return result.structuredContent
         return [item.model_dump(by_alias=True, exclude_none=True) for item in result.content]
 
-    async def refresh_roots(self) -> None:
-        if self._session is not None and self._supports_server_roots():
-            await self._session.send_roots_list_changed()
+    async def refresh_roots(self) -> dict[str, Any]:
+        roots = normalize_root_entries([root_payload(item) for item in self._resolved_roots()])
+        previous = self._load_root_snapshot()
+        if previous is None:
+            self._save_root_snapshot(roots)
+            return {
+                'server': self.config.name,
+                'changed': False,
+                'notification_sent': False,
+                'reason': 'snapshot_initialized',
+                'roots': roots,
+                'diff': {'added': [], 'removed': [], 'changed': []},
+            }
+        diff = diff_root_entries(previous['roots'], roots)
+        changed = bool(diff['added'] or diff['removed'] or diff['changed'])
+        notification_sent = False
+        reason = 'unchanged'
+        last_notified_at: str | None = None
+        if changed:
+            if not self._supports_server_roots():
+                reason = 'server_roots_unsupported'
+            elif self._session is None:
+                reason = 'session_unavailable'
+            else:
+                await self._session.send_roots_list_changed()
+                notification_sent = True
+                reason = 'roots_list_changed_notified'
+                last_notified_at = _utcnow()
+        self._save_root_snapshot(roots, last_notified_at=last_notified_at)
+        return {
+            'server': self.config.name,
+            'changed': changed,
+            'notification_sent': notification_sent,
+            'reason': reason,
+            'roots': roots,
+            'diff': diff,
+        }
 
     async def authorize(self) -> None:
         await self.list_tools()
@@ -408,6 +479,50 @@ class SessionBackedMcpClient(BaseMcpClient):
         if self._transport_cm is not None:
             await self._transport_cm.__aexit__(None, None, None)
             self._transport_cm = None
+
+    async def _message_handler(self, message: Any) -> None:
+        if isinstance(message, Exception):
+            return
+        notification = message if isinstance(message, mcp_types.ServerNotification) else None
+        if notification is None:
+            return
+        match notification.root:
+            case mcp_types.ElicitCompleteNotification(params=params):
+                await self._handle_elicitation_complete(params)
+            case _:
+                return
+
+    async def _handle_elicitation_complete(self, params: mcp_types.ElicitCompleteNotificationParams) -> None:
+        if self._store is None:
+            return
+        request = self._store.find_mcp_elicitation_request(self.config.name, params.elicitationId)
+        if request is None or request.status is not HumanRequestStatus.APPROVED:
+            return
+        response_payload = dict(request.response_payload or {})
+        if str(response_payload.get('action') or '').lower() != 'accept':
+            return
+        completion = response_payload.get('completion')
+        if isinstance(completion, dict) and str(completion.get('status') or '').lower() == 'completed':
+            return
+        completion_payload = {
+            'status': 'completed',
+            'elicitation_id': params.elicitationId,
+            'completed_at': _utcnow(),
+        }
+        response_payload['completion'] = completion_payload
+        self._store.update_human_request_response(request.request_id, response_payload)
+        self._store.record_event(
+            request.run_id,
+            'mcp_elicitation_completed',
+            {
+                'server': self.config.name,
+                'request_id': request.request_id,
+                'elicitation_id': params.elicitationId,
+                'completion': completion_payload,
+            },
+            scope='mcp',
+            span_id=f'mcp:elicitation:{self.config.name}:{params.elicitationId}',
+        )
 
     async def _open_transport(self) -> tuple[Any, Any]:
         raise NotImplementedError
@@ -527,13 +642,7 @@ class StdioMcpClient(SessionBackedMcpClient):
                 return await create_windows_process(resolved_command, args, env, sys.stderr, cwd)
             except (OSError, PermissionError):
                 return await _create_windows_fallback_process(resolved_command, args, env, sys.stderr, cwd)
-        return await anyio.open_process(
-            [command, *args],
-            env=env,
-            stderr=sys.stderr,
-            cwd=cwd,
-            start_new_session=True,
-        )
+        return await anyio.open_process([command, *args], env=env, stderr=sys.stderr, cwd=cwd, start_new_session=True)
 
     async def _stdout_reader(self) -> None:
         assert self._process is not None
@@ -660,292 +769,3 @@ class LegacyHttpSseMcpClient(SessionBackedMcpClient):
         )
         read_stream, write_stream = await self._transport_cm.__aenter__()
         return read_stream, write_stream
-
-
-class McpClientManager:
-    def __init__(
-        self,
-        configs: list[McpServerConfig],
-        sandbox_manager: SandboxManager,
-        workbench_manager: WorkbenchManager | None = None,
-        store: SQLiteRunStore | None = None,
-        model_client: Any | None = None,
-        human_loop: HumanLoopManager | None = None,
-    ) -> None:
-        self._sandbox_manager = sandbox_manager
-        self._workbench_manager = workbench_manager
-        self._store = store
-        self._model_client = model_client or _DefaultSamplingModelClient()
-        self._human_loop = human_loop
-        self._clients: dict[str, BaseMcpClient] = {}
-        self._started = False
-        self._tool_cache: dict[str, list[ToolSpec]] = {}
-        self._redirect_handler: RedirectHandler | None = None
-        self._callback_handler: CallbackHandler | None = None
-        for config in configs:
-            self.add_server(config)
-
-    def set_oauth_handlers(
-        self,
-        redirect_handler: RedirectHandler | None,
-        callback_handler: CallbackHandler | None,
-    ) -> None:
-        self._redirect_handler = redirect_handler
-        self._callback_handler = callback_handler
-        for client in self._clients.values():
-            client._redirect_handler = redirect_handler
-            client._callback_handler = callback_handler
-
-    def add_server(self, config: McpServerConfig) -> None:
-        if self._started:
-            raise RuntimeError('MCP servers cannot be added after manager.start()')
-        self._clients[config.name] = self._build_client(config)
-
-    def _build_client(self, config: McpServerConfig) -> BaseMcpClient:
-        if config.transport == 'stdio':
-            return StdioMcpClient(
-                config,
-                self._sandbox_manager,
-                self._workbench_manager,
-                self._store,
-                self._model_client,
-                self._human_loop,
-                self._redirect_handler,
-                self._callback_handler,
-            )
-        if config.transport == 'http_sse':
-            return LegacyHttpSseRpcClient(
-                config,
-                self._store,
-                self._model_client,
-                self._human_loop,
-                self._redirect_handler,
-                self._callback_handler,
-            )
-        if config.transport == 'streamable_http':
-            return StreamableHttpMcpClient(
-                config,
-                self._store,
-                self._model_client,
-                self._human_loop,
-                self._redirect_handler,
-                self._callback_handler,
-            )
-        raise ValueError(f'Unsupported MCP transport: {config.transport}')
-
-    async def start(self) -> None:
-        for client in self._clients.values():
-            await client.start()
-        self._started = True
-        await self.refresh_tools()
-
-    async def refresh_tools(self) -> dict[str, list[ToolSpec]]:
-        result: dict[str, list[ToolSpec]] = {}
-        for name, client in self._clients.items():
-            result[name] = await client.list_tools()
-        self._tool_cache = result
-        return result
-
-    async def list_servers(self) -> dict[str, list[ToolSpec]]:
-        if not self._tool_cache:
-            return await self.refresh_tools()
-        return self._tool_cache
-
-    def capability_summary(self) -> dict[str, dict[str, Any]]:
-        return {name: client.capabilities for name, client in self._clients.items()}
-
-    async def list_roots(self, server_name: str) -> list[dict[str, Any]]:
-        return await self._clients[server_name].list_roots()
-
-    async def refresh_roots(self, server_name: str) -> None:
-        await self._clients[server_name].refresh_roots()
-
-    async def authorize(self, server_name: str) -> None:
-        await self._clients[server_name].authorize()
-
-    def auth_status(self, server_name: str) -> dict[str, Any]:
-        return self._clients[server_name].auth_status()
-
-    async def logout(self, server_name: str) -> None:
-        await self._clients[server_name].logout()
-
-    async def call_tool(
-        self,
-        server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
-        context: RunContext | None = None,
-    ) -> Any:
-        if context is not None and self._store is not None:
-            self._store.record_event(
-                context.run_id,
-                'mcp_call_started',
-                {'server': server_name, 'tool': tool_name, 'arguments': arguments},
-                scope='mcp',
-                node_id=context.node_id,
-                span_id=f'mcp:{server_name}:{tool_name}',
-            )
-        client = self._clients[server_name]
-        token = client.bind_run_context(context)
-        try:
-            result = await client.call_tool(tool_name, arguments)
-        except Exception as exc:
-            if context is not None and self._store is not None:
-                self._store.record_event(
-                    context.run_id,
-                    'mcp_call_failed',
-                    {'server': server_name, 'tool': tool_name, 'arguments': arguments, 'error': str(exc)},
-                    scope='mcp',
-                    node_id=context.node_id,
-                    span_id=f'mcp:{server_name}:{tool_name}',
-                )
-            raise
-        finally:
-            client.reset_run_context(token)
-        if context is not None and self._store is not None:
-            self._store.record_event(
-                context.run_id,
-                'mcp_call_succeeded',
-                {'server': server_name, 'tool': tool_name, 'arguments': arguments, 'result': result},
-                scope='mcp',
-                node_id=context.node_id,
-                span_id=f'mcp:{server_name}:{tool_name}',
-            )
-        return result
-
-    async def aclose(self) -> None:
-        for client in self._clients.values():
-            await client.aclose()
-        self._started = False
-        self._tool_cache = {}
-
-def _normalize_requested_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    normalized = normalize_json_schema(schema)
-    if normalized.get('type') != 'object':
-        normalized = {'type': 'object', 'properties': {}, 'required': []}
-    properties = cast(dict[str, Any], normalized.get('properties', {}))
-    normalized['properties'] = {key: value for key, value in properties.items() if isinstance(value, dict)}
-    required = normalized.get('required', [])
-    normalized['required'] = [str(item) for item in required if str(item) in normalized['properties']]
-    return normalized
-
-
-def _sampling_content_types(message: mcp_types.SamplingMessage) -> list[str]:
-    content = message.content
-    if isinstance(content, list):
-        return [str(getattr(item, 'type', 'unknown')) for item in content]
-    return [str(getattr(content, 'type', 'unknown'))]
-
-
-def _classify_sampling_request(params: mcp_types.CreateMessageRequestParams) -> tuple[str, list[str]]:
-    reasons: list[str] = []
-    if params.tools:
-        reasons.append('sampling request exposes tools')
-    if params.includeContext == 'allServers':
-        reasons.append('sampling request asks for allServers context')
-    for item in params.messages:
-        for content_type in _sampling_content_types(item):
-            if content_type in {'tool_use', 'tool_result', 'resource', 'resource_link'}:
-                reasons.append(f'sampling content includes {content_type}')
-            elif content_type != 'text':
-                reasons.append(f'sampling content includes non-text block: {content_type}')
-    unique_reasons = list(dict.fromkeys(reasons))
-    return ('high', unique_reasons) if unique_reasons else ('low', [])
-
-
-def _sensitive_elicitation_text(text: str) -> bool:
-    return re.search(r'(token|secret|password|credential|api[_-]?key|oauth|payment|card|bank|otp|code)', text, re.IGNORECASE) is not None
-
-
-def _classify_elicitation_request(params: mcp_types.ElicitRequestParams) -> tuple[str, list[str]]:
-    reasons: list[str] = []
-    if params.mode == 'url':
-        reasons.append('url-mode elicitation requires out-of-band navigation')
-        return 'high', reasons
-    normalized_schema = _normalize_requested_schema(params.requestedSchema)
-    for field_name, field_schema in cast(dict[str, dict[str, Any]], normalized_schema.get('properties', {})).items():
-        description = str(field_schema.get('description', ''))
-        if _sensitive_elicitation_text(field_name) or _sensitive_elicitation_text(description):
-            reasons.append(f'form field looks sensitive: {field_name}')
-    unique_reasons = list(dict.fromkeys(reasons))
-    return ('high', unique_reasons) if unique_reasons else ('low', [])
-
-
-def _coerce_form_elicitation_content(
-    requested_schema: dict[str, Any],
-    raw_content: Any,
-) -> tuple[dict[str, Any] | None, list[str]]:
-    if raw_content is None:
-        raw_payload: dict[str, Any] = {}
-    elif isinstance(raw_content, dict):
-        raw_payload = dict(raw_content)
-    else:
-        return None, ['form elicitation content must be a JSON object']
-    normalized_schema = _normalize_requested_schema(requested_schema)
-    properties = cast(dict[str, Any], normalized_schema.get('properties', {}))
-    filtered_payload = {key: value for key, value in raw_payload.items() if key in properties}
-    validation = normalize_and_validate_tool_arguments(normalized_schema, filtered_payload)
-    if validation.errors:
-        return None, validation.errors
-    return validation.normalized, []
-
-
-def _coerce_elicitation_result(
-    params: mcp_types.ElicitRequestParams,
-    response_payload: dict[str, Any],
-) -> mcp_types.ElicitResult | mcp_types.ErrorData:
-    action = str(response_payload.get('action') or 'accept').lower()
-    if action not in {'accept', 'decline', 'cancel'}:
-        action = 'accept'
-    if action != 'accept':
-        return mcp_types.ElicitResult(action=cast(Any, action), content=None)
-    if params.mode == 'url':
-        return mcp_types.ElicitResult(action='accept', content=None)
-    content, errors = _coerce_form_elicitation_content(params.requestedSchema, response_payload.get('content'))
-    if errors:
-        return mcp_types.ErrorData(code=mcp_types.INVALID_REQUEST, message='; '.join(errors))
-    return mcp_types.ElicitResult(action='accept', content=cast(dict[str, Any], content))
-
-
-def _url_host(url: str) -> str:
-    match = re.match(r'^[a-z]+://([^/]+)', url, re.IGNORECASE)
-    return match.group(1) if match else url
-
-def _sampling_message_to_text(message: mcp_types.SamplingMessage) -> str:
-    content = message.content
-    if isinstance(content, list):
-        parts = [_content_block_to_text(item) for item in content]
-        if any(part is None for part in parts):
-            return ''
-        return '\n'.join(part for part in parts if part)
-    single = _content_block_to_text(content)
-    return single or ''
-
-
-
-def _content_block_to_text(content: Any) -> str | None:
-    if isinstance(content, mcp_types.TextContent):
-        return content.text
-    text = getattr(content, 'text', None)
-    content_type = getattr(content, 'type', None)
-    if isinstance(text, str) and content_type == 'text':
-        return text
-    return None
-
-
-
-def _root_to_uri(path: str) -> str:
-    return Path(path).resolve().as_uri()
-
-
-
-
-
-
-
-
-
-
-
-
-

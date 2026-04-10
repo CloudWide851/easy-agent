@@ -55,8 +55,10 @@ def build_cli_inline_resolver(console: Console) -> Callable[[HumanRequest], Awai
                 action = console.input('Action [accept/decline/cancel]: ').strip().lower() or 'accept'
                 if action not in {'accept', 'decline', 'cancel'}:
                     action = 'accept'
-                if action != 'accept':
-                    return HumanRequestStatus.REJECTED, {'action': action}
+                if action == 'decline':
+                    return HumanRequestStatus.REJECTED, {'action': 'decline'}
+                if action == 'cancel':
+                    return HumanRequestStatus.CANCELLED, {'action': 'cancel'}
                 if mode == 'url':
                     if request.payload.get('url'):
                         console.print(f"Open URL if needed: {request.payload['url']}")

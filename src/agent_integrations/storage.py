@@ -135,6 +135,13 @@ class SQLiteRunStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS mcp_root_snapshots (
+                    server_name TEXT PRIMARY KEY,
+                    roots_payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_notified_at TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS federation_auth_state (
                     remote_name TEXT PRIMARY KEY,
                     tokens_payload TEXT,
@@ -658,6 +665,31 @@ class SQLiteRunStore:
             connection.commit()
         return self.load_human_request(request_id)
 
+    def update_human_request_response(self, request_id: str, response_payload: dict[str, Any]) -> HumanRequest:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'UPDATE human_requests SET response_payload = ? WHERE request_id = ?',
+                (self._encode(response_payload), request_id),
+            )
+            connection.commit()
+        return self.load_human_request(request_id)
+
+    def find_mcp_elicitation_request(self, server_name: str, elicitation_id: str) -> HumanRequest | None:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT request_id FROM human_requests WHERE kind = 'mcp_elicitation' ORDER BY created_at DESC"
+            ).fetchall()
+        for row in rows:
+            request = self.load_human_request(str(row[0]))
+            payload = request.payload
+            if (
+                str(payload.get('server') or '') == server_name
+                and str(payload.get('mode') or '') == 'url'
+                and str(payload.get('elicitation_id') or '') == elicitation_id
+            ):
+                return request
+        return None
+
     def request_interrupt(self, run_id: str, payload: dict[str, Any] | None = None) -> None:
         requested_at = self._now()
         with closing(self._connect()) as connection:
@@ -728,6 +760,45 @@ class SQLiteRunStore:
         with closing(self._connect()) as connection:
             connection.execute('DELETE FROM oauth_state WHERE server_name = ?', (server_name,))
             connection.commit()
+
+    def save_mcp_root_snapshot(
+        self,
+        server_name: str,
+        roots: list[dict[str, Any]],
+        *,
+        last_notified_at: str | None = None,
+    ) -> dict[str, Any]:
+        updated_at = self._now()
+        current = self.load_mcp_root_snapshot(server_name)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'INSERT INTO mcp_root_snapshots(server_name, roots_payload, updated_at, last_notified_at) VALUES (?, ?, ?, ?) '
+                'ON CONFLICT(server_name) DO UPDATE SET roots_payload = excluded.roots_payload, updated_at = excluded.updated_at, '
+                'last_notified_at = excluded.last_notified_at',
+                (
+                    server_name,
+                    self._encode(roots),
+                    updated_at,
+                    last_notified_at if last_notified_at is not None else cast(str | None, current.get('last_notified_at') if current else None),
+                ),
+            )
+            connection.commit()
+        return cast(dict[str, Any], self.load_mcp_root_snapshot(server_name))
+
+    def load_mcp_root_snapshot(self, server_name: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                'SELECT roots_payload, updated_at, last_notified_at FROM mcp_root_snapshots WHERE server_name = ?',
+                (server_name,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            'server_name': server_name,
+            'roots': cast(list[dict[str, Any]], self._decode(row[0]) or []),
+            'updated_at': row[1],
+            'last_notified_at': row[2],
+        }
 
     def save_federation_auth_state(
         self,

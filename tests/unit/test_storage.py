@@ -92,6 +92,48 @@ def test_sqlite_run_store_tracks_human_requests_interrupts_and_oauth_state(tmp_p
     assert trace['human_requests'][0]['status'] == HumanRequestStatus.APPROVED
 
 
+def test_sqlite_run_store_updates_mcp_requests_and_root_snapshots(tmp_path: Path) -> None:
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    store.create_run('run-mcp', 'baseline', {'input': 'hello'})
+    request = store.create_human_request(
+        'run-mcp',
+        'mcp_elicitation:remote:stable-key',
+        'mcp_elicitation',
+        'Approve remote login',
+        {
+            'server': 'remote',
+            'mode': 'url',
+            'elicitation_id': 'eli-1',
+            'url': 'https://example.com/oauth/start',
+        },
+    )
+    store.resolve_human_request(
+        request.request_id,
+        status=HumanRequestStatus.APPROVED,
+        response_payload={'action': 'accept', 'completion': {'status': 'pending', 'elicitation_id': 'eli-1'}},
+    )
+    store.update_human_request_response(
+        request.request_id,
+        {'action': 'accept', 'completion': {'status': 'completed', 'elicitation_id': 'eli-1'}},
+    )
+    store.save_mcp_root_snapshot(
+        'filesystem',
+        [{'path': 'C:/work', 'name': 'work', 'uri': 'file:///C:/work'}],
+        last_notified_at='2026-04-10T00:00:00+00:00',
+    )
+
+    updated = store.load_human_request(request.request_id)
+    located = store.find_mcp_elicitation_request('remote', 'eli-1')
+    snapshot = store.load_mcp_root_snapshot('filesystem')
+
+    assert updated.response_payload == {'action': 'accept', 'completion': {'status': 'completed', 'elicitation_id': 'eli-1'}}
+    assert located is not None
+    assert located.request_id == request.request_id
+    assert snapshot is not None
+    assert snapshot['roots'][0]['uri'] == 'file:///C:/work'
+    assert snapshot['last_notified_at'] == '2026-04-10T00:00:00+00:00'
+
+
 def test_sqlite_run_store_tracks_workbench_and_federated_tasks(tmp_path: Path) -> None:
     store = SQLiteRunStore(tmp_path, 'state.db')
     store.create_workbench_session(
