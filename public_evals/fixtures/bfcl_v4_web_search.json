@@ -7,7 +7,7 @@
       "messages": [
         {
           "role": "user",
-          "content": "Search the web for the official OpenAI Structured Outputs guide and then summarize what it covers."
+          "content": "Search the web for the official OpenAI Structured Outputs guide. What is the exact page title?"
         }
       ],
       "functions": [
@@ -44,6 +44,10 @@
           "snippet": "Learn how to constrain model responses to match a JSON Schema."
         }
       ],
+      "expected_answer": "Structured Outputs",
+      "expected_answer_aliases": [
+        "structured outputs"
+      ],
       "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
     },
     {
@@ -52,7 +56,7 @@
       "messages": [
         {
           "role": "user",
-          "content": "Look up the official LangGraph durable execution docs and tell me what they are about."
+          "content": "Look up the official LangGraph durable execution docs. What is the exact page title?"
         }
       ],
       "functions": [
@@ -89,6 +93,10 @@
           "snippet": "Durable execution preserves workflow progress across interruptions and resumes."
         }
       ],
+      "expected_answer": "Durable execution",
+      "expected_answer_aliases": [
+        "durable execution"
+      ],
       "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
     },
     {
@@ -97,7 +105,7 @@
       "messages": [
         {
           "role": "user",
-          "content": "Find the official AutoGen Teams docs, then explain whether Teams are supported."
+          "content": "Find the official AutoGen Teams docs. What is the exact page title?"
         }
       ],
       "functions": [
@@ -133,6 +141,11 @@
           "link": "https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html",
           "snippet": "AutoGen supports multiple team patterns for coordinated agent collaboration."
         }
+      ],
+      "expected_answer": "Teams - AutoGen",
+      "expected_answer_aliases": [
+        "teams autogen",
+        "teams auto gen"
       ],
       "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
     }

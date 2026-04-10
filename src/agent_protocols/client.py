@@ -44,6 +44,17 @@ def _openai_safe_schema(schema: dict[str, Any], *, strict: bool = False) -> dict
     return normalize_json_schema(schema, strict=strict)
 
 
+def _selected_tools(config: ModelConfig, tools: list[ToolSpec]) -> list[ToolSpec]:
+    function_calling = config.function_calling
+    selected = list(tools)
+    if function_calling.allowed_tool_names:
+        allowed = set(function_calling.allowed_tool_names)
+        selected = [tool for tool in selected if tool.name in allowed]
+    if function_calling.mode == 'force' and function_calling.forced_tool_name:
+        selected = [tool for tool in selected if tool.name == function_calling.forced_tool_name]
+    return selected
+
+
 class OpenAIAdapter:
     protocol = Protocol.OPENAI
 
@@ -67,6 +78,7 @@ class OpenAIAdapter:
         messages: list[ChatMessage],
         tools: list[ToolSpec],
     ) -> dict[str, Any]:
+        selected_tools = _selected_tools(config, tools)
         payload_messages: list[dict[str, Any]] = []
         for message in messages:
             item: dict[str, Any] = {'role': message.role, 'content': message.content}
@@ -94,7 +106,7 @@ class OpenAIAdapter:
             'temperature': config.temperature,
             'max_tokens': config.max_tokens,
         }
-        if tools:
+        if selected_tools:
             function_calling = config.function_calling
             payload['tools'] = [
                 {
@@ -106,10 +118,20 @@ class OpenAIAdapter:
                         **({'strict': True} if function_calling.strict else {}),
                     },
                 }
-                for tool in tools
+                for tool in selected_tools
             ]
-            payload['tool_choice'] = 'auto'
             payload['parallel_tool_calls'] = function_calling.parallel_tool_calls
+            if function_calling.mode == 'none':
+                payload['tool_choice'] = 'none'
+            elif function_calling.mode == 'required':
+                payload['tool_choice'] = 'required'
+            elif function_calling.mode == 'force' and function_calling.forced_tool_name:
+                payload['tool_choice'] = {
+                    'type': 'function',
+                    'function': {'name': function_calling.forced_tool_name},
+                }
+            else:
+                payload['tool_choice'] = 'auto'
         return payload
 
     def parse_response(self, payload: dict[str, Any]) -> AssistantResponse:
@@ -155,6 +177,7 @@ class AnthropicAdapter:
         messages: list[ChatMessage],
         tools: list[ToolSpec],
     ) -> dict[str, Any]:
+        selected_tools = _selected_tools(config, tools)
         system_parts = [message.content for message in messages if message.role == 'system']
         payload_messages: list[dict[str, Any]] = []
         for message in messages:
@@ -199,8 +222,18 @@ class AnthropicAdapter:
         }
         if system_parts:
             payload['system'] = '\n'.join(system_parts)
-        if tools:
-            payload['tools'] = [_anthropic_tool(tool) for tool in tools]
+        if selected_tools:
+            payload['tools'] = [_anthropic_tool(tool) for tool in selected_tools]
+            if config.function_calling.mode == 'none':
+                payload['tool_choice'] = {'type': 'none'}
+            elif config.function_calling.mode == 'required':
+                payload['tool_choice'] = {'type': 'any'}
+            elif config.function_calling.mode == 'force' and config.function_calling.forced_tool_name:
+                payload['tool_choice'] = {'type': 'tool', 'name': config.function_calling.forced_tool_name}
+            else:
+                payload['tool_choice'] = {'type': 'auto'}
+            if not config.function_calling.parallel_tool_calls:
+                payload['disable_parallel_tool_use'] = True
         return payload
 
     def parse_response(self, payload: dict[str, Any]) -> AssistantResponse:
@@ -244,6 +277,7 @@ class GeminiAdapter:
         messages: list[ChatMessage],
         tools: list[ToolSpec],
     ) -> dict[str, Any]:
+        selected_tools = _selected_tools(config, tools)
         system_parts = [message.content for message in messages if message.role == 'system']
         contents: list[dict[str, Any]] = []
         for message in messages:
@@ -280,7 +314,7 @@ class GeminiAdapter:
         }
         if system_parts:
             payload['systemInstruction'] = {'parts': [{'text': '\n'.join(system_parts)}]}
-        if tools:
+        if selected_tools:
             payload['tools'] = [
                 {
                     'functionDeclarations': [
@@ -289,10 +323,23 @@ class GeminiAdapter:
                             'description': tool.description,
                             'parameters': _openai_safe_schema(tool.input_schema),
                         }
-                        for tool in tools
+                        for tool in selected_tools
                     ]
                 }
             ]
+            mode = 'AUTO'
+            allowed_function_names: list[str] = []
+            if config.function_calling.mode == 'none':
+                mode = 'NONE'
+            elif config.function_calling.mode == 'required':
+                mode = 'ANY'
+                allowed_function_names = [tool.name for tool in selected_tools]
+            elif config.function_calling.mode == 'force' and config.function_calling.forced_tool_name:
+                mode = 'ANY'
+                allowed_function_names = [config.function_calling.forced_tool_name]
+            payload['toolConfig'] = {'functionCallingConfig': {'mode': mode}}
+            if allowed_function_names:
+                payload['toolConfig']['functionCallingConfig']['allowedFunctionNames'] = allowed_function_names
         return payload
 
     def parse_response(self, payload: dict[str, Any]) -> AssistantResponse:

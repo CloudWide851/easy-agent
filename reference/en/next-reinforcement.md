@@ -20,6 +20,32 @@ Use the official OpenAI constraints as the baseline:
 - `additionalProperties: false`
 - nullable and optional parameter modeling
 - parallel tool-call controls
+- single-tool-call enforcement for BFCL-style single-call cases
+- `tool_choice` / forced-tool / no-tool / required-tool mode parity
+
+Then keep the provider-specific adaptation layers explicit:
+
+- OpenAI-compatible:
+  - keep strict structured outputs as the default path
+  - preserve nullable-as-required modeling for official JSON Schema constraints
+  - keep `parallel_tool_calls` and forced function selection observable in telemetry
+- Anthropic:
+  - map provider-neutral tool-choice controls onto `tool_choice`
+  - use `disable_parallel_tool_use` for serialized tool-call cases
+  - preserve the provider's looser `input_schema` pass-through when strict JSON Schema flags are unavailable
+- Gemini:
+  - map provider-neutral tool-choice controls onto `functionCallingConfig.mode`
+  - use `allowedFunctionNames` for forced-tool or required-tool cases
+  - keep the schema surface normalized to the supported OpenAPI-style subset before request emission
+
+Public regression coverage should continue to assert:
+
+- strict schema transport
+- `additionalProperties: false`
+- nullable preservation
+- optional-to-required-nullable promotion
+- single-call and parallel-call controls
+- `auto` / `none` / `required` / forced tool-choice behavior
 
 Reference:
 

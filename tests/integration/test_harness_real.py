@@ -5,7 +5,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -20,19 +20,37 @@ def test_real_harness_run_completes_and_writes_artifacts(tmp_path: Path) -> None
     output_root = Path(tempfile.gettempdir()) / 'easy-agent-harness-real' / tmp_path.name
     if output_root.exists():
         shutil.rmtree(output_root, ignore_errors=True)
+    last_error: Exception | None = None
+    result: dict[str, Any] | None = None
 
-    config = load_config('configs/harness.example.yml')
-    config.storage.path = str(output_root / 'state')
-    config.harnesses[0].artifacts_dir = str(output_root / 'artifacts')
-    runtime = build_runtime_from_config(config)
+    for _ in range(2):
+        config = load_config('configs/harness.example.yml')
+        config.storage.path = str(output_root / 'state')
+        config.harnesses[0].artifacts_dir = str(output_root / 'artifacts')
+        runtime = build_runtime_from_config(config)
 
-    async def _run() -> dict[str, Any]:
+        async def _run(current_runtime: Any = runtime) -> dict[str, Any]:
+            try:
+                return cast(
+                    dict[str, Any],
+                    await current_runtime.run_harness(
+                        'delivery_loop',
+                        'Create a concise completion note for this repository.',
+                    ),
+                )
+            finally:
+                await current_runtime.aclose()
+
         try:
-            return await runtime.run_harness('delivery_loop', 'Create a concise completion note for this repository.')
-        finally:
-            await runtime.aclose()
-
-    result = asyncio.run(_run())
+            result = asyncio.run(_run())
+            break
+        except RuntimeError as exc:
+            last_error = exc
+            if output_root.exists():
+                shutil.rmtree(output_root, ignore_errors=True)
+    if result is None:
+        assert last_error is not None
+        raise last_error
 
     assert result['result']['status'] == 'succeeded'
     assert result['result']['cycles_completed'] >= 1

@@ -130,7 +130,7 @@ The worker loop persists artifacts and checkpoints so long-running tasks can con
 ## Protocol and Tool Model
 
 - Model protocols: OpenAI-compatible, Anthropic-style, and Gemini-style payload normalization.
-- Tool calling: strict schema normalization, validation-repair loops, and provider-schema compatibility telemetry.
+- Tool calling: strict schema normalization, validation-repair loops, provider-neutral tool-choice controls, and provider-schema compatibility telemetry.
 - Web-search eval hardening: SerpApi `/search.json`, replay-backed contents, quota ledger, result grounding, and single-call regression guards.
 
 Provider behavior details and structured-output notes live in [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md).
@@ -168,7 +168,7 @@ Detailed setup, local credentials, CLI commands, and examples:
 
 ## What a Harness Run Produces
 
-A harness run persists durable artifacts under `.easy-agent/` and session storage, including:
+A harness run persists durable artifacts under the configured artifact directory and durable session storage, including:
 
 - bootstrap and progress markdown
 - feature snapshots
@@ -179,25 +179,14 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-This unreleased round keeps the previous benchmark and public-eval artifacts, while the detailed Python verification and real-network validation are tracked separately. The full command log, exact artifact notes, and similar-project comparison live in [reference/en/test-results.md](./reference/en/test-results.md).
+This unreleased round keeps the retained benchmark snapshot while refreshing public-eval, Python verification, and the real-network snapshot independently. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
 | Test Set | Score |
 | --- | ---: |
-| benchmark.single_agent | 100.0 |
-| benchmark.sub_agent | 100.0 |
-| benchmark.multi_agent_graph | 100.0 |
-| benchmark.team_round_robin | 100.0 |
-| benchmark.team_selector | 100.0 |
-| benchmark.team_swarm | 100.0 |
-| public_eval.bfcl_simple | 100.0 |
-| public_eval.bfcl_multiple | 87.5 |
-| public_eval.bfcl_parallel_multiple | 100.0 |
-| public_eval.bfcl_irrelevance | 100.0 |
-| public_eval.bfcl_web_search | 0.0 |
-| public_eval.bfcl_memory | 0.0 |
-| public_eval.bfcl_format_sensitivity | 100.0 |
+| benchmark.overall | 100.0 |
+| public_eval.bfcl_overall | 69.64 |
 | public_eval.tau2_mock | 100.0 |
 
 ## Real Network Test Set Results
@@ -206,23 +195,14 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 
 | Test Set | Score |
 | --- | ---: |
-| real_network.cross_process_federation | 100.0 |
-| real_network.live_model_federation_roundtrip | 100.0 |
-| real_network.disconnect_retry_chaos | 100.0 |
-| real_network.duplicate_delivery_replay_resilience | 100.0 |
-| real_network.workbench_reuse_process | 100.0 |
-| real_network.workbench_reuse_container | 100.0 |
-| real_network.workbench_incremental_snapshot_reuse_container | 100.0 |
-| real_network.workbench_reuse_microvm | 100.0 |
-| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 |
-| real_network.replay_resume_failure_injection | 100.0 |
+| real_network.overall | 100.0 |
 
 ## Next Reinforcement
 
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
 - further compressing BFCL web-search misses around query shaping, grounding, and replay-backed contents
-- tightening provider compatibility around OpenAI function calling and structured outputs
+- tightening provider compatibility around OpenAI, Anthropic, and Gemini tool-calling constraints
 - expanding durable MCP and federation coordination without widening the public runtime surface unnecessarily
 
 ## Design References

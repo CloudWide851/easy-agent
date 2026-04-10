@@ -20,6 +20,32 @@
 - `additionalProperties: false`
 - nullable 与 optional 参数建模
 - parallel tool-call controls
+- BFCL 单调用场景的一次调用约束
+- `tool_choice` / forced-tool / no-tool / required-tool 的模式对齐
+
+同时把 provider-specific 适配层继续显式化：
+
+- OpenAI-compatible：
+  - 保持 strict structured outputs 作为默认路径
+  - 按官方 JSON Schema 约束继续保留 nullable-as-required 建模
+  - 让 `parallel_tool_calls` 与 forced function selection 保持可观测
+- Anthropic：
+  - 把 provider-neutral tool-choice controls 映射到 `tool_choice`
+  - 在串行工具调用场景使用 `disable_parallel_tool_use`
+  - 在缺少 strict JSON Schema 标志时保留更宽松的 `input_schema` passthrough
+- Gemini：
+  - 把 provider-neutral tool-choice controls 映射到 `functionCallingConfig.mode`
+  - 对 forced-tool / required-tool 场景使用 `allowedFunctionNames`
+  - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集
+
+公开回归覆盖需要继续断言：
+
+- strict schema transport
+- `additionalProperties: false`
+- nullable preservation
+- optional-to-required-nullable promotion
+- 单调用与并行调用控制
+- `auto` / `none` / `required` / forced tool-choice 行为
 
 参考：
 

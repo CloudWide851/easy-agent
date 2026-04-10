@@ -73,6 +73,15 @@ def _expand_env(value: Any) -> Any:
 class FunctionCallingConfig(BaseModel):
     strict: bool = True
     parallel_tool_calls: bool = True
+    mode: Literal['auto', 'none', 'required', 'force'] = 'auto'
+    forced_tool_name: str | None = None
+    allowed_tool_names: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def validate_mode(self) -> FunctionCallingConfig:
+        if self.mode == 'force' and not self.forced_tool_name:
+            raise ValueError('function_calling.force mode requires forced_tool_name')
+        return self
 
 
 class ModelConfig(BaseModel):

@@ -39,7 +39,7 @@ host-gated real-network 覆盖可能还需要：
 
 ## Harness 工件
 
-Harness 运行会在 `.easy-agent/` 下持久化：
+Harness 运行会把工件持久化到配置的 artifact 目录与 durable session storage：
 
 - `bootstrap.md`
 - `progress.md`

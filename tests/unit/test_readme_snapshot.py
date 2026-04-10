@@ -7,12 +7,14 @@ def test_comparison_rows_include_docs_mapped_projects() -> None:
     rows = comparison_rows()
     projects = {row['project'] for row in rows}
 
-    assert {'easy-agent', 'OpenAI Agents SDK', 'AutoGen', 'LangGraph'}.issubset(projects)
+    assert {'easy-agent', 'OpenHands', 'Skyvern', 'AutoGPT Platform'}.issubset(projects)
 
 
 def test_readmes_reference_logo_and_split_reference_docs() -> None:
     english = Path('README.md').read_text(encoding='utf-8')
     chinese = Path('README.zh-CN.md').read_text(encoding='utf-8')
+    english_reference = Path('reference/en/test-results.md').read_text(encoding='utf-8')
+    chinese_reference = Path('reference/zh/test-results.md').read_text(encoding='utf-8')
 
     assert './logo.svg' in english
     assert './logo.svg' in chinese
@@ -24,6 +26,18 @@ def test_readmes_reference_logo_and_split_reference_docs() -> None:
     assert './reference/zh/next-reinforcement.md' in chinese
     assert 'Warm-Start Telemetry Snapshot' not in english
     assert 'Warm-Start Telemetry 快照' not in chinese
+    assert '.easy-agent/' not in english
+    assert '.easy-agent/' not in chinese
+    assert 'MEMORY.md' not in english
+    assert 'MEMORY.md' not in chinese
+    assert 'AGENTS.md' not in english
+    assert 'AGENTS.md' not in chinese
+    assert '.easy-agent/' not in english_reference
+    assert '.easy-agent/' not in chinese_reference
+    assert 'MEMORY.md' not in english_reference
+    assert 'MEMORY.md' not in chinese_reference
+    assert 'AGENTS.md' not in english_reference
+    assert 'AGENTS.md' not in chinese_reference
 
 
 def test_readmes_keep_required_section_order() -> None:

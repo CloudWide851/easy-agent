@@ -12,6 +12,7 @@ from agent_runtime.public_eval import (
     _aggregate_agentic_summary,
     _aggregate_failure_buckets,
     _aggregate_stage_summary,
+    _aggregate_summary,
     _build_eval_tool_handler,
     _build_tool_name_map,
     _classify_failure_bucket,
@@ -233,10 +234,16 @@ def test_provider_schema_matrix_reflects_adapter_behavior() -> None:
     assert matrix['openai_compatible']['features']['nullable_preserved']['supported'] is True
     assert matrix['openai_compatible']['features']['optional_promoted_to_required_nullable']['supported'] is True
     assert matrix['openai_compatible']['features']['parallel_tool_calls_control']['supported'] is True
+    assert matrix['openai_compatible']['features']['single_tool_call_control']['supported'] is True
+    assert matrix['openai_compatible']['features']['tool_choice_required']['supported'] is True
+    assert matrix['openai_compatible']['features']['forced_tool_choice']['supported'] is True
     assert matrix['gemini']['features']['format_removed']['supported'] is True
+    assert matrix['gemini']['features']['tool_choice_none']['supported'] is True
+    assert matrix['gemini']['features']['forced_tool_choice']['supported'] is True
     assert matrix['anthropic']['features']['root_object_alias']['supported'] is False
     assert matrix['anthropic']['features']['invalid_required_pruned']['supported'] is False
     assert matrix['anthropic']['features']['strict_flag']['supported'] is False
+    assert matrix['anthropic']['features']['single_tool_call_control']['supported'] is True
 
 
 def test_load_public_eval_inputs_expands_full_v4_profile() -> None:
@@ -372,23 +379,53 @@ def test_failure_bucket_classification_handles_agentic_v4_cases() -> None:
         result_summary='',
         error='format mismatch',
     )
+    answer_miss = PublicEvalRecord(
+        suite='bfcl_web_search',
+        case_id='web_search_1',
+        success=False,
+        duration_seconds=1.0,
+        tool_name_match=1.0,
+        argument_match=1.0,
+        expected_call_count=1,
+        actual_call_count=1,
+        result_summary='wrong answer',
+        answer_match=0.0,
+        error='{"actual_calls": [{"name":"web.search","arguments":{"query":"OpenAI Structured Outputs guide"}}]}',
+    )
 
     assert _classify_failure_bucket(search) == 'search_tool_miss'
     assert _classify_failure_bucket(memory) == 'memory_backend_miss'
     assert _classify_failure_bucket(format_case) == 'format_variant_miss'
+    assert _classify_failure_bucket(answer_miss) == 'answer_grounding_miss'
 
 
 def test_aggregate_agentic_summary_counts_v4_suites() -> None:
     summary = _aggregate_agentic_summary(
         [
-            PublicEvalRecord('bfcl_web_search', 'a', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
+            PublicEvalRecord('bfcl_web_search', 'a', True, 1.0, 1.0, 1.0, 1, 1, 'ok', answer_match=1.0),
             PublicEvalRecord('bfcl_memory', 'b', False, 1.0, 0.0, 0.0, 1, 0, ''),
             PublicEvalRecord('bfcl_format_sensitivity', 'c', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
         ]
     )
 
     assert summary['bfcl_web_search']['pass_rate'] == 1.0
+    assert summary['bfcl_web_search']['answer_match_rate'] == 1.0
     assert summary['bfcl_memory']['failures'] == 1
+
+
+def test_aggregate_summary_uses_bfcl_subcategory_accuracy_for_headline() -> None:
+    summary = _aggregate_summary(
+        [
+            PublicEvalRecord('bfcl_simple', 'simple_0', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
+            PublicEvalRecord('bfcl_simple', 'simple_1', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
+            PublicEvalRecord('bfcl_web_search', 'web_0', False, 1.0, 1.0, 1.0, 1, 1, 'wrong', answer_match=0.0),
+            PublicEvalRecord('tau2_mock', 'tau_0', True, 1.0, 1.0, 1.0, 1, 1, 'ok'),
+        ]
+    )
+
+    assert summary['overall']['bfcl_case_pass_rate'] == 0.6667
+    assert summary['overall']['bfcl_subcategory_accuracy'] == 0.5
+    assert summary['overall']['bfcl_answer_match_rate'] == 0.6667
 
 
 def test_load_public_eval_inputs_supports_official_profile(tmp_path: Path) -> None:

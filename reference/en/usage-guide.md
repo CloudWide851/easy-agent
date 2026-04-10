@@ -39,7 +39,7 @@ Executor- and host-gated real-network coverage may also require:
 
 ## Harness Outputs
 
-Harness runs persist durable artifacts under `.easy-agent/`, including:
+Harness runs persist durable artifacts under the configured artifact directory and durable session storage, including:
 
 - `bootstrap.md`
 - `progress.md`

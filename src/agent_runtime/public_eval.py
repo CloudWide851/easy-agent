@@ -118,6 +118,15 @@ _SCHEMA_MATRIX_SAMPLE = {
     'examples': ['drop-me'],
 }
 _STAGE_ORDER = ('base', 'strict_schema_retry', 'candidate_pruned_retry')
+_BFCL_SUBCATEGORY_GROUPS = {
+    'bfcl_simple',
+    'bfcl_multiple',
+    'bfcl_parallel_multiple',
+    'bfcl_irrelevance',
+    'bfcl_web_search',
+    'bfcl_memory',
+    'bfcl_format_sensitivity',
+}
 
 
 @dataclass(slots=True)
@@ -131,6 +140,7 @@ class PublicEvalRecord:
     expected_call_count: int
     actual_call_count: int
     result_summary: str
+    answer_match: float = 1.0
     error: str | None = None
     fallback_stage: str = 'base'
     fallback_attempts: list[str] = field(default_factory=list)
@@ -257,7 +267,8 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         'If the budget allows exactly one tool call and multiple tools look related, choose the tool that best matches the primary requested analysis and avoid secondary follow-up calls. '
         'A successful tool call ends the search unless an additional independent tool call is explicitly required by the budget. '
         'Never speculate, never duplicate a successful tool call, and never call a second tool just to restate the first answer. '
-        'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again.'
+        'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again. '
+        'After any required tool call, provide the final answer as a concise answer string only.'
     )
 
 
@@ -289,9 +300,20 @@ def _strict_normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return normalize_json_schema(schema, drop_descriptions=True, strict=True)
 
 
-def _protocol_matrix_sample_schema(adapter: Any, provider: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _protocol_matrix_sample_schema(
+    adapter: Any,
+    provider: str,
+    *,
+    function_calling: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = adapter.build_payload(
-        ModelConfig(provider=provider, protocol=adapter.protocol),
+        ModelConfig.model_validate(
+            {
+                'provider': provider,
+                'protocol': adapter.protocol,
+                **({'function_calling': function_calling} if function_calling is not None else {}),
+            }
+        ),
         [ChatMessage(role='user', content='schema probe')],
         [ToolSpec(name='schema_probe', description='schema probe', input_schema=_SCHEMA_MATRIX_SAMPLE)],
     )
@@ -311,6 +333,26 @@ def _provider_schema_matrix() -> dict[str, Any]:
     matrix: dict[str, Any] = {}
     for provider_name, adapter, config_provider in providers:
         payload, schema = _protocol_matrix_sample_schema(adapter, config_provider)
+        none_payload, _ = _protocol_matrix_sample_schema(
+            adapter,
+            config_provider,
+            function_calling={'mode': 'none'},
+        )
+        required_payload, _ = _protocol_matrix_sample_schema(
+            adapter,
+            config_provider,
+            function_calling={'mode': 'required'},
+        )
+        force_payload, _ = _protocol_matrix_sample_schema(
+            adapter,
+            config_provider,
+            function_calling={'mode': 'force', 'forced_tool_name': 'schema_probe'},
+        )
+        serial_payload, _ = _protocol_matrix_sample_schema(
+            adapter,
+            config_provider,
+            function_calling={'parallel_tool_calls': False},
+        )
         properties = cast(dict[str, Any], schema.get('properties', {}))
         required = cast(list[str], schema.get('required', []))
         amount_schema = cast(dict[str, Any], properties.get('amount', {}))
@@ -320,6 +362,31 @@ def _provider_schema_matrix() -> dict[str, Any]:
         strict_enabled = bool(cast(dict[str, Any], first_tool.get('function', {})).get('strict'))
         parallel_control = payload.get('parallel_tool_calls')
         params_item_type = cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type')
+
+        none_supported = False
+        required_supported = False
+        forced_supported = False
+        single_call_supported = False
+        if adapter.protocol is Protocol.OPENAI:
+            none_supported = none_payload.get('tool_choice') == 'none'
+            required_supported = required_payload.get('tool_choice') == 'required'
+            forced_supported = (
+                cast(dict[str, Any], force_payload.get('tool_choice', {})).get('function', {}).get('name') == 'schema_probe'
+            )
+            single_call_supported = serial_payload.get('parallel_tool_calls') is False
+        elif adapter.protocol is Protocol.ANTHROPIC:
+            none_supported = cast(dict[str, Any], none_payload.get('tool_choice', {})).get('type') == 'none'
+            required_supported = cast(dict[str, Any], required_payload.get('tool_choice', {})).get('type') == 'any'
+            forced_supported = cast(dict[str, Any], force_payload.get('tool_choice', {})).get('name') == 'schema_probe'
+            single_call_supported = serial_payload.get('disable_parallel_tool_use') is True
+        else:
+            function_config = cast(dict[str, Any], none_payload.get('toolConfig', {})).get('functionCallingConfig', {})
+            none_supported = cast(dict[str, Any], function_config).get('mode') == 'NONE'
+            function_config = cast(dict[str, Any], required_payload.get('toolConfig', {})).get('functionCallingConfig', {})
+            required_supported = cast(dict[str, Any], function_config).get('mode') == 'ANY'
+            function_config = cast(dict[str, Any], force_payload.get('toolConfig', {})).get('functionCallingConfig', {})
+            forced_supported = cast(dict[str, Any], function_config).get('allowedFunctionNames') == ['schema_probe']
+            single_call_supported = True
         matrix[provider_name] = {
             'protocol': adapter.protocol.value,
             'features': {
@@ -373,6 +440,32 @@ def _provider_schema_matrix() -> dict[str, Any]:
                 'parallel_tool_calls_control': {
                     'supported': parallel_control is not None,
                     'observed': parallel_control,
+                },
+                'single_tool_call_control': {
+                    'supported': single_call_supported,
+                    'observed': serial_payload.get('parallel_tool_calls')
+                    if adapter.protocol is Protocol.OPENAI
+                    else serial_payload.get('disable_parallel_tool_use')
+                    if adapter.protocol is Protocol.ANTHROPIC
+                    else cast(dict[str, Any], serial_payload.get('toolConfig', {})).get('functionCallingConfig'),
+                },
+                'tool_choice_none': {
+                    'supported': none_supported,
+                    'observed': none_payload.get('tool_choice')
+                    if adapter.protocol is not Protocol.GEMINI
+                    else cast(dict[str, Any], none_payload.get('toolConfig', {})).get('functionCallingConfig'),
+                },
+                'tool_choice_required': {
+                    'supported': required_supported,
+                    'observed': required_payload.get('tool_choice')
+                    if adapter.protocol is not Protocol.GEMINI
+                    else cast(dict[str, Any], required_payload.get('toolConfig', {})).get('functionCallingConfig'),
+                },
+                'forced_tool_choice': {
+                    'supported': forced_supported,
+                    'observed': force_payload.get('tool_choice')
+                    if adapter.protocol is not Protocol.GEMINI
+                    else cast(dict[str, Any], force_payload.get('toolConfig', {})).get('functionCallingConfig'),
                 },
             },
         }
@@ -518,6 +611,26 @@ def _summarize_result(result: Any) -> str:
     if isinstance(result, str):
         return result[:200]
     return json.dumps(result, ensure_ascii=False)[:200]
+
+
+def _normalize_answer_text(value: str) -> str:
+    lowered = value.casefold()
+    lowered = re.sub(r'https?://\S+', ' ', lowered)
+    lowered = re.sub(r'[^0-9a-z]+', ' ', lowered)
+    return re.sub(r'\s+', ' ', lowered).strip()
+
+
+def _score_bfcl_answer(case: dict[str, Any], result_summary: str, *, tool_success: bool) -> tuple[bool, float]:
+    aliases = cast(list[str], case.get('expected_answer_aliases') or [])
+    expected_answer = str(case.get('expected_answer') or '').strip()
+    if expected_answer:
+        aliases = [expected_answer, *aliases]
+    normalized_result = _normalize_answer_text(result_summary)
+    normalized_aliases = [_normalize_answer_text(item) for item in aliases if str(item).strip()]
+    if normalized_aliases:
+        success = normalized_result in normalized_aliases
+        return success, 1.0 if success else 0.0
+    return tool_success, 1.0 if tool_success else 0.0
 
 
 def _extract_tau_tasks_from_history(message_history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -741,6 +854,8 @@ def _classify_failure_bucket(record: PublicEvalRecord) -> str:
             return 'single_call_constraint_miss'
         if any(token in error_text for token in ('serpapi', 'web search', 'web contents', 'api_key', 'quota', 'search.json')):
             return 'search_tool_miss'
+        if record.answer_match < 1.0 and record.tool_name_match == 1.0:
+            return 'answer_grounding_miss'
     if record.suite == 'bfcl_memory':
         return 'memory_backend_miss'
     if record.suite == 'bfcl_format_sensitivity':
@@ -983,6 +1098,7 @@ async def _run_bfcl_case_attempt(
         config.storage.path = storage_dir
         config.model.function_calling.strict = strict_schema
         config.model.function_calling.parallel_tool_calls = len(case.get('ground_truth', [])) > 1
+        config.model.function_calling.mode = 'auto'
         runtime = build_runtime_from_config(config)
         web_search = base_config.evaluation.public_eval.web_search
         memory_state = {
@@ -1024,7 +1140,9 @@ async def _run_bfcl_case_attempt(
             duration = time.perf_counter() - start
             trace = runtime.store.load_trace(result['run_id'])
             actual_calls = _extract_successful_tool_calls(trace)
-            success, tool_name_match, argument_match = _score_bfcl_case(case, actual_calls, tool_name_map)
+            tool_success, tool_name_match, argument_match = _score_bfcl_case(case, actual_calls, tool_name_map)
+            result_summary = _summarize_result(result.get('result'))
+            success, answer_match = _score_bfcl_answer(case, result_summary, tool_success=tool_success)
             return _BfclAttemptResult(
                 record=PublicEvalRecord(
                     suite=f"bfcl_{case['suite']}",
@@ -1035,8 +1153,16 @@ async def _run_bfcl_case_attempt(
                     argument_match=argument_match,
                     expected_call_count=len(case['ground_truth']),
                     actual_call_count=len(actual_calls),
-                    result_summary=_summarize_result(result.get('result')),
-                    error=None if success else json.dumps({'actual_calls': actual_calls}, ensure_ascii=False),
+                    result_summary=result_summary,
+                    answer_match=answer_match,
+                    error=(
+                        None
+                        if success
+                        else json.dumps(
+                            {'actual_calls': actual_calls, 'result_summary': result_summary},
+                            ensure_ascii=False,
+                        )
+                    ),
                     fallback_stage=fallback_stage,
                     fallback_attempts=list(fallback_attempts),
                 ),
@@ -1276,18 +1402,26 @@ def _aggregate_summary(records: list[PublicEvalRecord]) -> dict[str, Any]:
             'pass_rate': round(sum(1 for item in items if item.success) / len(items), 4),
             'tool_name_match_rate': round(mean(item.tool_name_match for item in items), 4),
             'argument_match_rate': round(mean(item.argument_match for item in items), 4),
+            'answer_match_rate': round(mean(item.answer_match for item in items), 4),
             'average_duration_seconds': round(mean(item.duration_seconds for item in items), 4),
         }
     bfcl_items = [item for item in records if item.suite.startswith('bfcl_')]
+    bfcl_summaries = [item for suite, item in summary.items() if suite in _BFCL_SUBCATEGORY_GROUPS]
     irrelevance_items = [item for item in records if item.suite == 'bfcl_irrelevance']
     tau_items = [item for item in records if item.suite == 'tau2_mock']
     summary['overall'] = {
-        'bfcl_pass_rate': round(sum(1 for item in bfcl_items if item.success) / len(bfcl_items), 4),
+        'bfcl_case_pass_rate': round(sum(1 for item in bfcl_items if item.success) / len(bfcl_items), 4),
+        'bfcl_subcategory_accuracy': round(mean(item['pass_rate'] for item in bfcl_summaries), 4),
         'bfcl_tool_name_match_rate': round(mean(item.tool_name_match for item in bfcl_items), 4),
         'bfcl_argument_match_rate': round(mean(item.argument_match for item in bfcl_items), 4),
-        'bfcl_irrelevance_pass_rate': round(sum(1 for item in irrelevance_items if item.success) / len(irrelevance_items), 4),
-        'tau2_mock_pass_rate': round(sum(1 for item in tau_items if item.success) / len(tau_items), 4),
-        'tau2_mock_average_duration_seconds': round(mean(item.duration_seconds for item in tau_items), 4),
+        'bfcl_answer_match_rate': round(mean(item.answer_match for item in bfcl_items), 4),
+        'bfcl_irrelevance_pass_rate': (
+            round(sum(1 for item in irrelevance_items if item.success) / len(irrelevance_items), 4)
+            if irrelevance_items
+            else 0.0
+        ),
+        'tau2_mock_pass_rate': round(sum(1 for item in tau_items if item.success) / len(tau_items), 4) if tau_items else 0.0,
+        'tau2_mock_average_duration_seconds': round(mean(item.duration_seconds for item in tau_items), 4) if tau_items else 0.0,
     }
     return summary
 
@@ -1308,11 +1442,17 @@ def _aggregate_category_summary(records: list[PublicEvalRecord]) -> dict[str, An
         selected = [record for record in records if record.suite in suites]
         if not selected:
             continue
+        suite_rates = [
+            sum(1 for record in records if record.suite == suite and record.success)
+            / len([record for record in records if record.suite == suite])
+            for suite in sorted(suites)
+            if any(record.suite == suite for record in records)
+        ]
         summary[name] = {
             'runs': len(selected),
             'successes': sum(1 for record in selected if record.success),
             'failures': sum(1 for record in selected if not record.success),
-            'pass_rate': round(sum(1 for record in selected if record.success) / len(selected), 4),
+            'pass_rate': round(mean(suite_rates), 4),
             'average_duration_seconds': round(mean(record.duration_seconds for record in selected), 4),
         }
     return summary
@@ -1330,6 +1470,7 @@ def _aggregate_agentic_summary(records: list[PublicEvalRecord]) -> dict[str, Any
             'successes': sum(1 for record in selected if record.success),
             'failures': sum(1 for record in selected if not record.success),
             'pass_rate': round(sum(1 for record in selected if record.success) / len(selected), 4),
+            'answer_match_rate': round(mean(record.answer_match for record in selected), 4),
         }
     return summary
 

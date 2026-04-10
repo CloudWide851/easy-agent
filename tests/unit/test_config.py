@@ -47,6 +47,9 @@ def test_load_config_reads_function_calling_defaults() -> None:
                 'function_calling': {
                     'strict': True,
                     'parallel_tool_calls': False,
+                    'mode': 'force',
+                    'forced_tool_name': 'weather_lookup',
+                    'allowed_tool_names': ['weather_lookup'],
                 },
             },
             'graph': {
@@ -59,6 +62,29 @@ def test_load_config_reads_function_calling_defaults() -> None:
 
     assert config.model.function_calling.strict is True
     assert config.model.function_calling.parallel_tool_calls is False
+    assert config.model.function_calling.mode == 'force'
+    assert config.model.function_calling.forced_tool_name == 'weather_lookup'
+    assert config.model.function_calling.allowed_tool_names == ['weather_lookup']
+
+
+def test_load_config_rejects_force_mode_without_tool_name() -> None:
+    with pytest.raises(ValueError, match='forced_tool_name'):
+        AppConfig.model_validate(
+            {
+                'model': {
+                    'provider': 'deepseek',
+                    'protocol': 'openai',
+                    'function_calling': {
+                        'mode': 'force',
+                    },
+                },
+                'graph': {
+                    'entrypoint': 'agent-a',
+                    'agents': [{'name': 'agent-a'}],
+                    'nodes': [],
+                },
+            }
+        )
 
 
 def test_load_config_reads_evaluation_defaults() -> None:

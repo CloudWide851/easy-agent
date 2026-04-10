@@ -197,6 +197,76 @@ def test_openai_adapter_can_disable_strict_and_parallel_tool_calls() -> None:
     assert function['parameters'].get('additionalProperties') is None
 
 
+def test_openai_adapter_supports_required_and_forced_tool_choice() -> None:
+    adapter = OpenAIAdapter()
+    required_payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'deepseek',
+                'protocol': Protocol.OPENAI,
+                'function_calling': {'mode': 'required'},
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [ToolSpec(name='simple_tool', description='Simple', input_schema={'type': 'object'})],
+    )
+    forced_payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'deepseek',
+                'protocol': Protocol.OPENAI,
+                'function_calling': {'mode': 'force', 'forced_tool_name': 'simple_tool'},
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [ToolSpec(name='simple_tool', description='Simple', input_schema={'type': 'object'})],
+    )
+
+    assert required_payload['tool_choice'] == 'required'
+    assert forced_payload['tool_choice']['function']['name'] == 'simple_tool'
+
+
+def test_anthropic_adapter_supports_tool_choice_and_serial_mode() -> None:
+    adapter = AnthropicAdapter()
+    payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'anthropic',
+                'protocol': Protocol.ANTHROPIC,
+                'function_calling': {
+                    'mode': 'force',
+                    'forced_tool_name': 'complex_tool',
+                    'parallel_tool_calls': False,
+                },
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [ToolSpec(name='complex_tool', description='Complex', input_schema={'type': 'object'})],
+    )
+
+    assert payload['tool_choice'] == {'type': 'tool', 'name': 'complex_tool'}
+    assert payload['disable_parallel_tool_use'] is True
+
+
+def test_gemini_adapter_supports_function_calling_mode_controls() -> None:
+    adapter = GeminiAdapter()
+    payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'gemini',
+                'protocol': Protocol.GEMINI,
+                'function_calling': {'mode': 'force', 'forced_tool_name': 'python_echo'},
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [ToolSpec(name='python_echo', description='Echo', input_schema={'type': 'object'})],
+    )
+
+    function_config = payload['toolConfig']['functionCallingConfig']
+    assert function_config['mode'] == 'ANY'
+    assert function_config['allowedFunctionNames'] == ['python_echo']
+
+
 class _RuntimeErrorClosingClient:
     async def aclose(self) -> None:
         raise RuntimeError('Event loop is closed')
