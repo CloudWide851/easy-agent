@@ -1,5 +1,7 @@
 # Next Reinforcement
 
+This roadmap starts from the published `0.3.4` baseline.
+
 ## Immediate Focus
 
 - Keep the now-green repo-pinned BFCL agentic slice green while extending it toward wider official BFCL v4 coverage.

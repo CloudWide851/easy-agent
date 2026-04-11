@@ -22,7 +22,7 @@
 
 `easy-agent` 面向的是 Agent 产品下面的那层运行时基础设施，而不是具体业务应用本身。它把编排、工具调用、持久化、人审、联邦与评测能力显式保留在框架里，方便团队持续演进而不是被黑盒抽象锁死。
 
-最新已发布的小版本仍然是 `0.3.3`。当前仓库状态包含其上的未发布工作。
+当前已发布的小版本是 `0.3.4`。
 
 ## 这个项目到底是什么
 
@@ -179,7 +179,7 @@ uv run easy-agent doctor -c easy-agent.yml
 
 ## 验证方式
 
-这个未发布轮次保留 2026 年 4 月 9 日的 benchmark 快照，同时单独刷新 2026 年 4 月 11 日的 public-eval、Python verification 与 real-network 快照。当前 repo-pinned BFCL agentic 子集已经转绿。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
+`0.3.4` 版本保留 2026 年 4 月 9 日的 benchmark 快照，同时发布 2026 年 4 月 11 日刷新后的 public-eval、Python verification 与 real-network 快照。当前 repo-pinned BFCL agentic 子集已经转绿。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
 ### 分数摘要
 
@@ -219,9 +219,8 @@ README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 
 
 ## 致谢
 
-- 感谢 OpenAI、Anthropic、Google 与 MCP 生态提供持续演进的协议与互操作基础。
-- 感谢 SerpApi 提供可与 replay 路径协同的 BFCL web-search 评测搜索链路。
-- 感谢 Linux.do 社区早期围绕 Agent 工程化的实践讨论。
+- <a href="https://linux.do/"><img alt="Linux.do" src="https://linux.do/logo-128.svg" width="20"></a> [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
+- [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) 为本仓库真实验证流程提供了模型端点基线。
 
 ## License
 

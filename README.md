@@ -22,7 +22,7 @@
 
 `easy-agent` is the runtime layer underneath an agent product, not the product itself. It keeps orchestration, tool calling, persistence, approvals, federation, and evaluation explicit so teams can evolve their systems without hiding critical behavior behind opaque framework abstractions.
 
-The latest published patch remains `0.3.3`. This repository state contains unreleased work on top of that line.
+The latest published patch is `0.3.4`.
 
 ## What This Project Is
 
@@ -179,7 +179,7 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-This unreleased round keeps the retained benchmark snapshot from April 9, 2026 while refreshing public-eval, Python verification, and the real-network snapshot on April 11, 2026. The repo-pinned BFCL agentic slice is now green. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+Release `0.3.4` keeps the retained benchmark snapshot from April 9, 2026 while publishing refreshed public-eval, Python verification, and real-network snapshots from April 11, 2026. The repo-pinned BFCL agentic slice is now green. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
@@ -219,9 +219,8 @@ The next reinforcement track is documented in full at [reference/en/next-reinfor
 
 ## Acknowledgements
 
-- OpenAI, Anthropic, Google, and the MCP ecosystem for the protocol and interoperability surface this runtime tracks.
-- SerpApi for the replay-compatible search transport used in BFCL web-search evaluation.
-- Linux.do for early community discussion around practical agent engineering.
+- <a href="https://linux.do/"><img alt="Linux.do" src="https://linux.do/logo-128.svg" width="20"></a> [Linux.do](https://linux.do/) for community discussion and open knowledge sharing.
+- [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) for the real verification baseline and model endpoint.
 
 ## License
 

@@ -2,8 +2,8 @@
 
 ## Snapshot Policy
 
-- This unreleased round keeps the retained benchmark snapshot from April 9, 2026.
-- Public eval, Python verification, and the real-network snapshot are refreshed independently on April 11, 2026 in this round.
+- Release `0.3.4` keeps the retained benchmark snapshot from April 9, 2026.
+- Public eval, Python verification, and the real-network snapshot are published from the April 11, 2026 refresh for this release.
 - Public docs in this repository intentionally expose methodology and scores only; local collaboration logs are not part of the repository-facing surface.
 
 ## Benchmark Snapshot

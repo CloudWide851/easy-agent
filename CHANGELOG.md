@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+No unreleased changes yet.
+
+## [0.3.4] - 2026-04-11
+
+### Added
+
 - Added SERPAPI-backed public-eval web-search configuration with nested `evaluation.public_eval.web_search` settings for:
   - `provider`
   - `api_key_env`
@@ -48,6 +54,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - MCP roots diff and notification behavior
   - MCP durable elicitation completion state
   - approval cancel mapping
+- Added BFCL agentic fixture coverage for:
+  - exact-title web search
+  - search-plus-contents retrieval
+  - memory-backed history
+  - alias-aware memory read/delete cases
 
 ### Changed
 
@@ -66,23 +77,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Restored public-facing README and changelog wording to SERPAPI so the tracked repository no longer advertises the previous temporary web-search test surface.
 - Split the monolithic MCP integration module into `src/agent_integrations/mcp/` package files so roots, elicitation, clients, and manager logic are easier to evolve independently.
 - Updated both READMEs to mark MCP root-change propagation and durable URL elicitation approval state as shipped capabilities, and rewrote the MCP `Next Reinforcement` item toward prompt/resource/tool list-change parity on the newer public MCP surface.
-- Kept this round unreleased on top of `0.3.3`; no package version or release entry was bumped.
+- Tightened BFCL web-search handling around grounded result-id resolution, exact-title query shaping, replay-backed contents recovery, and answer scoring for short grounded final responses.
+- Tightened BFCL agentic evaluation with history hydration, grounded search-state reuse, explicit tool-result truth checks, and eval-only memory alias resolution.
+- Extended protocol adapters so strict function calling and structured-output controls remain explicit across OpenAI-compatible, Anthropic, and Gemini surfaces, including Anthropic `strict: true` emission and corrected capability reporting.
+- Reworked the English and Chinese README pair plus `reference/` detail pages into the published `0.3.4` documentation set, including the restored acknowledgements block.
 
 ### Verified
 
 - `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
 - `.\.venv\Scripts\python.exe -m mypy src tests scripts`
-- `.\.venv\Scripts\python.exe -m pytest tests\unit\test_mcp.py tests\unit\test_storage.py tests\unit\test_human_loop.py tests\unit\test_cli_shared.py -q --basetemp=%TEMP%\easy-agent-pytest\unit-mcp-targeted-<timestamp>` with `21 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `148 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q -k "not public_eval" --basetemp=%TEMP%\easy-agent-pytest\integration-non-public-eval-<timestamp>` with `4 passed`, `1 deselected`, `5 warnings`
-- `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-real-network-<timestamp>` with `1 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_readme_snapshot.py tests/unit/test_public_eval.py tests/unit/test_protocols.py -q --basetemp=%TEMP%\easy-agent-pytest\unit-doc-sync-<timestamp>` with `55 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `166 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `5 passed`, `5 warnings`
-- Retained `.easy-agent/benchmark-report.json` from the April 9, 2026 snapshot.
-- Retained `.easy-agent/public-eval-report.json` from the April 9, 2026 snapshot with:
-  - `overall.bfcl_pass_rate = 0.7879`
-  - `overall.bfcl_tool_name_match_rate = 0.9091`
-  - `overall.bfcl_argument_match_rate = 0.8182`
-- Refreshed `.easy-agent/real-network-report.json` with `10 passed`, `0 failed`, `0 skipped`, and updated warm-start telemetry summary fields
+- Published documentation reflects the retained April 9, 2026 benchmark snapshot and refreshed April 11, 2026 public-eval and real-network snapshots.
+- Refreshed BFCL/public-eval results include:
+  - `public_eval.bfcl_overall = 98.21`
+  - `public_eval.bfcl_case_pass_rate = 97.22`
+  - `public_eval.bfcl_web_search = 100.0`
+  - `public_eval.bfcl_memory = 100.0`
+- Refreshed real-network results include:
+  - `10 passed`, `0 failed`, `0 skipped`
+  - `generated_at = 2026-04-11T06:35:04Z`
+  - `telemetry.cache_hit_rate = 100.0`
+  - `telemetry.container_warm_start_average_seconds = 5.6855`
+  - `telemetry.microvm_warm_start_average_seconds = 8.2140`
 
 ## [0.3.3] - 2026-04-01
 

@@ -1,5 +1,7 @@
 # 下一步补强
 
+本路线图以已发布的 `0.3.4` 基线为起点。
+
 ## 当前重点
 
 - 在保持 repo-pinned BFCL agentic 子集全绿的前提下，继续向更广的 official BFCL v4 覆盖面推进。

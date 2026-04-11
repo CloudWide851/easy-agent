@@ -1,5 +1,7 @@
 # Usage Guide
 
+This guide matches the published `0.3.4` documentation set.
+
 ## Environment
 
 ```bash

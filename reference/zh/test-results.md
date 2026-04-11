@@ -2,8 +2,8 @@
 
 ## 快照策略
 
-- 本次未发布轮次保留 2026 年 4 月 9 日的 benchmark 快照。
-- public-eval、Python verification 与 real-network 快照在本轮于 2026 年 4 月 11 日单独刷新。
+- `0.3.4` 版本保留 2026 年 4 月 9 日的 benchmark 快照。
+- 本次发布采用 2026 年 4 月 11 日刷新后的 public-eval、Python verification 与 real-network 快照。
 - 仓库公开文档只保留方法说明与分数，不暴露机器本地协作日志。
 
 ## Benchmark 快照
