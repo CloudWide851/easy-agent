@@ -27,6 +27,7 @@ from agent_runtime.public_eval import (
     _record_web_search_usage,
     _restore_checkpoint_records,
     _save_public_eval_checkpoint,
+    _score_bfcl_answer,
     _score_bfcl_case,
     _score_tau_case,
     _select_bfcl_candidate_functions,
@@ -240,9 +241,10 @@ def test_provider_schema_matrix_reflects_adapter_behavior() -> None:
     assert matrix['gemini']['features']['format_removed']['supported'] is True
     assert matrix['gemini']['features']['tool_choice_none']['supported'] is True
     assert matrix['gemini']['features']['forced_tool_choice']['supported'] is True
+    assert matrix['gemini']['features']['single_tool_call_control']['supported'] is False
     assert matrix['anthropic']['features']['root_object_alias']['supported'] is False
     assert matrix['anthropic']['features']['invalid_required_pruned']['supported'] is False
-    assert matrix['anthropic']['features']['strict_flag']['supported'] is False
+    assert matrix['anthropic']['features']['strict_flag']['supported'] is True
     assert matrix['anthropic']['features']['single_tool_call_control']['supported'] is True
 
 
@@ -546,6 +548,23 @@ def test_serpapi_query_params_shapes_query_from_bfcl_wrapper() -> None:
     assert params['num'] == 10
 
 
+def test_serpapi_query_params_preserves_official_intent_and_strips_title_suffix() -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': 'usage.json'}}},
+        }
+    ).evaluation.public_eval.web_search
+
+    params = _serpapi_query_params(
+        {'query': 'OpenAI Structured Outputs guide. What is the exact page title?'},
+        {'messages': [{'role': 'user', 'content': 'Search the web for the official OpenAI Structured Outputs guide. What is the exact page title?'}]},
+        config,
+    )
+
+    assert params['q'] == 'official OpenAI Structured Outputs guide'
+
+
 @respx.mock
 def test_fetch_web_contents_uses_http_fetch_and_normalizes_response(tmp_path: Path) -> None:
     route = respx.get('https://example.com/doc').mock(
@@ -585,6 +604,63 @@ def test_fetch_web_contents_rejects_ungrounded_urls(tmp_path: Path) -> None:
             config,
             grounded_urls={'https://example.com/allowed'},
         )
+
+
+@respx.mock
+def test_fetch_web_contents_resolves_latest_search_result_ids(tmp_path: Path) -> None:
+    respx.get('https://example.com/latest').mock(return_value=httpx.Response(503, text='down'))
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+        }
+    ).evaluation.public_eval.web_search
+
+    result = _fetch_web_contents(
+        {'result_ids': [1]},
+        {
+            'replay_contents': [{'title': 'Replay', 'link': 'https://example.com/replay', 'text': 'fallback'}],
+            'replay_results': [{'title': 'Replay', 'link': 'https://example.com/replay', 'snippet': 'fallback'}],
+        },
+        config,
+        latest_results=[{'position': 1, 'title': 'Latest', 'link': 'https://example.com/latest'}],
+        grounded_urls={'https://example.com/latest'},
+    )
+
+    assert result['backend'] == 'service_unavailable_replay'
+    assert result['results'][0]['title'] == 'Replay'
+
+
+def test_score_bfcl_answer_accepts_grounded_search_title_from_wrapped_text() -> None:
+    success, answer_match = _score_bfcl_answer(
+        {
+            'expected_answer': 'Structured Outputs',
+            'expected_answer_aliases': ['structured outputs'],
+        },
+        'The exact page title is Structured Outputs.',
+        'The exact page title is Structured Outputs.',
+        tool_success=True,
+        latest_results=[{'position': 1, 'title': 'Structured Outputs', 'link': 'https://platform.openai.com/docs/guides/structured-outputs'}],
+    )
+
+    assert success is True
+    assert answer_match == 1.0
+
+
+def test_score_bfcl_answer_accepts_structured_answer_payload() -> None:
+    success, answer_match = _score_bfcl_answer(
+        {
+            'expected_answer': 'Durable execution',
+            'expected_answer_aliases': ['durable execution'],
+        },
+        {'answer': 'Durable execution', 'context': 'official docs'},
+        '{"answer":"Durable execution","context":"official docs"}',
+        tool_success=True,
+        latest_results=[],
+    )
+
+    assert success is True
+    assert answer_match == 1.0
 
 
 @respx.mock

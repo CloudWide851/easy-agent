@@ -2,15 +2,17 @@
 
 ## Immediate Focus
 
-- Continue compressing BFCL web-search misses around single-call enforcement, query shaping, result grounding, and replay-backed contents recovery.
+- Carry the BFCL web-search gain forward into richer BFCL v4 search-plus-contents and memory-backed agentic cases.
 - Continue hardening OpenAI-compatible provider behavior around strict function calling and structured outputs.
 - Keep MCP and federation durability moving forward without widening the public runtime surface unnecessarily.
 
 ## Web Search Reinforcement
 
-- Keep SerpApi `/search.json` as the explicit search transport.
+- Keep SerpApi `/search.json` as the explicit search transport for repo-pinned BFCL evaluation.
 - Preserve quota ledger and replay fallback behavior.
-- Continue improving grounding so `web.contents` only consumes URLs justified by the latest search step or replay evidence.
+- Keep improving result-id grounding so `web.contents` consumes only URLs justified by the latest search step or replay evidence.
+- Extend the current exact-title single-call success path into official BFCL v4-style search-plus-contents and multihop questions, where the final answer should remain grounded to the retrieved evidence.
+- Keep the final-answer path compatible with either concise plain text or a structured `{"answer": ..., "context": ...}` payload so answer scoring stays robust without loosening the evaluator.
 
 ## Provider Compatibility
 
@@ -22,6 +24,7 @@ Use the official OpenAI constraints as the baseline:
 - parallel tool-call controls
 - single-tool-call enforcement for BFCL-style single-call cases
 - `tool_choice` / forced-tool / no-tool / required-tool mode parity
+- all-fields-required plus nullable promotion for optional fields under strict structured outputs
 
 Then keep the provider-specific adaptation layers explicit:
 
@@ -32,11 +35,12 @@ Then keep the provider-specific adaptation layers explicit:
 - Anthropic:
   - map provider-neutral tool-choice controls onto `tool_choice`
   - use `disable_parallel_tool_use` for serialized tool-call cases
-  - preserve the provider's looser `input_schema` pass-through when strict JSON Schema flags are unavailable
+  - keep strict-tool emission aligned with the current Claude tool definition surface
 - Gemini:
   - map provider-neutral tool-choice controls onto `functionCallingConfig.mode`
   - use `allowedFunctionNames` for forced-tool or required-tool cases
   - keep the schema surface normalized to the supported OpenAPI-style subset before request emission
+  - avoid over-claiming explicit single-call enforcement when the provider only exposes mode-level controls
 
 Public regression coverage should continue to assert:
 
@@ -49,8 +53,11 @@ Public regression coverage should continue to assert:
 
 Reference:
 
-- <https://platform.openai.com/docs/guides/function-calling?api-mode=chat>
-- <https://platform.openai.com/docs/guides/structured-outputs>
+- <https://developers.openai.com/api/docs/guides/function-calling>
+- <https://developers.openai.com/api/docs/guides/structured-outputs>
+- <https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools>
+- <https://ai.google.dev/gemini-api/docs/function-calling>
+- <https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html>
 
 ## MCP and Federation
 

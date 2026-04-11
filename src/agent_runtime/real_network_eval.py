@@ -808,6 +808,25 @@ def _scenario_duplicate_delivery_replay_resilience(tmp_path: Path) -> str:
                     if not page_token:
                         return events
 
+            async def _wait_for_stable_events(task_id: str, *, timeout_seconds: float = 5.0) -> list[dict[str, Any]]:
+                deadline = time.monotonic() + timeout_seconds
+                last_sequences: list[int] | None = None
+                stable_reads = 0
+                events: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    events = await _collect_all_events(task_id)
+                    sequences = [int(item['sequence']) for item in events]
+                    terminal = bool(events) and str(events[-1].get('event_kind') or '') == 'task_succeeded'
+                    if terminal and sequences == last_sequences:
+                        stable_reads += 1
+                        if stable_reads >= 2:
+                            return events
+                    else:
+                        stable_reads = 0
+                    last_sequences = sequences
+                    await asyncio.sleep(0.1)
+                return events
+
             response = await manager.send_subscribe('loopback', 'local_echo', 'stable-delivery', callback_url, from_sequence=0)
             task_id = str(response['task']['task_id'])
             deadline = time.monotonic() + 5.0
@@ -819,10 +838,10 @@ def _scenario_duplicate_delivery_replay_resilience(tmp_path: Path) -> str:
                 await asyncio.sleep(0.1)
             if task_payload is None or task_payload['status'] != 'succeeded':
                 raise AssertionError('task did not reach a terminal state')
-            events_before = await _collect_all_events(task_id)
+            events_before = await _wait_for_stable_events(task_id)
             replay_full = await manager.resubscribe_task('loopback', task_id, from_sequence=0)
             replay_tail = await manager.resubscribe_task('loopback', task_id, from_sequence=1)
-            events_after = await _collect_all_events(task_id)
+            events_after = await _wait_for_stable_events(task_id)
             sequences_before = [int(item['sequence']) for item in events_before]
             if sequences_before != sorted(set(sequences_before)):
                 raise AssertionError('event sequences are not unique and ordered')

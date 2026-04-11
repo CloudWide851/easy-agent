@@ -257,7 +257,7 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         budget = 'Make exactly one tool call total only if it is clearly necessary, then stop.'
     else:
         budget = f'Use exactly {expected_calls} tool calls only when the requested actions are independent and necessary.'
-    return (
+    prompt = (
         'You are evaluating tool-calling behavior. Choose the single best action based on the user request. '
         + budget
         + ' If the request is irrelevant to the available tools, answer directly without any tool call. '
@@ -270,6 +270,12 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again. '
         'After any required tool call, provide the final answer as a concise answer string only.'
     )
+    if str(case.get('suite') or '') == 'web_search':
+        prompt += (
+            ' For web-search title lookups, answer with the exact grounded page title only. '
+            'If you provide structured output, use a JSON object with "answer" and optional "context" fields.'
+        )
+    return prompt
 
 
 def _tau_system_prompt() -> str:
@@ -359,7 +365,11 @@ def _provider_schema_matrix() -> dict[str, Any]:
         nickname_schema = cast(dict[str, Any], properties.get('nickname', {}))
         payload_tools = cast(list[dict[str, Any]], payload.get('tools', []))
         first_tool = payload_tools[0] if payload_tools else {}
-        strict_enabled = bool(cast(dict[str, Any], first_tool.get('function', {})).get('strict'))
+        strict_enabled = bool(
+            cast(dict[str, Any], first_tool.get('function', {})).get('strict')
+            if adapter.protocol is Protocol.OPENAI
+            else first_tool.get('strict')
+        )
         parallel_control = payload.get('parallel_tool_calls')
         params_item_type = cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type')
 
@@ -386,7 +396,7 @@ def _provider_schema_matrix() -> dict[str, Any]:
             required_supported = cast(dict[str, Any], function_config).get('mode') == 'ANY'
             function_config = cast(dict[str, Any], force_payload.get('toolConfig', {})).get('functionCallingConfig', {})
             forced_supported = cast(dict[str, Any], function_config).get('allowedFunctionNames') == ['schema_probe']
-            single_call_supported = True
+            single_call_supported = False
         matrix[provider_name] = {
             'protocol': adapter.protocol.value,
             'features': {
@@ -620,15 +630,60 @@ def _normalize_answer_text(value: str) -> str:
     return re.sub(r'\s+', ' ', lowered).strip()
 
 
-def _score_bfcl_answer(case: dict[str, Any], result_summary: str, *, tool_success: bool) -> tuple[bool, float]:
+def _extract_bfcl_answer_candidates(result: Any, result_summary: str, *, latest_results: list[dict[str, Any]]) -> list[str]:
+    candidates: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or '').strip()
+        if text and text not in candidates:
+            candidates.append(text)
+
+    if isinstance(result, dict):
+        for key in ('answer', 'final_answer', 'title', 'page_title', 'result'):
+            if key in result:
+                add(result.get(key))
+    add(result_summary)
+    if isinstance(result, str):
+        stripped = result.strip()
+        if stripped.startswith('{') and stripped.endswith('}'):
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                for key in ('answer', 'final_answer', 'title', 'page_title', 'result'):
+                    if key in payload:
+                        add(payload.get(key))
+        for match in re.findall(r'["\']([^"\']{2,160})["\']', result):
+            add(match)
+        for separator in (':', '-', ' is '):
+            if separator in result:
+                add(result.rsplit(separator, 1)[-1].strip())
+    normalized_result = _normalize_answer_text(result_summary)
+    for item in latest_results:
+        title = str(item.get('title') or '').strip()
+        if title and _normalize_answer_text(title) in normalized_result:
+            add(title)
+    return candidates
+
+
+def _score_bfcl_answer(
+    case: dict[str, Any],
+    result: Any,
+    result_summary: str,
+    *,
+    tool_success: bool,
+    latest_results: list[dict[str, Any]] | None = None,
+) -> tuple[bool, float]:
     aliases = cast(list[str], case.get('expected_answer_aliases') or [])
     expected_answer = str(case.get('expected_answer') or '').strip()
     if expected_answer:
         aliases = [expected_answer, *aliases]
-    normalized_result = _normalize_answer_text(result_summary)
     normalized_aliases = [_normalize_answer_text(item) for item in aliases if str(item).strip()]
     if normalized_aliases:
-        success = normalized_result in normalized_aliases
+        candidates = _extract_bfcl_answer_candidates(result, result_summary, latest_results=latest_results or [])
+        normalized_candidates = [_normalize_answer_text(item) for item in candidates if str(item).strip()]
+        success = any(item in normalized_aliases for item in normalized_candidates)
         return success, 1.0 if success else 0.0
     return tool_success, 1.0 if tool_success else 0.0
 
@@ -962,9 +1017,10 @@ def _fetch_web_contents(
     case: dict[str, Any],
     web_search: PublicEvalWebSearchConfig,
     *,
+    latest_results: list[dict[str, Any]] | None = None,
     grounded_urls: set[str] | None = None,
 ) -> dict[str, Any]:
-    return _web_fetch_contents(arguments, case, web_search, grounded_urls=grounded_urls)
+    return _web_fetch_contents(arguments, case, web_search, latest_results=latest_results, grounded_urls=grounded_urls)
 
 
 def _build_eval_tool_handler(
@@ -1000,7 +1056,13 @@ def _build_eval_tool_handler(
                 for item in cast(list[dict[str, Any]], search_state.get('latest_results', []))
                 if str(item.get('link') or '').strip()
             } or None
-            result = _web_fetch_contents(arguments, case, web_search, grounded_urls=grounded_urls)
+            result = _web_fetch_contents(
+                arguments,
+                case,
+                web_search,
+                latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
+                grounded_urls=grounded_urls,
+            )
             budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
@@ -1142,7 +1204,13 @@ async def _run_bfcl_case_attempt(
             actual_calls = _extract_successful_tool_calls(trace)
             tool_success, tool_name_match, argument_match = _score_bfcl_case(case, actual_calls, tool_name_map)
             result_summary = _summarize_result(result.get('result'))
-            success, answer_match = _score_bfcl_answer(case, result_summary, tool_success=tool_success)
+            success, answer_match = _score_bfcl_answer(
+                case,
+                result.get('result'),
+                result_summary,
+                tool_success=tool_success,
+                latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
+            )
             return _BfclAttemptResult(
                 record=PublicEvalRecord(
                     suite=f"bfcl_{case['suite']}",

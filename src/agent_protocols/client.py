@@ -32,12 +32,15 @@ class ProtocolAdapter(TypingProtocol):
     def parse_response(self, payload: dict[str, Any]) -> AssistantResponse: ...
 
 
-def _anthropic_tool(tool: ToolSpec) -> dict[str, Any]:
-    return {
+def _anthropic_tool(tool: ToolSpec, *, strict: bool = False) -> dict[str, Any]:
+    payload = {
         'name': tool.name,
         'description': tool.description,
         'input_schema': tool.input_schema,
     }
+    if strict:
+        payload['strict'] = True
+    return payload
 
 
 def _openai_safe_schema(schema: dict[str, Any], *, strict: bool = False) -> dict[str, Any]:
@@ -223,7 +226,7 @@ class AnthropicAdapter:
         if system_parts:
             payload['system'] = '\n'.join(system_parts)
         if selected_tools:
-            payload['tools'] = [_anthropic_tool(tool) for tool in selected_tools]
+            payload['tools'] = [_anthropic_tool(tool, strict=config.function_calling.strict) for tool in selected_tools]
             if config.function_calling.mode == 'none':
                 payload['tool_choice'] = {'type': 'none'}
             elif config.function_calling.mode == 'required':

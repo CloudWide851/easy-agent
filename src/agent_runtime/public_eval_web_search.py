@@ -16,6 +16,10 @@ _SEARCH_PREFIX_PATTERN = re.compile(
     r'^(search(\s+the)?\s+web(\s+for)?|web\s+search(\s+for)?|look\s+up|find)\s*[:,-]?\s*',
     re.IGNORECASE,
 )
+_TRAILING_TITLE_QUESTION_PATTERN = re.compile(
+    r'[\s,;:-]*(what\s+is\s+the\s+(exact\s+)?page\s+title|what\s+is\s+its\s+title|return\s+the\s+exact\s+page\s+title)\??\s*$',
+    re.IGNORECASE,
+)
 _QUOTE_STRIP = "\"'` "
 _MAX_QUERY_LENGTH = 180
 
@@ -36,9 +40,14 @@ def _case_prompt(case: dict[str, Any]) -> str:
 
 
 def _shape_web_search_query(raw_query: str, case: dict[str, Any]) -> str:
-    query = raw_query.strip() or _case_prompt(case).strip()
+    prompt = _case_prompt(case).strip()
+    query = raw_query.strip() or prompt
     query = _SEARCH_PREFIX_PATTERN.sub('', query, count=1)
+    query = _TRAILING_TITLE_QUESTION_PATTERN.sub('', query)
     query = re.sub(r'\s+', ' ', query).strip(_QUOTE_STRIP)
+    query = query.rstrip(' .,:;!?')
+    if 'official' in prompt.casefold() and 'official' not in query.casefold():
+        query = f'official {query}'.strip()
     if len(query) <= _MAX_QUERY_LENGTH:
         return query
     trimmed = query[:_MAX_QUERY_LENGTH].rsplit(' ', 1)[0].strip()
@@ -159,6 +168,12 @@ def _normalize_web_contents_results(payload: dict[str, Any]) -> list[dict[str, A
     return normalized
 
 
+def _normalize_title_key(value: str) -> str:
+    lowered = value.casefold()
+    lowered = re.sub(r'[^0-9a-z]+', ' ', lowered)
+    return re.sub(r'\s+', ' ', lowered).strip()
+
+
 def _strip_html_text(value: str) -> str:
     collapsed = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', value, flags=re.IGNORECASE | re.DOTALL)
     collapsed = re.sub(r'<[^>]+>', ' ', collapsed)
@@ -227,11 +242,47 @@ def _resolve_content_urls(
     arguments: dict[str, Any],
     case: dict[str, Any],
     *,
+    latest_results: list[dict[str, Any]] | None = None,
     grounded_urls: set[str] | None = None,
 ) -> list[str]:
+    latest = latest_results or []
+
+    def accept(url: str) -> str | None:
+        cleaned = str(url).strip()
+        if not cleaned:
+            return None
+        if grounded_urls is not None and cleaned not in grounded_urls:
+            return None
+        return cleaned
+
+    def resolve_result_id(item: Any) -> str | None:
+        if not latest:
+            return None
+        if isinstance(item, int):
+            for entry in latest:
+                if int(entry.get('position') or 0) == item:
+                    return accept(str(entry.get('link') or ''))
+            if 0 <= item < len(latest):
+                return accept(str(latest[item].get('link') or ''))
+            if 1 <= item <= len(latest):
+                return accept(str(latest[item - 1].get('link') or ''))
+            return None
+        text = str(item).strip()
+        if not text:
+            return None
+        if text.startswith('http'):
+            return accept(text)
+        if text.isdigit():
+            return resolve_result_id(int(text))
+        title_key = _normalize_title_key(text)
+        for entry in latest:
+            if _normalize_title_key(str(entry.get('title') or '')) == title_key:
+                return accept(str(entry.get('link') or ''))
+        return None
+
     urls = arguments.get('urls') or arguments.get('links') or []
     if isinstance(urls, list):
-        direct_urls = [str(item).strip() for item in urls if str(item).strip()]
+        direct_urls = [accepted for item in urls if (accepted := accept(str(item)))]
         if grounded_urls is not None:
             direct_urls = [item for item in direct_urls if item in grounded_urls]
         if direct_urls:
@@ -243,6 +294,10 @@ def _resolve_content_urls(
     resolved: list[str] = []
     if isinstance(result_ids, list):
         for item in result_ids:
+            resolved_item = resolve_result_id(item)
+            if resolved_item:
+                resolved.append(resolved_item)
+                continue
             if isinstance(item, int) and 0 <= item < len(replay_results):
                 link = str(replay_results[item].get('link') or '').strip()
                 if link and (grounded_urls is None or link in grounded_urls):
@@ -259,10 +314,11 @@ def _fetch_web_contents(
     case: dict[str, Any],
     web_search: PublicEvalWebSearchConfig,
     *,
+    latest_results: list[dict[str, Any]] | None = None,
     grounded_urls: set[str] | None = None,
 ) -> dict[str, Any]:
     replay_contents = cast(list[dict[str, Any]], case.get('replay_contents', []))
-    urls = _resolve_content_urls(arguments, case, grounded_urls=grounded_urls)
+    urls = _resolve_content_urls(arguments, case, latest_results=latest_results, grounded_urls=grounded_urls)
     if not urls:
         if replay_contents:
             return {'results': replay_contents, 'backend': 'replay', 'source': 'replay'}

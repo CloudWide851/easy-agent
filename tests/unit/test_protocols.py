@@ -44,6 +44,7 @@ def test_anthropic_adapter_keeps_schema_passthrough() -> None:
     )
 
     schema = payload['tools'][0]['input_schema']
+    assert payload['tools'][0]['strict'] is True
     assert schema['type'] == 'dict'
     assert 'anyOf' in schema['properties']['value']
 

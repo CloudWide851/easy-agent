@@ -2,15 +2,17 @@
 
 ## 当前重点
 
-- 继续压缩 BFCL web-search miss，重点围绕 single-call enforcement、query shaping、result grounding 与 replay-backed contents recovery。
+- 把这次 BFCL web-search 的提升继续推进到更完整的 BFCL v4 search-plus-contents 与 memory-backed agentic case。
 - 继续强化 OpenAI-compatible provider 在 strict function calling 与 structured outputs 约束下的兼容行为。
 - 在不随意扩大 public runtime surface 的前提下，继续推进 MCP 与 federation 的 durable coordination。
 
 ## Web Search 补强
 
-- 继续以 SerpApi `/search.json` 作为显式搜索链路。
+- 继续以 SerpApi `/search.json` 作为 repo-pinned BFCL 评测的显式搜索链路。
 - 保留 quota ledger 与 replay fallback。
-- 继续收紧 grounding，让 `web.contents` 只消费由最近一次 search 或 replay 证据支撑的 URL。
+- 继续收紧 result-id grounding，让 `web.contents` 只消费由最近一次 search 或 replay 证据支撑的 URL。
+- 把当前 exact-title 单调用成功路径继续扩展到官方 BFCL v4 风格的 search-plus-contents 与 multihop 问题，并保持最终答案对检索证据可回溯。
+- 让最终答案同时兼容简洁纯文本或 `{\"answer\": ..., \"context\": ...}` 这样的结构化载荷，这样可以增强 answer scoring，而不是放松 evaluator。
 
 ## Provider 兼容性
 
@@ -22,6 +24,7 @@
 - parallel tool-call controls
 - BFCL 单调用场景的一次调用约束
 - `tool_choice` / forced-tool / no-tool / required-tool 的模式对齐
+- strict structured outputs 下 optional-to-required-nullable 的官方建模方式
 
 同时把 provider-specific 适配层继续显式化：
 
@@ -32,11 +35,12 @@
 - Anthropic：
   - 把 provider-neutral tool-choice controls 映射到 `tool_choice`
   - 在串行工具调用场景使用 `disable_parallel_tool_use`
-  - 在缺少 strict JSON Schema 标志时保留更宽松的 `input_schema` passthrough
+  - 让 strict-tool 发包继续对齐当前 Claude tools 定义面
 - Gemini：
   - 把 provider-neutral tool-choice controls 映射到 `functionCallingConfig.mode`
   - 对 forced-tool / required-tool 场景使用 `allowedFunctionNames`
   - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集
+  - 不要把 provider 只有 mode-level 控制的能力误写成显式 single-call enforcement
 
 公开回归覆盖需要继续断言：
 
@@ -49,8 +53,11 @@
 
 参考：
 
-- <https://platform.openai.com/docs/guides/function-calling?api-mode=chat>
-- <https://platform.openai.com/docs/guides/structured-outputs>
+- <https://developers.openai.com/api/docs/guides/function-calling>
+- <https://developers.openai.com/api/docs/guides/structured-outputs>
+- <https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools>
+- <https://ai.google.dev/gemini-api/docs/function-calling>
+- <https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html>
 
 ## MCP 与 Federation
 

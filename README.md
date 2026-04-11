@@ -179,14 +179,14 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-This unreleased round keeps the retained benchmark snapshot while refreshing public-eval, Python verification, and the real-network snapshot independently. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+This unreleased round keeps the retained benchmark snapshot from April 9, 2026 while refreshing public-eval, Python verification, and the real-network snapshot on April 11, 2026. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
 | Test Set | Score |
 | --- | ---: |
 | benchmark.overall | 100.0 |
-| public_eval.bfcl_overall | 69.64 |
+| public_eval.bfcl_overall | 85.71 |
 | public_eval.tau2_mock | 100.0 |
 
 ## Real Network Test Set Results
@@ -201,14 +201,17 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
-- further compressing BFCL web-search misses around query shaping, grounding, and replay-backed contents
+- carrying the BFCL web-search gain forward into richer search-plus-contents and memory-backed agentic cases
 - tightening provider compatibility around OpenAI, Anthropic, and Gemini tool-calling constraints
 - expanding durable MCP and federation coordination without widening the public runtime surface unnecessarily
 
 ## Design References
 
-- OpenAI function calling: <https://platform.openai.com/docs/guides/function-calling?api-mode=chat>
-- OpenAI structured outputs: <https://platform.openai.com/docs/guides/structured-outputs>
+- OpenAI function calling: <https://developers.openai.com/api/docs/guides/function-calling>
+- OpenAI structured outputs: <https://developers.openai.com/api/docs/guides/structured-outputs>
+- Anthropic tool use: <https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools>
+- Gemini function calling: <https://ai.google.dev/gemini-api/docs/function-calling>
+- BFCL v4 web search: <https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html>
 - Model Context Protocol: <https://modelcontextprotocol.io/specification>
 - SerpApi Search API: <https://serpapi.com/search-api>
 - FastAPI README style reference: <https://github.com/fastapi/fastapi>

@@ -179,14 +179,14 @@ uv run easy-agent doctor -c easy-agent.yml
 
 ## 验证方式
 
-这个未发布轮次保留 benchmark 快照，同时单独刷新 public-eval、Python verification 与 real-network 快照。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
+这个未发布轮次保留 2026 年 4 月 9 日的 benchmark 快照，同时单独刷新 2026 年 4 月 11 日的 public-eval、Python verification 与 real-network 快照。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
 ### 分数摘要
 
 | 测试集 | 分数 |
 | --- | ---: |
 | benchmark.overall | 100.0 |
-| public_eval.bfcl_overall | 69.64 |
+| public_eval.bfcl_overall | 85.71 |
 | public_eval.tau2_mock | 100.0 |
 
 ## 真实网络测试集结果
@@ -201,14 +201,17 @@ README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 
 
 完整补强路线见 [reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)。近期重点仍然是：
 
-- 继续压缩 BFCL web-search miss，聚焦 query shaping、grounding 与 replay-backed contents
+- 把这次 BFCL web-search 的改进继续推进到更完整的 search-plus-contents 与 memory-backed agentic case
 - 继续收紧围绕 OpenAI、Anthropic、Gemini tool-calling 约束的 provider 兼容性
 - 在不随意扩展公开运行时表面的前提下，继续推进 durable MCP 与 federation 协调
 
 ## 设计参考
 
-- OpenAI function calling：<https://platform.openai.com/docs/guides/function-calling?api-mode=chat>
-- OpenAI structured outputs：<https://platform.openai.com/docs/guides/structured-outputs>
+- OpenAI function calling：<https://developers.openai.com/api/docs/guides/function-calling>
+- OpenAI structured outputs：<https://developers.openai.com/api/docs/guides/structured-outputs>
+- Anthropic tool use：<https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools>
+- Gemini function calling：<https://ai.google.dev/gemini-api/docs/function-calling>
+- BFCL v4 web search：<https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html>
 - Model Context Protocol：<https://modelcontextprotocol.io/specification>
 - SerpApi Search API：<https://serpapi.com/search-api>
 - FastAPI README 风格参考：<https://github.com/fastapi/fastapi>
