@@ -179,14 +179,14 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-This unreleased round keeps the retained benchmark snapshot from April 9, 2026 while refreshing public-eval, Python verification, and the real-network snapshot on April 11, 2026. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+This unreleased round keeps the retained benchmark snapshot from April 9, 2026 while refreshing public-eval, Python verification, and the real-network snapshot on April 11, 2026. The repo-pinned BFCL agentic slice is now green. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
 | Test Set | Score |
 | --- | ---: |
 | benchmark.overall | 100.0 |
-| public_eval.bfcl_overall | 85.71 |
+| public_eval.bfcl_overall | 98.21 |
 | public_eval.tau2_mock | 100.0 |
 
 ## Real Network Test Set Results
@@ -201,7 +201,7 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
-- carrying the BFCL web-search gain forward into richer search-plus-contents and memory-backed agentic cases
+- extending the now-green repo-pinned BFCL agentic slice into wider official-style BFCL v4 coverage and the remaining multi-tool miss
 - tightening provider compatibility around OpenAI, Anthropic, and Gemini tool-calling constraints
 - expanding durable MCP and federation coordination without widening the public runtime surface unnecessarily
 

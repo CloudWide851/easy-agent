@@ -273,7 +273,15 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
     if str(case.get('suite') or '') == 'web_search':
         prompt += (
             ' For web-search title lookups, answer with the exact grounded page title only. '
+            'If the user explicitly asks you to read the page contents or answer a detail that depends on page text rather than the title/snippet, '
+            'first call web.search and then call web.contents only on grounded result ids or URLs from that search. '
             'If you provide structured output, use a JSON object with "answer" and optional "context" fields.'
+        )
+    if str(case.get('suite') or '') == 'memory':
+        prompt += (
+            ' For key-value memory tools, use a stable semantic key for the named entity and attribute. '
+            'When the request names one user and one preference or attribute, prefer a compact canonical key such as user:<name>:<field> '
+            'instead of inventing long natural-language variants.'
         )
     return prompt
 
@@ -502,7 +510,7 @@ def _build_tool_name_map(functions: list[dict[str, Any]]) -> dict[str, str]:
 def _normalize_truth_call(
     item: dict[str, Any],
     tool_name_map: dict[str, str] | None = None,
-) -> tuple[str, dict[str, list[Any]]]:
+) -> tuple[str, dict[str, Any]]:
     tool_name = next(iter(item.keys()))
     if tool_name_map is not None:
         tool_name = tool_name_map.get(tool_name, tool_name)
@@ -529,9 +537,20 @@ def _values_match(actual: Any, options: list[Any]) -> bool:
     return False
 
 
-def _truth_matches(actual: dict[str, Any], truth: dict[str, list[Any]]) -> float:
+def _truth_matches(actual: dict[str, Any], truth: dict[str, Any]) -> float:
+    variants = truth.get('any_of')
+    if isinstance(variants, list) and variants:
+        variant_scores = [
+            _truth_matches(actual, cast(dict[str, Any], variant))
+            for variant in variants
+            if isinstance(variant, dict)
+        ]
+        if variant_scores:
+            return max(variant_scores)
     scores: list[float] = []
     for key, options in truth.items():
+        if key == 'any_of':
+            continue
         if key not in actual:
             scores.append(1.0 if '' in options else 0.0)
             continue
@@ -557,7 +576,13 @@ def _extract_successful_tool_calls(trace: dict[str, Any]) -> list[dict[str, Any]
         if event.get('kind') != 'tool_call_succeeded':
             continue
         payload = event.get('payload', {})
-        calls.append({'name': payload.get('tool_name'), 'arguments': payload.get('arguments', {})})
+        calls.append(
+            {
+                'name': payload.get('tool_name'),
+                'arguments': payload.get('arguments', {}),
+                'result': payload.get('result'),
+            }
+        )
     return calls
 
 
@@ -667,14 +692,53 @@ def _extract_bfcl_answer_candidates(result: Any, result_summary: str, *, latest_
     return candidates
 
 
+def _score_expected_tool_result(case: dict[str, Any], actual_calls: list[dict[str, Any]]) -> bool:
+    expected = case.get('expected_tool_result')
+    if not isinstance(expected, dict):
+        return True
+    if len(actual_calls) != 1:
+        return False
+    actual_result = actual_calls[0].get('result')
+    if not isinstance(actual_result, dict):
+        return False
+    return _truth_matches(actual_result, cast(dict[str, Any], expected)) == 1.0
+
+
+def _build_bfcl_initial_messages(case: dict[str, Any]) -> list[ChatMessage]:
+    message_history = list(cast(list[dict[str, Any]], case.get('initial_state', {}).get('message_history', [])))
+    initial_messages: list[ChatMessage] = []
+    for item in message_history:
+        role = str(item.get('role') or '')
+        if role == 'assistant' and item.get('tool_calls'):
+            calls = [ToolCall.model_validate(call) for call in cast(list[dict[str, Any]], item['tool_calls'])]
+            initial_messages.append(ChatMessage(role='assistant', content=item.get('content', ''), tool_calls=calls))
+            continue
+        if role == 'tool':
+            initial_messages.append(
+                ChatMessage(
+                    role='tool',
+                    content=str(item.get('content', '')),
+                    name=str(item.get('name') or ''),
+                    tool_call_id=str(item.get('tool_call_id') or item.get('id') or ''),
+                )
+            )
+            continue
+        if role in {'system', 'user', 'assistant'}:
+            initial_messages.append(ChatMessage(role=cast(Any, role), content=str(item.get('content', ''))))
+    return initial_messages
+
+
 def _score_bfcl_answer(
     case: dict[str, Any],
     result: Any,
     result_summary: str,
     *,
     tool_success: bool,
+    actual_calls: list[dict[str, Any]] | None = None,
     latest_results: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, float]:
+    if actual_calls is not None and not _score_expected_tool_result(case, actual_calls):
+        return False, 0.0
     aliases = cast(list[str], case.get('expected_answer_aliases') or [])
     expected_answer = str(case.get('expected_answer') or '').strip()
     if expected_answer:
@@ -1030,12 +1094,16 @@ def _build_eval_tool_handler(
     *,
     web_search: PublicEvalWebSearchConfig,
     memory_state: dict[str, str],
+    memory_aliases: dict[str, str],
     budget_state: dict[str, int],
     search_state: dict[str, Any],
 ) -> Any:
     def guard_call_budget() -> None:
         if budget_state['successful_calls'] >= budget_state['allowed_calls']:
             raise RuntimeError('tool call budget exhausted for this BFCL case')
+
+    def resolve_memory_key(key: str) -> str:
+        return memory_aliases.get(key, key)
 
     if original_name == 'web.search':
         def search_handler(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -1063,6 +1131,7 @@ def _build_eval_tool_handler(
                 latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
                 grounded_urls=grounded_urls,
             )
+            search_state['latest_contents'] = list(result.get('results', []))
             budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
@@ -1072,22 +1141,25 @@ def _build_eval_tool_handler(
     if original_name == 'memory.put':
         def memory_put(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
             guard_call_budget()
-            key = str(arguments['key'])
+            raw_key = str(arguments['key'])
             value = str(arguments['value'])
+            key = resolve_memory_key(raw_key)
             memory_state[key] = value
             budget_state['successful_calls'] += 1
-            return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'value': value}
+            return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'requested_key': raw_key, 'value': value}
 
         return memory_put
     if original_name == 'memory.get':
         def memory_get(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
             guard_call_budget()
-            key = str(arguments['key'])
+            raw_key = str(arguments['key'])
+            key = resolve_memory_key(raw_key)
             budget_state['successful_calls'] += 1
             return {
                 'tool': tool_name,
                 'run_id': context.run_id,
                 'key': key,
+                'requested_key': raw_key,
                 'value': memory_state.get(key),
                 'found': key in memory_state,
             }
@@ -1096,10 +1168,11 @@ def _build_eval_tool_handler(
     if original_name == 'memory.delete':
         def memory_delete(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
             guard_call_budget()
-            key = str(arguments['key'])
+            raw_key = str(arguments['key'])
+            key = resolve_memory_key(raw_key)
             removed = memory_state.pop(key, None)
             budget_state['successful_calls'] += 1
-            return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'removed': removed is not None}
+            return {'tool': tool_name, 'run_id': context.run_id, 'key': key, 'requested_key': raw_key, 'removed': removed is not None}
 
         return memory_delete
     if original_name == 'memory.list':
@@ -1167,8 +1240,18 @@ async def _run_bfcl_case_attempt(
             str(key): str(value)
             for key, value in cast(dict[str, Any], case.get('initial_state', {}).get('memory', {})).items()
         }
+        memory_aliases: dict[str, str] = {}
+        for canonical_key, aliases in cast(dict[str, Any], case.get('initial_state', {}).get('memory_aliases', {})).items():
+            canonical = str(canonical_key)
+            if canonical not in memory_state:
+                continue
+            if isinstance(aliases, list):
+                for alias in aliases:
+                    alias_text = str(alias).strip()
+                    if alias_text and alias_text != canonical:
+                        memory_aliases[alias_text] = canonical
         budget_state = {'allowed_calls': len(case.get('ground_truth', [])), 'successful_calls': 0}
-        search_state: dict[str, Any] = {'latest_results': []}
+        search_state: dict[str, Any] = {'latest_results': [], 'latest_contents': []}
         for function in functions:
             original_name = str(function['name'])
             tool_name = tool_name_map[original_name]
@@ -1190,6 +1273,7 @@ async def _run_bfcl_case_attempt(
                     tool_name,
                     web_search=web_search,
                     memory_state=memory_state,
+                    memory_aliases=memory_aliases,
                     budget_state=budget_state,
                     search_state=search_state,
                 ),
@@ -1197,8 +1281,12 @@ async def _run_bfcl_case_attempt(
         start = time.perf_counter()
         try:
             await runtime.start()
+            session_id = f"bfcl-{case['id']}"
+            initial_messages = _build_bfcl_initial_messages(case)
+            if initial_messages:
+                runtime.store.save_session_messages(session_id, config.graph.name, initial_messages)
             prompt = _case_prompt(case)
-            result = await runtime.run(prompt)
+            result = await runtime.run(prompt, session_id=session_id if initial_messages else None)
             duration = time.perf_counter() - start
             trace = runtime.store.load_trace(result['run_id'])
             actual_calls = _extract_successful_tool_calls(trace)
@@ -1209,6 +1297,7 @@ async def _run_bfcl_case_attempt(
                 result.get('result'),
                 result_summary,
                 tool_success=tool_success,
+                actual_calls=actual_calls,
                 latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
             )
             return _BfclAttemptResult(

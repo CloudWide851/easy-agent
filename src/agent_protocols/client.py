@@ -33,7 +33,7 @@ class ProtocolAdapter(TypingProtocol):
 
 
 def _anthropic_tool(tool: ToolSpec, *, strict: bool = False) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         'name': tool.name,
         'description': tool.description,
         'input_schema': tool.input_schema,

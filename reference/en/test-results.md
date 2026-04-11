@@ -21,23 +21,23 @@
 
 | Test Set | Score | Avg Duration (s) |
 | --- | ---: | ---: |
-| public_eval.bfcl_simple | 100.0 | 4.9657 |
-| public_eval.bfcl_multiple | 100.0 | 6.2071 |
-| public_eval.bfcl_parallel_multiple | 100.0 | 7.1866 |
-| public_eval.bfcl_irrelevance | 100.0 | 4.0190 |
-| public_eval.bfcl_web_search | 100.0 | 4.2093 |
-| public_eval.bfcl_memory | 0.0 | 4.0552 |
-| public_eval.bfcl_format_sensitivity | 100.0 | 3.6896 |
-| public_eval.tau2_mock | 100.0 | 4.2969 |
+| public_eval.bfcl_simple | 100.0 | 5.3071 |
+| public_eval.bfcl_multiple | 87.5 | 6.8439 |
+| public_eval.bfcl_parallel_multiple | 100.0 | 8.9665 |
+| public_eval.bfcl_irrelevance | 100.0 | 5.1847 |
+| public_eval.bfcl_web_search | 100.0 | 8.3509 |
+| public_eval.bfcl_memory | 100.0 | 4.9598 |
+| public_eval.bfcl_format_sensitivity | 100.0 | 4.7317 |
+| public_eval.tau2_mock | 100.0 | 5.8595 |
 
 Current headline scores:
 
 | Category | Score |
 | --- | ---: |
-| public_eval.bfcl_overall | 85.71 |
-| public_eval.bfcl_case_pass_rate | 90.91 |
+| public_eval.bfcl_overall | 98.21 |
+| public_eval.bfcl_case_pass_rate | 97.22 |
 | public_eval.bfcl_core | 96.88 |
-| public_eval.bfcl_agentic | 66.67 |
+| public_eval.bfcl_agentic | 100.0 |
 | public_eval.tau2_mock | 100.0 |
 
 Scoring notes:
@@ -45,40 +45,39 @@ Scoring notes:
 - `public_eval.bfcl_overall` is the official-style subcategory accuracy over the BFCL suites currently evaluated in this repository scope. It is not the raw case pass rate.
 - `public_eval.bfcl_case_pass_rate` remains available as a diagnostic metric for individual-case success.
 - `public_eval.bfcl_web_search` is tracked as normalized final-answer accuracy, with tool-call match rates kept as diagnostic signals.
-- The repo-pinned BFCL web-search slice is currently green in this snapshot; the remaining BFCL misses are all in the memory slice.
+- The repo-pinned BFCL agentic slice is fully green in this snapshot, including the added search-plus-contents and memory-backed cases.
+- The remaining BFCL miss is currently one core multi-tool case rather than an agentic web-search or memory regression.
 
 Current retained blockers:
 
-- `public_eval.bfcl_memory.case memory_0`
-- `public_eval.bfcl_memory.case memory_1`
-- `public_eval.bfcl_memory.case memory_2`
+- `public_eval.bfcl_multiple.case multiple_7`
 
 ## Real-Network Snapshot
 
-Latest generated snapshot timestamp: `2026-04-11T05:08:31Z`
+Latest generated snapshot timestamp: `2026-04-11T06:35:04Z`
 
 | Test Set | Score | Duration (s) | Notes |
 | --- | ---: | ---: | --- |
-| real_network.cross_process_federation | 100.0 | 0.9272 | well-known discovery and send/poll federation |
-| real_network.live_model_federation_roundtrip | 100.0 | 8.1009 | loopback federation through the local A2A surface |
-| real_network.disconnect_retry_chaos | 100.0 | 4.3419 | callback retry and signed webhook delivery |
-| real_network.duplicate_delivery_replay_resilience | 100.0 | 3.9684 | replay-safe callback and durable task events |
-| real_network.workbench_reuse_process | 100.0 | 1.9216 | process workbench reuse |
-| real_network.workbench_reuse_container | 100.0 | 31.4660 | container warm-start and snapshot restore |
-| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 50.3835 | incremental container snapshot reuse |
-| real_network.workbench_reuse_microvm | 100.0 | 20.2400 | SSH-backed microVM reuse |
-| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 28.3170 | incremental microVM snapshot reuse |
-| real_network.replay_resume_failure_injection | 100.0 | 5.7929 | replay/resume failure injection |
+| real_network.cross_process_federation | 100.0 | 0.7472 | well-known discovery and send/poll federation |
+| real_network.live_model_federation_roundtrip | 100.0 | 6.8836 | loopback federation through the local A2A surface |
+| real_network.disconnect_retry_chaos | 100.0 | 4.0732 | callback retry and signed webhook delivery |
+| real_network.duplicate_delivery_replay_resilience | 100.0 | 3.9030 | replay-safe callback and durable task events |
+| real_network.workbench_reuse_process | 100.0 | 1.8304 | process workbench reuse |
+| real_network.workbench_reuse_container | 100.0 | 31.5884 | container warm-start and snapshot restore |
+| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 50.9175 | incremental container snapshot reuse |
+| real_network.workbench_reuse_microvm | 100.0 | 20.0722 | SSH-backed microVM reuse |
+| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 28.3898 | incremental microVM snapshot reuse |
+| real_network.replay_resume_failure_injection | 100.0 | 5.6027 | replay/resume failure injection |
 
 Warm-start telemetry summary:
 
 | Metric | Value |
 | --- | ---: |
 | telemetry.cache_hit_rate | 100.0 |
-| telemetry.container_warm_start_average_seconds | 5.3533 |
-| telemetry.microvm_warm_start_average_seconds | 8.2094 |
-| telemetry.snapshot_drift_ratio_average | 0.3456 |
-| telemetry.snapshot_drift_ratio_max | 0.5177 |
+| telemetry.container_warm_start_average_seconds | 5.6855 |
+| telemetry.microvm_warm_start_average_seconds | 8.2140 |
+| telemetry.snapshot_drift_ratio_average | 0.3801 |
+| telemetry.snapshot_drift_ratio_max | 0.6447 |
 
 ## Similar Agent Project Comparison
 
@@ -96,8 +95,9 @@ The README keeps the comparison high level. This page keeps the public evidence 
 This round uses Python-based verification only.
 
 - Static checks: `ruff` and `mypy`
-- Targeted regressions around provider adapters, BFCL web-search grounding, and README snapshots
-- Full unit coverage
-- Full real integration coverage, including the refreshed public-eval and real-network paths
+- Targeted regressions around provider adapters, BFCL search-plus-contents grounding, memory semantics, and README snapshots
+- Full unit coverage: `166 passed`
+- Full real integration coverage: `5 passed`, `5 warnings`
+- Fresh live public-eval refresh with a temporary checkpoint and usage ledger after the final BFCL memory alias adjustment
 
 Exact machine-local execution logs stay outside the repository-facing documentation surface.

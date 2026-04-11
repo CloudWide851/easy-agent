@@ -2,7 +2,7 @@
 
 ## 当前重点
 
-- 把这次 BFCL web-search 的提升继续推进到更完整的 BFCL v4 search-plus-contents 与 memory-backed agentic case。
+- 在保持 repo-pinned BFCL agentic 子集全绿的前提下，继续向更广的 official BFCL v4 覆盖面推进。
 - 继续强化 OpenAI-compatible provider 在 strict function calling 与 structured outputs 约束下的兼容行为。
 - 在不随意扩大 public runtime surface 的前提下，继续推进 MCP 与 federation 的 durable coordination。
 
@@ -11,8 +11,10 @@
 - 继续以 SerpApi `/search.json` 作为 repo-pinned BFCL 评测的显式搜索链路。
 - 保留 quota ledger 与 replay fallback。
 - 继续收紧 result-id grounding，让 `web.contents` 只消费由最近一次 search 或 replay 证据支撑的 URL。
-- 把当前 exact-title 单调用成功路径继续扩展到官方 BFCL v4 风格的 search-plus-contents 与 multihop 问题，并保持最终答案对检索证据可回溯。
+- 把当前已经交付的 exact-title、search-plus-contents 与 memory-backed agentic case 作为回归基线。
+- 在此基础上继续扩展到更广的官方 BFCL v4 风格 search-plus-contents、multihop 与剩余 multi-tool case，并保持最终答案对检索证据可回溯。
 - 让最终答案同时兼容简洁纯文本或 `{\"answer\": ..., \"context\": ...}` 这样的结构化载荷，这样可以增强 answer scoring，而不是放松 evaluator。
+- 对 memory read/delete 这类 case，继续保持 tool-result truth 校验，而不是只看 arguments 命中。
 
 ## Provider 兼容性
 
@@ -50,6 +52,7 @@
 - optional-to-required-nullable promotion
 - 单调用与并行调用控制
 - `auto` / `none` / `required` / forced tool-choice 行为
+- 在声称更广兼容性之前，先确保 OpenAI-compatible chat-completions 风格工具面保持可验证对齐
 
 参考：
 

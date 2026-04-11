@@ -179,14 +179,14 @@ uv run easy-agent doctor -c easy-agent.yml
 
 ## 验证方式
 
-这个未发布轮次保留 2026 年 4 月 9 日的 benchmark 快照，同时单独刷新 2026 年 4 月 11 日的 public-eval、Python verification 与 real-network 快照。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
+这个未发布轮次保留 2026 年 4 月 9 日的 benchmark 快照，同时单独刷新 2026 年 4 月 11 日的 public-eval、Python verification 与 real-network 快照。当前 repo-pinned BFCL agentic 子集已经转绿。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
 ### 分数摘要
 
 | 测试集 | 分数 |
 | --- | ---: |
 | benchmark.overall | 100.0 |
-| public_eval.bfcl_overall | 85.71 |
+| public_eval.bfcl_overall | 98.21 |
 | public_eval.tau2_mock | 100.0 |
 
 ## 真实网络测试集结果
@@ -201,7 +201,7 @@ README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 
 
 完整补强路线见 [reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)。近期重点仍然是：
 
-- 把这次 BFCL web-search 的改进继续推进到更完整的 search-plus-contents 与 memory-backed agentic case
+- 把已经转绿的 repo-pinned BFCL agentic 子集继续推进到更广的 official-style BFCL v4 覆盖面，并压缩剩余 multi-tool miss
 - 继续收紧围绕 OpenAI、Anthropic、Gemini tool-calling 约束的 provider 兼容性
 - 在不随意扩展公开运行时表面的前提下，继续推进 durable MCP 与 federation 协调
 

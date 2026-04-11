@@ -2,7 +2,7 @@
 
 ## Immediate Focus
 
-- Carry the BFCL web-search gain forward into richer BFCL v4 search-plus-contents and memory-backed agentic cases.
+- Keep the now-green repo-pinned BFCL agentic slice green while extending it toward wider official BFCL v4 coverage.
 - Continue hardening OpenAI-compatible provider behavior around strict function calling and structured outputs.
 - Keep MCP and federation durability moving forward without widening the public runtime surface unnecessarily.
 
@@ -11,8 +11,10 @@
 - Keep SerpApi `/search.json` as the explicit search transport for repo-pinned BFCL evaluation.
 - Preserve quota ledger and replay fallback behavior.
 - Keep improving result-id grounding so `web.contents` consumes only URLs justified by the latest search step or replay evidence.
-- Extend the current exact-title single-call success path into official BFCL v4-style search-plus-contents and multihop questions, where the final answer should remain grounded to the retrieved evidence.
+- Preserve the shipped exact-title, search-plus-contents, and memory-backed agentic cases as a regression floor.
+- Extend the current repo-pinned green path into wider official BFCL v4-style search-plus-contents, multihop, and remaining multi-tool cases, where the final answer should remain grounded to the retrieved evidence.
 - Keep the final-answer path compatible with either concise plain text or a structured `{"answer": ..., "context": ...}` payload so answer scoring stays robust without loosening the evaluator.
+- Keep memory semantics explicit by validating tool-result truth for read/delete style cases instead of relying on argument matches alone.
 
 ## Provider Compatibility
 
@@ -50,6 +52,7 @@ Public regression coverage should continue to assert:
 - optional-to-required-nullable promotion
 - single-call and parallel-call controls
 - `auto` / `none` / `required` / forced tool-choice behavior
+- OpenAI-compatible parity on the current chat-completions style tool surface before claiming broader compatibility
 
 Reference:
 

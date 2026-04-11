@@ -1,5 +1,5 @@
 {
-  "snapshot_note": "Pinned repo-local BFCL v4-aligned web-search cases generated on 2026-04-09 from public BFCL v4 category descriptions and official docs targets.",
+  "snapshot_note": "Pinned repo-local BFCL v4-aligned web-search cases refreshed on 2026-04-11 with exact-title and search-plus-contents coverage grounded in public official docs targets.",
   "cases": [
     {
       "id": "web_search_0",
@@ -17,10 +17,17 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "query": {"type": "string"},
-              "num_results": {"type": "integer", "optional": true}
+              "query": {
+                "type": "string"
+              },
+              "num_results": {
+                "type": "integer",
+                "optional": true
+              }
             },
-            "required": ["query"]
+            "required": [
+              "query"
+            ]
           }
         }
       ],
@@ -32,7 +39,11 @@
               "official OpenAI Structured Outputs guide",
               "OpenAI Structured Outputs guide"
             ],
-            "num_results": [5, 3, ""]
+            "num_results": [
+              5,
+              3,
+              ""
+            ]
           }
         }
       ],
@@ -66,10 +77,17 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "query": {"type": "string"},
-              "num_results": {"type": "integer", "optional": true}
+              "query": {
+                "type": "string"
+              },
+              "num_results": {
+                "type": "integer",
+                "optional": true
+              }
             },
-            "required": ["query"]
+            "required": [
+              "query"
+            ]
           }
         }
       ],
@@ -81,7 +99,11 @@
               "official LangGraph durable execution docs",
               "LangGraph durable execution docs"
             ],
-            "num_results": [5, 3, ""]
+            "num_results": [
+              5,
+              3,
+              ""
+            ]
           }
         }
       ],
@@ -115,10 +137,17 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "query": {"type": "string"},
-              "num_results": {"type": "integer", "optional": true}
+              "query": {
+                "type": "string"
+              },
+              "num_results": {
+                "type": "integer",
+                "optional": true
+              }
             },
-            "required": ["query"]
+            "required": [
+              "query"
+            ]
           }
         }
       ],
@@ -130,7 +159,11 @@
               "official AutoGen Teams docs",
               "AutoGen Teams docs"
             ],
-            "num_results": [5, 3, ""]
+            "num_results": [
+              5,
+              3,
+              ""
+            ]
           }
         }
       ],
@@ -148,6 +181,247 @@
         "teams auto gen"
       ],
       "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "web_search_3",
+      "suite": "web_search",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Search the web for the official OpenAI function calling guide, then read the top result. Which tool definition flag enables strict schema adherence for function arguments? Return just the flag."
+        }
+      ],
+      "functions": [
+        {
+          "name": "web.search",
+          "description": "Search the public web and return top results for a query.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "num_results": {
+                "type": "integer",
+                "optional": true
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        },
+        {
+          "name": "web.contents",
+          "description": "Fetch the text contents for grounded search results by result id or URL.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "result_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "optional": true
+              },
+              "urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "optional": true
+              }
+            }
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "web.search": {
+            "query": [
+              "OpenAI function calling official docs",
+              "official OpenAI function calling guide",
+              "OpenAI function calling guide"
+            ],
+            "num_results": [
+              5,
+              3,
+              ""
+            ]
+          }
+        },
+        {
+          "web.contents": {
+            "any_of": [
+              {
+                "result_ids": [
+                  [
+                    1
+                  ],
+                  [
+                    0
+                  ]
+                ],
+                "urls": [
+                  ""
+                ]
+              },
+              {
+                "result_ids": [
+                  ""
+                ],
+                "urls": [
+                  [
+                    "https://platform.openai.com/docs/guides/function-calling"
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "replay_results": [
+        {
+          "title": "Function calling",
+          "link": "https://platform.openai.com/docs/guides/function-calling",
+          "snippet": "Function calling lets models generate structured arguments for your tools."
+        }
+      ],
+      "replay_contents": [
+        {
+          "title": "Function calling",
+          "link": "https://platform.openai.com/docs/guides/function-calling",
+          "text": "Function calling supports structured tool arguments. To ensure the generated arguments follow your schema, mark the function definition with strict: true. Strict mode is part of Structured Outputs."
+        }
+      ],
+      "expected_answer": "strict: true",
+      "expected_answer_aliases": [
+        "strict true",
+        "strict"
+      ],
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html"
+    },
+    {
+      "id": "web_search_4",
+      "suite": "web_search",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Search the web for the official OpenAI Structured Outputs guide, then read the page contents. Which JSON Schema setting should usually be set to false for strict outputs? Return only the setting."
+        }
+      ],
+      "functions": [
+        {
+          "name": "web.search",
+          "description": "Search the public web and return top results for a query.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "num_results": {
+                "type": "integer",
+                "optional": true
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        },
+        {
+          "name": "web.contents",
+          "description": "Fetch the text contents for grounded search results by result id or URL.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "result_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "optional": true
+              },
+              "urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "optional": true
+              }
+            }
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "web.search": {
+            "query": [
+              "OpenAI Structured Outputs official docs",
+              "official OpenAI Structured Outputs guide",
+              "OpenAI Structured Outputs guide"
+            ],
+            "num_results": [
+              5,
+              3,
+              ""
+            ]
+          }
+        },
+        {
+          "web.contents": {
+            "any_of": [
+              {
+                "result_ids": [
+                  [
+                    1
+                  ],
+                  [
+                    0
+                  ]
+                ],
+                "urls": [
+                  ""
+                ]
+              },
+              {
+                "result_ids": [
+                  ""
+                ],
+                "urls": [
+                  [
+                    "https://platform.openai.com/docs/guides/structured-outputs"
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "replay_results": [
+        {
+          "title": "Structured Outputs",
+          "link": "https://platform.openai.com/docs/guides/structured-outputs",
+          "snippet": "Learn how to constrain model responses to match a JSON Schema."
+        }
+      ],
+      "replay_contents": [
+        {
+          "title": "Structured Outputs",
+          "link": "https://platform.openai.com/docs/guides/structured-outputs",
+          "text": "Structured Outputs requires all properties to be required. To opt out of undeclared fields, set additionalProperties: false in the schema. Optional fields should be modeled as required and nullable instead."
+        }
+      ],
+      "expected_answer": "additionalProperties: false",
+      "expected_answer_aliases": [
+        "additionalproperties false",
+        "additionalproperties: false",
+        "additionalproperties"
+      ],
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html"
     }
   ]
 }

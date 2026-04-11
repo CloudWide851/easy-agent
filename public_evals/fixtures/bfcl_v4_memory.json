@@ -1,5 +1,5 @@
 {
-  "snapshot_note": "Pinned repo-local BFCL v4-aligned memory cases generated on 2026-04-09 from public BFCL v4 category descriptions.",
+  "snapshot_note": "Pinned repo-local BFCL v4-aligned memory cases refreshed on 2026-04-11 with stable key aliases and memory-backed context coverage.",
   "cases": [
     {
       "id": "memory_0",
@@ -17,10 +17,17 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "key": {"type": "string"},
-              "value": {"type": "string"}
+              "key": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
             },
-            "required": ["key", "value"]
+            "required": [
+              "key",
+              "value"
+            ]
           }
         },
         {
@@ -29,17 +36,29 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "key": {"type": "string"}
+              "key": {
+                "type": "string"
+              }
             },
-            "required": ["key"]
+            "required": [
+              "key"
+            ]
           }
         }
       ],
       "ground_truth": [
         {
           "memory.put": {
-            "key": ["user:alice:editor"],
-            "value": ["vscode", "VS Code"]
+            "key": [
+              "user:alice:editor",
+              "user:alice:editor_preference",
+              "alice_editor_preference",
+              "editor_preference_alice"
+            ],
+            "value": [
+              "vscode",
+              "VS Code"
+            ]
           }
         }
       ],
@@ -62,10 +81,17 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "key": {"type": "string"},
-              "value": {"type": "string"}
+              "key": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
             },
-            "required": ["key", "value"]
+            "required": [
+              "key",
+              "value"
+            ]
           }
         },
         {
@@ -74,23 +100,52 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "key": {"type": "string"}
+              "key": {
+                "type": "string"
+              }
             },
-            "required": ["key"]
+            "required": [
+              "key"
+            ]
           }
         }
       ],
       "ground_truth": [
         {
           "memory.get": {
-            "key": ["user:alice:editor"]
+            "key": [
+              "user:alice:editor",
+              "user:alice:editor_preference",
+              "alice_editor_preference",
+              "editor_preference_alice"
+            ]
           }
         }
       ],
       "expect_no_tool": false,
+      "expected_tool_result": {
+        "found": [
+          true
+        ],
+        "value": [
+          "vscode",
+          "VS Code"
+        ]
+      },
+      "expected_answer": "vscode",
+      "expected_answer_aliases": [
+        "VS Code"
+      ],
       "initial_state": {
         "memory": {
           "user:alice:editor": "vscode"
+        },
+        "memory_aliases": {
+            "user:alice:editor": [
+            "user:alice:editor_preference",
+            "alice_editor_preference",
+            "editor_preference_alice"
+          ]
         }
       },
       "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
@@ -111,9 +166,13 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "key": {"type": "string"}
+              "key": {
+                "type": "string"
+              }
             },
-            "required": ["key"]
+            "required": [
+              "key"
+            ]
           }
         },
         {
@@ -122,26 +181,142 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "key": {"type": "string"}
+              "key": {
+                "type": "string"
+              }
             },
-            "required": ["key"]
+            "required": [
+              "key"
+            ]
           }
         }
       ],
       "ground_truth": [
         {
           "memory.delete": {
-            "key": ["user:alice:editor"]
+            "key": [
+              "user:alice:editor",
+              "user:alice:editor_preference",
+              "alice_editor_preference",
+              "editor_preference_alice"
+            ]
           }
         }
       ],
       "expect_no_tool": false,
+      "expected_tool_result": {
+        "removed": [
+          true
+        ]
+      },
       "initial_state": {
         "memory": {
           "user:alice:editor": "vscode"
+        },
+        "memory_aliases": {
+            "user:alice:editor": [
+            "user:alice:editor_preference",
+            "alice_editor_preference",
+            "editor_preference_alice"
+          ]
         }
       },
       "source_url": "https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html"
+    },
+    {
+      "id": "memory_3",
+      "suite": "memory",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Delete that saved editor preference for alice from memory."
+        }
+      ],
+      "functions": [
+        {
+          "name": "memory.delete",
+          "description": "Delete a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key"
+            ]
+          }
+        },
+        {
+          "name": "memory.get",
+          "description": "Load a memory value by key.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key"
+            ]
+          }
+        }
+      ],
+      "ground_truth": [
+        {
+          "memory.delete": {
+            "key": [
+              "user:alice:editor",
+              "user:alice:editor_preference",
+              "alice_editor_preference",
+              "editor_preference_alice"
+            ]
+          }
+        }
+      ],
+      "expect_no_tool": false,
+      "expected_tool_result": {
+        "removed": [
+          true
+        ]
+      },
+      "initial_state": {
+        "memory": {
+          "user:alice:editor": "vscode"
+        },
+        "memory_aliases": {
+            "user:alice:editor": [
+            "user:alice:editor_preference",
+            "alice_editor_preference",
+            "editor_preference_alice"
+          ]
+        },
+        "message_history": [
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_memory_put_1",
+                "name": "memory_put",
+                "arguments": {
+                  "key": "user:alice:editor",
+                  "value": "vscode"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "name": "memory_put",
+            "tool_call_id": "call_memory_put_1",
+            "content": "{\"tool\":\"memory_put\",\"key\":\"user:alice:editor\",\"value\":\"vscode\"}"
+          }
+        ]
+      },
+      "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html"
     }
   ]
 }

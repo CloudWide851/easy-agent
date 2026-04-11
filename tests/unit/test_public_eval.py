@@ -13,6 +13,7 @@ from agent_runtime.public_eval import (
     _aggregate_failure_buckets,
     _aggregate_stage_summary,
     _aggregate_summary,
+    _build_bfcl_initial_messages,
     _build_eval_tool_handler,
     _build_tool_name_map,
     _classify_failure_bucket,
@@ -267,6 +268,8 @@ def test_load_public_eval_inputs_expands_full_v4_profile() -> None:
     assert any(case['suite'] == 'web_search' for case in bfcl_cases)
     assert any(case['suite'] == 'memory' for case in bfcl_cases)
     assert any(case['suite'] == 'format_sensitivity' for case in bfcl_cases)
+    assert any(case['suite'] == 'web_search' and len(case['ground_truth']) == 2 for case in bfcl_cases)
+    assert any(case['suite'] == 'memory' and case.get('initial_state', {}).get('message_history') for case in bfcl_cases)
     assert tau_cases
 
 
@@ -631,6 +634,29 @@ def test_fetch_web_contents_resolves_latest_search_result_ids(tmp_path: Path) ->
     assert result['results'][0]['title'] == 'Replay'
 
 
+def test_score_bfcl_case_accepts_any_of_truth_variants() -> None:
+    success, tool_match, arg_match = _score_bfcl_case(
+        {
+            'expect_no_tool': False,
+            'ground_truth': [
+                {
+                    'web.contents': {
+                        'any_of': [
+                            {'result_ids': [[1]], 'urls': ['']},
+                            {'result_ids': [''], 'urls': [['https://example.com/doc']]},
+                        ]
+                    }
+                }
+            ],
+        },
+        [{'name': 'web.contents', 'arguments': {'urls': ['https://example.com/doc']}}],
+    )
+
+    assert success is True
+    assert tool_match == 1.0
+    assert arg_match == 1.0
+
+
 def test_score_bfcl_answer_accepts_grounded_search_title_from_wrapped_text() -> None:
     success, answer_match = _score_bfcl_answer(
         {
@@ -647,6 +673,20 @@ def test_score_bfcl_answer_accepts_grounded_search_title_from_wrapped_text() -> 
     assert answer_match == 1.0
 
 
+def test_score_bfcl_answer_requires_expected_tool_result_when_declared() -> None:
+    success, answer_match = _score_bfcl_answer(
+        {'expected_tool_result': {'found': [True], 'value': ['vscode']}},
+        'No editor preference stored.',
+        'No editor preference stored.',
+        tool_success=True,
+        actual_calls=[{'name': 'memory_get', 'arguments': {'key': 'user:alice:editor'}, 'result': {'found': False, 'value': None}}],
+        latest_results=[],
+    )
+
+    assert success is False
+    assert answer_match == 0.0
+
+
 def test_score_bfcl_answer_accepts_structured_answer_payload() -> None:
     success, answer_match = _score_bfcl_answer(
         {
@@ -661,6 +701,34 @@ def test_score_bfcl_answer_accepts_structured_answer_payload() -> None:
 
     assert success is True
     assert answer_match == 1.0
+
+
+def test_build_bfcl_initial_messages_restores_tool_history() -> None:
+    messages = _build_bfcl_initial_messages(
+        {
+            'initial_state': {
+                'message_history': [
+                    {
+                        'role': 'assistant',
+                        'content': '',
+                        'tool_calls': [{'id': 'call_1', 'name': 'memory_put', 'arguments': {'key': 'user:alice:editor'}}],
+                    },
+                    {
+                        'role': 'tool',
+                        'name': 'memory_put',
+                        'tool_call_id': 'call_1',
+                        'content': '{"tool":"memory_put","key":"user:alice:editor"}',
+                    },
+                ]
+            }
+        }
+    )
+
+    assert messages[0].role == 'assistant'
+    assert messages[0].tool_calls[0].name == 'memory_put'
+    assert messages[1].role == 'tool'
+    assert messages[1].name == 'memory_put'
+    assert messages[1].tool_call_id == 'call_1'
 
 
 @respx.mock
@@ -752,6 +820,7 @@ def test_build_eval_tool_handler_blocks_calls_beyond_bfcl_budget(tmp_path: Path)
         'web_search',
         web_search=config,
         memory_state={},
+        memory_aliases={},
         budget_state={'allowed_calls': 1, 'successful_calls': 1},
         search_state={'latest_results': []},
     )
@@ -761,6 +830,34 @@ def test_build_eval_tool_handler_blocks_calls_beyond_bfcl_budget(tmp_path: Path)
 
     with pytest.raises(RuntimeError, match='budget exhausted'):
         handler({'query': 'OpenAI'}, _Context())
+
+
+def test_build_eval_tool_handler_resolves_memory_aliases() -> None:
+    handler = _build_eval_tool_handler(
+        {'ground_truth': [{}]},
+        'memory.get',
+        'memory_get',
+        web_search=AppConfig.model_validate(
+            {
+                'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+                'evaluation': {'public_eval': {'web_search': {'usage_path': 'usage.json'}}},
+            }
+        ).evaluation.public_eval.web_search,
+        memory_state={'user:alice:editor': 'vscode'},
+        memory_aliases={'alice_editor_preference': 'user:alice:editor'},
+        budget_state={'allowed_calls': 1, 'successful_calls': 0},
+        search_state={'latest_results': [], 'latest_contents': []},
+    )
+
+    class _Context:
+        run_id = 'run-memory'
+
+    result = handler({'key': 'alice_editor_preference'}, _Context())
+
+    assert result['key'] == 'user:alice:editor'
+    assert result['requested_key'] == 'alice_editor_preference'
+    assert result['found'] is True
+    assert result['value'] == 'vscode'
 
 
 def test_public_eval_checkpoint_round_trip_restores_records(tmp_path: Path) -> None:
