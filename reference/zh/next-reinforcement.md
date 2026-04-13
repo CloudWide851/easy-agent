@@ -43,10 +43,11 @@
   - 把 provider-neutral tool-choice controls 映射到 `tool_choice`
   - 在串行工具调用场景使用 `disable_parallel_tool_use`
   - 让 strict-tool 发包继续对齐当前 Claude tools 定义面
+  - 在发请求前对 tool input schema 做归一化，这样 strict object shape、`additionalProperties: false` 与 nullable-required promotion 就是测试覆盖的真实能力，而不只是文档描述
 - Gemini：
   - 把 provider-neutral tool-choice controls 映射到 `functionCallingConfig.mode`
   - 对 forced-tool / required-tool 场景使用 `allowedFunctionNames`
-  - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集
+  - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集，并覆盖当前 strict nullable/optional 参数建模路径
   - 不要把 provider 只有 mode-level 控制的能力误写成显式 single-call enforcement
 
 公开回归覆盖需要继续断言：
@@ -58,6 +59,12 @@
 - 单调用与并行调用控制
 - `auto` / `none` / `required` / forced tool-choice 行为
 - 在声称更广兼容性之前，先确保 OpenAI-compatible chat-completions 风格工具面保持可验证对齐
+
+在当前基线之上的更好发展方向：
+
+- 增加 OpenAI Responses API 的对齐测试与适配说明，不再默认 chat-completions 对齐就足够长期成立
+- 为 Anthropic 与 Gemini 增加 provider-specific 的负向兼容回归，让不支持的 schema 或 mode 组合能被明确观测出来
+- 为当前 strict function-calling 兼容矩阵增加 live provider-specific 回归，而不是只依赖静态 payload 检查
 
 参考：
 

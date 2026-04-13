@@ -36,7 +36,7 @@ def _anthropic_tool(tool: ToolSpec, *, strict: bool = False) -> dict[str, Any]:
     payload: dict[str, Any] = {
         'name': tool.name,
         'description': tool.description,
-        'input_schema': tool.input_schema,
+        'input_schema': normalize_json_schema(tool.input_schema, strict=strict),
     }
     if strict:
         payload['strict'] = True
@@ -318,13 +318,14 @@ class GeminiAdapter:
         if system_parts:
             payload['systemInstruction'] = {'parts': [{'text': '\n'.join(system_parts)}]}
         if selected_tools:
+            function_calling = config.function_calling
             payload['tools'] = [
                 {
                     'functionDeclarations': [
                         {
                             'name': tool.name,
                             'description': tool.description,
-                            'parameters': _openai_safe_schema(tool.input_schema),
+                            'parameters': _openai_safe_schema(tool.input_schema, strict=function_calling.strict),
                         }
                         for tool in selected_tools
                     ]
@@ -332,14 +333,14 @@ class GeminiAdapter:
             ]
             mode = 'AUTO'
             allowed_function_names: list[str] = []
-            if config.function_calling.mode == 'none':
+            if function_calling.mode == 'none':
                 mode = 'NONE'
-            elif config.function_calling.mode == 'required':
+            elif function_calling.mode == 'required':
                 mode = 'ANY'
                 allowed_function_names = [tool.name for tool in selected_tools]
-            elif config.function_calling.mode == 'force' and config.function_calling.forced_tool_name:
+            elif function_calling.mode == 'force' and function_calling.forced_tool_name:
                 mode = 'ANY'
-                allowed_function_names = [config.function_calling.forced_tool_name]
+                allowed_function_names = [function_calling.forced_tool_name]
             payload['toolConfig'] = {'functionCallingConfig': {'mode': mode}}
             if allowed_function_names:
                 payload['toolConfig']['functionCallingConfig']['allowedFunctionNames'] = allowed_function_names

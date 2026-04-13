@@ -13,9 +13,11 @@ from agent_runtime.public_eval import (
     _aggregate_failure_buckets,
     _aggregate_stage_summary,
     _aggregate_summary,
+    _BfclAttemptResult,
     _build_bfcl_initial_messages,
     _build_eval_tool_handler,
     _build_tool_name_map,
+    _candidate_pruned_functions,
     _classify_failure_bucket,
     _extract_tau_tasks_from_history,
     _fetch_web_contents,
@@ -27,6 +29,7 @@ from agent_runtime.public_eval import (
     _provider_schema_matrix,
     _record_web_search_usage,
     _restore_checkpoint_records,
+    _run_bfcl_case,
     _save_public_eval_checkpoint,
     _score_bfcl_answer,
     _score_bfcl_case,
@@ -277,14 +280,153 @@ def test_provider_schema_matrix_reflects_adapter_behavior() -> None:
     assert matrix['openai_compatible']['features']['single_tool_call_control']['supported'] is True
     assert matrix['openai_compatible']['features']['tool_choice_required']['supported'] is True
     assert matrix['openai_compatible']['features']['forced_tool_choice']['supported'] is True
+    assert matrix['anthropic']['features']['root_object_alias']['supported'] is True
+    assert matrix['anthropic']['features']['invalid_required_pruned']['supported'] is True
+    assert matrix['anthropic']['features']['additional_properties_false']['supported'] is True
+    assert matrix['anthropic']['features']['nullable_preserved']['supported'] is True
+    assert matrix['anthropic']['features']['optional_promoted_to_required_nullable']['supported'] is True
+    assert matrix['anthropic']['features']['strict_flag']['supported'] is True
+    assert matrix['anthropic']['features']['single_tool_call_control']['supported'] is True
     assert matrix['gemini']['features']['format_removed']['supported'] is True
+    assert matrix['gemini']['features']['additional_properties_false']['supported'] is True
+    assert matrix['gemini']['features']['nullable_preserved']['supported'] is True
+    assert matrix['gemini']['features']['optional_promoted_to_required_nullable']['supported'] is True
     assert matrix['gemini']['features']['tool_choice_none']['supported'] is True
     assert matrix['gemini']['features']['forced_tool_choice']['supported'] is True
     assert matrix['gemini']['features']['single_tool_call_control']['supported'] is False
-    assert matrix['anthropic']['features']['root_object_alias']['supported'] is False
-    assert matrix['anthropic']['features']['invalid_required_pruned']['supported'] is False
-    assert matrix['anthropic']['features']['strict_flag']['supported'] is True
-    assert matrix['anthropic']['features']['single_tool_call_control']['supported'] is True
+
+
+def test_candidate_pruned_functions_returns_none_for_same_selection() -> None:
+    prompt = 'Calculate the area of a rectangle with length 7 and breadth 3.'
+    functions = [
+        {
+            'name': 'area_rectangle.calculate',
+            'description': 'Calculate the area of a rectangle given the length and breadth.',
+            'parameters': {'type': 'dict', 'properties': {'length': {'type': 'float'}, 'breadth': {'type': 'float'}}},
+        }
+    ]
+
+    assert _candidate_pruned_functions(prompt, functions, functions) is None
+
+
+@pytest.mark.asyncio
+async def test_run_bfcl_case_retries_candidate_pruned_after_unsuccessful_strict_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_runtime.public_eval as public_eval_module
+
+    prompt = 'How to assess the population growth in deer and their impact on woodland in Washington state over the past decade?'
+    case = {
+        'id': 'multiple_7',
+        'suite': 'multiple',
+        'messages': [{'role': 'user', 'content': prompt}],
+        'functions': [
+            {
+                'name': 'wildlife_population.assess_growth',
+                'description': 'Assesses the population growth of a specific species in a specified location over a period.',
+                'parameters': {
+                    'type': 'dict',
+                    'properties': {
+                        'species': {'type': 'string'},
+                        'location': {'type': 'string'},
+                        'duration': {'type': 'integer'},
+                    },
+                },
+            },
+            {
+                'name': 'ecological_impact.analyze',
+                'description': 'Analyzes the impact of a species on a particular ecosystem.',
+                'parameters': {
+                    'type': 'dict',
+                    'properties': {
+                        'species': {'type': 'string'},
+                        'ecosystem': {'type': 'string'},
+                        'location': {'type': 'string'},
+                        'timeframe': {'type': 'integer'},
+                    },
+                },
+            },
+            {
+                'name': 'volume_cylinder.calculate',
+                'description': 'Calculate the volume of a cylinder given the radius and the height.',
+                'parameters': {
+                    'type': 'dict',
+                    'properties': {
+                        'radius': {'type': 'float'},
+                        'height': {'type': 'float'},
+                    },
+                },
+            },
+        ],
+        'ground_truth': [
+            {'wildlife_population.assess_growth': {'species': ['deer']}},
+            {'ecological_impact.analyze': {'species': ['deer']}},
+        ],
+    }
+    base_config = AppConfig.model_validate(
+        {'model': {'provider': 'deepseek'}, 'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}]}}
+    )
+    attempts: list[tuple[str, list[str], bool]] = []
+
+    async def fake_run_bfcl_case_attempt(
+        base_config: AppConfig,
+        case: dict[str, object],
+        *,
+        shared: dict[str, object],
+        tool_name_map: dict[str, str],
+        functions: list[dict[str, object]],
+        fallback_stage: str,
+        fallback_attempts: list[str],
+        strict_schema: bool,
+    ) -> _BfclAttemptResult:
+        del base_config, case, shared, tool_name_map
+        attempts.append((fallback_stage, [str(item['name']) for item in functions], strict_schema))
+        if fallback_stage != 'candidate_pruned_retry':
+            return _BfclAttemptResult(
+                record=PublicEvalRecord(
+                    suite='bfcl_multiple',
+                    case_id='multiple_7',
+                    success=False,
+                    duration_seconds=1.0,
+                    tool_name_match=0.5,
+                    argument_match=0.5,
+                    expected_call_count=2,
+                    actual_call_count=1,
+                    result_summary='partial',
+                    error=json.dumps({'actual_calls': [{'name': 'wildlife_population.assess_growth', 'arguments': {'species': 'deer'}}]}),
+                    fallback_stage=fallback_stage,
+                    fallback_attempts=list(fallback_attempts),
+                ),
+                duration_seconds=1.0,
+            )
+        return _BfclAttemptResult(
+            record=PublicEvalRecord(
+                suite='bfcl_multiple',
+                case_id='multiple_7',
+                success=True,
+                duration_seconds=1.0,
+                tool_name_match=1.0,
+                argument_match=1.0,
+                expected_call_count=2,
+                actual_call_count=2,
+                result_summary='ok',
+                fallback_stage=fallback_stage,
+                fallback_attempts=list(fallback_attempts),
+            ),
+            duration_seconds=1.0,
+        )
+
+    monkeypatch.setattr(public_eval_module, '_run_bfcl_case_attempt', fake_run_bfcl_case_attempt)
+
+    result = await _run_bfcl_case(base_config, case)
+
+    assert result.success is True
+    assert [stage for stage, _, _ in attempts] == ['base', 'strict_schema_retry', 'candidate_pruned_retry']
+    assert attempts[0][1] == [
+        'wildlife_population.assess_growth',
+        'ecological_impact.analyze',
+        'volume_cylinder.calculate',
+    ]
+    assert attempts[2][1] == ['wildlife_population.assess_growth', 'ecological_impact.analyze']
+    assert attempts[2][2] is True
 
 
 def test_load_public_eval_inputs_expands_full_v4_profile() -> None:

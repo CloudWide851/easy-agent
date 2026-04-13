@@ -275,7 +275,9 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         prompt += (
             ' When the user asks for two distinct analyses or outcomes about the same subject, '
             'treat them as coordinated required actions and issue one tool call per required analysis instead of collapsing them into a single partial answer. '
-            'Reuse the same grounded entity, location, and timeframe arguments across those calls when the request implies they are shared.'
+            'Reuse the same grounded entity, location, and timeframe arguments across those calls when the request implies they are shared. '
+            'If one required tool needs a contextual field such as ecosystem or timeframe, infer it from nearby nouns in the user request, '
+            'for example woodland, forest, wetland, river, city, or decade, instead of dropping the second required call.'
         )
     if str(case.get('suite') or '') == 'web_search':
         prompt += (
@@ -940,6 +942,17 @@ def _same_function_selection(left: list[dict[str, Any]], right: list[dict[str, A
     return [str(item['name']) for item in left] == [str(item['name']) for item in right]
 
 
+def _candidate_pruned_functions(
+    prompt: str,
+    current_functions: list[dict[str, Any]],
+    all_functions: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    candidate_functions = _select_bfcl_candidate_functions(prompt, all_functions)
+    if not candidate_functions or _same_function_selection(candidate_functions, current_functions):
+        return None
+    return candidate_functions
+
+
 def _parse_actual_calls(record: PublicEvalRecord) -> list[dict[str, Any]]:
     if not record.error:
         return []
@@ -1398,6 +1411,7 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
     last_error: Exception | None = None
     last_duration = 0.0
     last_stage = 'base'
+    last_record: PublicEvalRecord | None = None
     while stages:
         fallback_stage, functions, strict_schema = stages.pop(0)
         attempt_history.append(fallback_stage)
@@ -1413,7 +1427,15 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
             strict_schema=strict_schema,
         )
         if attempt.record is not None:
-            return attempt.record
+            last_record = attempt.record
+            last_duration = attempt.record.duration_seconds
+            if attempt.record.success:
+                return attempt.record
+            if fallback_stage == 'strict_schema_retry':
+                candidate_functions = _candidate_pruned_functions(prompt, functions, all_functions)
+                if candidate_functions is not None:
+                    stages.append(('candidate_pruned_retry', candidate_functions, True))
+            continue
         if attempt.error is None:
             break
         last_error = attempt.error
@@ -1428,10 +1450,11 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
             )
         if fallback_stage != 'strict_schema_retry':
             continue
-        candidate_functions = _select_bfcl_candidate_functions(prompt, all_functions)
-        if _same_function_selection(candidate_functions, functions):
-            continue
-        stages.append(('candidate_pruned_retry', candidate_functions, True))
+        candidate_functions = _candidate_pruned_functions(prompt, functions, all_functions)
+        if candidate_functions is not None:
+            stages.append(('candidate_pruned_retry', candidate_functions, True))
+    if last_record is not None:
+        return last_record
     if last_error is None:
         last_error = RuntimeError('BFCL case failed without a captured error')
     return _make_bfcl_failure_record(

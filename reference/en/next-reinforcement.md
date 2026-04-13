@@ -43,10 +43,11 @@ Then keep the provider-specific adaptation layers explicit:
   - map provider-neutral tool-choice controls onto `tool_choice`
   - use `disable_parallel_tool_use` for serialized tool-call cases
   - keep strict-tool emission aligned with the current Claude tool definition surface
+  - normalize tool input schemas before request emission so strict object shape, `additionalProperties: false`, and nullable-required promotion stay regression-covered instead of docs-only
 - Gemini:
   - map provider-neutral tool-choice controls onto `functionCallingConfig.mode`
   - use `allowedFunctionNames` for forced-tool or required-tool cases
-  - keep the schema surface normalized to the supported OpenAPI-style subset before request emission
+  - keep the schema surface normalized to the supported OpenAPI-style subset before request emission, including the current strict nullable/optional modeling path
   - avoid over-claiming explicit single-call enforcement when the provider only exposes mode-level controls
 
 Public regression coverage should continue to assert:
@@ -58,6 +59,12 @@ Public regression coverage should continue to assert:
 - single-call and parallel-call controls
 - `auto` / `none` / `required` / forced tool-choice behavior
 - OpenAI-compatible parity on the current chat-completions style tool surface before claiming broader compatibility
+
+Better next directions after the current baseline:
+
+- add OpenAI Responses API parity tests and adapter notes instead of assuming chat-completions parity is enough forever
+- add provider-specific negative compatibility slices for Anthropic and Gemini so unsupported schema or mode combinations fail observably during regression
+- add live provider-specific compatibility runs for the current strict function-calling matrix instead of relying only on static payload inspection
 
 Reference:
 

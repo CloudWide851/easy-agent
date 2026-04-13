@@ -29,7 +29,7 @@ def test_anthropic_adapter_parses_tool_use() -> None:
     assert response.tool_calls[0].name == 'python_echo'
 
 
-def test_anthropic_adapter_keeps_schema_passthrough() -> None:
+def test_anthropic_adapter_normalizes_schema_when_strict_enabled() -> None:
     adapter = AnthropicAdapter()
     payload = adapter.build_payload(
         ModelConfig(provider='anthropic', protocol=Protocol.ANTHROPIC),
@@ -38,15 +38,27 @@ def test_anthropic_adapter_keeps_schema_passthrough() -> None:
             ToolSpec(
                 name='complex_tool',
                 description='Complex',
-                input_schema={'type': 'dict', 'properties': {'value': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}},
+                input_schema={
+                    'type': 'dict',
+                    'properties': {
+                        'value': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]},
+                        'nickname': {'type': 'string', 'nullable': True},
+                        'amount': {'type': 'float', 'optional': True},
+                    },
+                    'required': ['missing'],
+                },
             )
         ],
     )
 
     schema = payload['tools'][0]['input_schema']
     assert payload['tools'][0]['strict'] is True
-    assert schema['type'] == 'dict'
-    assert 'anyOf' in schema['properties']['value']
+    assert schema['type'] == 'object'
+    assert schema['additionalProperties'] is False
+    assert schema['properties']['value']['type'] == 'string'
+    assert schema['properties']['nickname']['type'] == ['string', 'null']
+    assert schema['properties']['amount']['type'] == ['number', 'null']
+    assert set(schema['required']) == {'value', 'nickname', 'amount'}
 
 
 def test_gemini_builds_function_declarations() -> None:
@@ -86,9 +98,10 @@ def test_gemini_adapter_sanitizes_schema_like_openai_path() -> None:
 
     schema = payload['tools'][0]['functionDeclarations'][0]['parameters']
     assert schema['type'] == 'object'
+    assert schema['additionalProperties'] is False
     assert schema['properties']['items']['type'] == 'array'
     assert schema['properties']['value']['type'] == 'string'
-    assert schema['required'] == ['items']
+    assert set(schema['required']) == {'items', 'value'}
 
 
 def test_openai_parses_tool_calls() -> None:
@@ -266,6 +279,53 @@ def test_gemini_adapter_supports_function_calling_mode_controls() -> None:
     function_config = payload['toolConfig']['functionCallingConfig']
     assert function_config['mode'] == 'ANY'
     assert function_config['allowedFunctionNames'] == ['python_echo']
+
+
+def test_allowed_tool_names_filter_payload_tools_across_protocols() -> None:
+    messages = [ChatMessage(role='user', content='hello')]
+    tools = [
+        ToolSpec(name='python_echo', description='Echo', input_schema={'type': 'object'}),
+        ToolSpec(name='weather_lookup', description='Weather', input_schema={'type': 'object'}),
+    ]
+
+    openai_payload = OpenAIAdapter().build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'deepseek',
+                'protocol': Protocol.OPENAI,
+                'function_calling': {'allowed_tool_names': ['weather_lookup']},
+            }
+        ),
+        messages,
+        tools,
+    )
+    anthropic_payload = AnthropicAdapter().build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'anthropic',
+                'protocol': Protocol.ANTHROPIC,
+                'function_calling': {'allowed_tool_names': ['weather_lookup']},
+            }
+        ),
+        messages,
+        tools,
+    )
+    gemini_payload = GeminiAdapter().build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'gemini',
+                'protocol': Protocol.GEMINI,
+                'function_calling': {'allowed_tool_names': ['weather_lookup'], 'mode': 'required'},
+            }
+        ),
+        messages,
+        tools,
+    )
+
+    assert [item['function']['name'] for item in openai_payload['tools']] == ['weather_lookup']
+    assert [item['name'] for item in anthropic_payload['tools']] == ['weather_lookup']
+    assert [item['name'] for item in gemini_payload['tools'][0]['functionDeclarations']] == ['weather_lookup']
+    assert gemini_payload['toolConfig']['functionCallingConfig']['allowedFunctionNames'] == ['weather_lookup']
 
 
 class _RuntimeErrorClosingClient:

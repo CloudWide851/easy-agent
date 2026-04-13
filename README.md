@@ -130,7 +130,7 @@ The worker loop persists artifacts and checkpoints so long-running tasks can con
 ## Protocol and Tool Model
 
 - Model protocols: OpenAI-compatible, Anthropic-style, and Gemini-style payload normalization.
-- Tool calling: strict schema normalization, validation-repair loops, provider-neutral tool-choice controls, and provider-schema compatibility telemetry.
+- Tool calling: strict schema transport, nullable/optional modeling, validation-repair loops, provider-neutral tool-choice controls, and provider-schema compatibility telemetry.
 - Web-search eval hardening: SerpApi `/search.json`, replay-backed contents, quota ledger, result grounding, and single-call regression guards.
 
 Provider behavior details and structured-output notes live in [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md).
@@ -203,7 +203,7 @@ The next reinforcement track is documented in full at [reference/en/next-reinfor
 
 - extending the now-green repo-pinned BFCL agentic slice into wider official-style BFCL v4 coverage and the remaining multi-tool miss
 - expanding BFCL web-search toward multi-hop search-plus-contents flows and content-mode-aware retrieval
-- tightening provider compatibility around OpenAI, Anthropic, and Gemini tool-calling constraints
+- tightening provider compatibility around strict schema transport, provider-specific tool-choice mapping, and the next Responses API parity step
 - expanding durable MCP and federation coordination without widening the public runtime surface unnecessarily
 
 ## Design References
