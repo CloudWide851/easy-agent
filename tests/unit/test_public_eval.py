@@ -309,6 +309,32 @@ def test_candidate_pruned_functions_returns_none_for_same_selection() -> None:
     assert _candidate_pruned_functions(prompt, functions, functions) is None
 
 
+def test_candidate_pruned_functions_prefers_primary_tool_for_single_call_cases() -> None:
+    prompt = 'How to assess the population growth in deer and their impact on woodland in Washington state over the past decade?'
+    functions = [
+        {
+            'name': 'wildlife_population.assess_growth',
+            'description': 'Assesses the population growth of a specific species in a specified location over a period.',
+            'parameters': {'type': 'dict', 'properties': {'species': {'type': 'string'}}},
+        },
+        {
+            'name': 'ecological_impact.analyze',
+            'description': 'Analyzes the impact of a species on a particular ecosystem.',
+            'parameters': {'type': 'dict', 'properties': {'species': {'type': 'string'}}},
+        },
+    ]
+
+    result = _candidate_pruned_functions(
+        prompt,
+        functions,
+        functions,
+        expected_call_count=1,
+    )
+
+    assert result is not None
+    assert [item['name'] for item in result] == ['wildlife_population.assess_growth']
+
+
 @pytest.mark.asyncio
 async def test_run_bfcl_case_retries_candidate_pruned_after_unsuccessful_strict_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     import agent_runtime.public_eval as public_eval_module
@@ -427,6 +453,81 @@ async def test_run_bfcl_case_retries_candidate_pruned_after_unsuccessful_strict_
     ]
     assert attempts[2][1] == ['wildlife_population.assess_growth', 'ecological_impact.analyze']
     assert attempts[2][2] is True
+
+
+@pytest.mark.asyncio
+async def test_run_bfcl_case_retries_candidate_pruned_after_budget_overcall(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_runtime.public_eval as public_eval_module
+
+    prompt = 'How to assess the population growth in deer and their impact on woodland in Washington state over the past decade?'
+    case = {
+        'id': 'multiple_7',
+        'suite': 'multiple',
+        'messages': [{'role': 'user', 'content': prompt}],
+        'functions': [
+            {
+                'name': 'wildlife_population.assess_growth',
+                'description': 'Assesses the population growth of a specific species in a specified location over a period.',
+                'parameters': {'type': 'dict', 'properties': {'species': {'type': 'string'}}},
+            },
+            {
+                'name': 'ecological_impact.analyze',
+                'description': 'Analyzes the impact of a species on a particular ecosystem.',
+                'parameters': {'type': 'dict', 'properties': {'species': {'type': 'string'}}},
+            },
+        ],
+        'ground_truth': [
+            {'wildlife_population.assess_growth': {'species': ['deer']}},
+        ],
+    }
+    base_config = AppConfig.model_validate(
+        {'model': {'provider': 'deepseek'}, 'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}]}}
+    )
+    attempts: list[tuple[str, list[str], bool]] = []
+
+    async def fake_run_bfcl_case_attempt(
+        base_config: AppConfig,
+        case: dict[str, object],
+        *,
+        shared: dict[str, object],
+        tool_name_map: dict[str, str],
+        functions: list[dict[str, object]],
+        fallback_stage: str,
+        fallback_attempts: list[str],
+        strict_schema: bool,
+    ) -> _BfclAttemptResult:
+        del base_config, case, shared, tool_name_map, fallback_attempts
+        attempts.append((fallback_stage, [str(item['name']) for item in functions], strict_schema))
+        if fallback_stage == 'base':
+            return _BfclAttemptResult(
+                error=RuntimeError('tool call budget exhausted for this BFCL case'),
+                duration_seconds=1.0,
+            )
+        return _BfclAttemptResult(
+            record=PublicEvalRecord(
+                suite='bfcl_multiple',
+                case_id='multiple_7',
+                success=True,
+                duration_seconds=1.0,
+                tool_name_match=1.0,
+                argument_match=1.0,
+                expected_call_count=1,
+                actual_call_count=1,
+                result_summary='ok',
+                fallback_stage=fallback_stage,
+                fallback_attempts=[stage for stage, _, _ in attempts],
+            ),
+            duration_seconds=1.0,
+        )
+
+    monkeypatch.setattr(public_eval_module, '_run_bfcl_case_attempt', fake_run_bfcl_case_attempt)
+
+    result = await _run_bfcl_case(base_config, case)
+
+    assert result.success is True
+    assert [stage for stage, _, _ in attempts] == ['base', 'candidate_pruned_retry']
+    assert attempts[1][1] == ['wildlife_population.assess_growth']
+    assert attempts[1][2] is True
 
 
 def test_load_public_eval_inputs_expands_full_v4_profile() -> None:
@@ -654,6 +755,57 @@ def test_load_public_eval_inputs_supports_official_profile(tmp_path: Path) -> No
     assert profile == 'official_full_v4'
     assert bfcl_version == 'v4'
     assert bfcl_cases[0]['id'] == 'official_web_0'
+    assert tau_cases
+
+
+def test_load_official_full_v4_inputs_applies_manifest_filters(tmp_path: Path) -> None:
+    manifest_path = tmp_path / 'bfcl_v4_manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'bfcl_cases': [
+                    {
+                        'id': 'official_memory_0',
+                        'suite': 'memory',
+                        'messages': [{'role': 'user', 'content': 'Remember this.'}],
+                        'functions': [],
+                        'ground_truth': [],
+                        'expect_no_tool': True,
+                    },
+                    {
+                        'id': 'official_web_0',
+                        'suite': 'web_search',
+                        'messages': [{'role': 'user', 'content': 'Search the web.'}],
+                        'functions': [],
+                        'ground_truth': [],
+                        'expect_no_tool': True,
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {
+                'public_eval': {
+                    'profile': 'official_full_v4',
+                    'official_dataset': {
+                        'manifest_path': str(manifest_path),
+                        'suite_allowlist': ['web_search'],
+                        'case_allowlist': ['official_web_0'],
+                        'max_cases': 1,
+                    },
+                }
+            },
+        }
+    )
+
+    bfcl_cases, tau_cases = _load_official_full_v4_inputs(config)
+
+    assert [case['id'] for case in bfcl_cases] == ['official_web_0']
     assert tau_cases
 
 
@@ -1100,13 +1252,51 @@ def test_public_eval_checkpoint_round_trip_restores_records(tmp_path: Path) -> N
         checkpoint,
         profile='full_v4',
         bfcl_version='v4',
+        selection_signature={'profile': 'full_v4'},
         records=records,
         run_status='completed',
     )
-    restored = _restore_checkpoint_records(checkpoint, profile='full_v4', bfcl_version='v4')
+    restored = _restore_checkpoint_records(
+        checkpoint,
+        profile='full_v4',
+        bfcl_version='v4',
+        selection_signature={'profile': 'full_v4'},
+    )
 
     assert 'bfcl_web_search:case_1' in restored
     assert restored['bfcl_web_search:case_1'].success is True
+
+
+def test_public_eval_checkpoint_restore_ignores_different_selection_signature(tmp_path: Path) -> None:
+    checkpoint = tmp_path / 'progress.json'
+    records = [PublicEvalRecord('bfcl_web_search', 'case_1', True, 1.0, 1.0, 1.0, 1, 1, 'ok')]
+
+    _save_public_eval_checkpoint(
+        checkpoint,
+        profile='official_full_v4',
+        bfcl_version='v4',
+        selection_signature={
+            'profile': 'official_full_v4',
+            'suite_allowlist': ['web_search'],
+            'case_allowlist': [],
+            'max_cases': 2,
+        },
+        records=records,
+        run_status='completed',
+    )
+    restored = _restore_checkpoint_records(
+        checkpoint,
+        profile='official_full_v4',
+        bfcl_version='v4',
+        selection_signature={
+            'profile': 'official_full_v4',
+            'suite_allowlist': ['memory'],
+            'case_allowlist': [],
+            'max_cases': 2,
+        },
+    )
+
+    assert restored == {}
 
 
 def test_load_official_full_v4_inputs_reads_manifest_path(tmp_path: Path) -> None:

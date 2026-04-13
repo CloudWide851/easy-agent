@@ -17,6 +17,13 @@ uv run easy-agent doctor -c easy-agent.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent harness list -c configs/harness.example.yml
 uv run easy-agent federation list -c easy-agent.yml
+uv run easy-agent mcp resources list <server> -c easy-agent.yml
+uv run easy-agent mcp resources read <server> <uri> -c easy-agent.yml
+uv run easy-agent mcp resources templates <server> -c easy-agent.yml
+uv run easy-agent mcp resources subscribe <server> <uri> -c easy-agent.yml
+uv run easy-agent mcp resources unsubscribe <server> <uri> -c easy-agent.yml
+uv run easy-agent mcp prompts list <server> -c easy-agent.yml
+uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"notes"}' -c easy-agent.yml
 ```
 
 ## Local Credentials
@@ -48,6 +55,18 @@ Harness runs persist durable artifacts under the configured artifact directory a
 - `features.json`
 - checkpoints
 - session and workbench state
+
+## Public Eval Profiles
+
+`full_v4` remains the public score baseline in the README. `official_full_v4` is now available as a bounded manifest slice before widening to larger official coverage.
+
+Useful config fields under `evaluation.public_eval.official_dataset`:
+
+- `suite_allowlist`
+- `case_allowlist`
+- `max_cases`
+- `resume`
+- `checkpoint_path`
 
 ## Operational Notes
 

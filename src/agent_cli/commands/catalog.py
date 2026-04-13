@@ -22,8 +22,12 @@ federation_auth_app = typer.Typer(help='Manage federation remote authorization.'
 workbench_app = typer.Typer(help='Inspect and manage isolated workbench sessions.')
 mcp_auth_app = typer.Typer(help='Manage MCP remote authorization.')
 mcp_roots_app = typer.Typer(help='Inspect and refresh MCP roots.')
+mcp_resources_app = typer.Typer(help='Inspect and manage MCP resources.')
+mcp_prompts_app = typer.Typer(help='Inspect MCP prompts.')
 mcp_app.add_typer(mcp_auth_app, name='auth')
 mcp_app.add_typer(mcp_roots_app, name='roots')
+mcp_app.add_typer(mcp_resources_app, name='resources')
+mcp_app.add_typer(mcp_prompts_app, name='prompts')
 federation_app.add_typer(federation_auth_app, name='auth')
 
 
@@ -76,6 +80,95 @@ def refresh_mcp_roots(
 ) -> None:
     async def _run(runtime: EasyAgentRuntime) -> None:
         console.print_json(json.dumps(await runtime.mcp_manager.refresh_roots(server_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_resources_app.command('list')
+def list_mcp_resources(
+    server_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.mcp_manager.list_resources(server_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_resources_app.command('read')
+def read_mcp_resource(
+    server_name: str = typer.Argument(...),
+    uri: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.mcp_manager.read_resource(server_name, uri), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_resources_app.command('templates')
+def list_mcp_resource_templates(
+    server_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(
+            json.dumps(await runtime.mcp_manager.list_resource_templates(server_name), ensure_ascii=False)
+        )
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_resources_app.command('subscribe')
+def subscribe_mcp_resource(
+    server_name: str = typer.Argument(...),
+    uri: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.mcp_manager.subscribe_resource(server_name, uri), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_resources_app.command('unsubscribe')
+def unsubscribe_mcp_resource(
+    server_name: str = typer.Argument(...),
+    uri: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(
+            json.dumps(await runtime.mcp_manager.unsubscribe_resource(server_name, uri), ensure_ascii=False)
+        )
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_prompts_app.command('list')
+def list_mcp_prompts(
+    server_name: str = typer.Argument(...),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        console.print_json(json.dumps(await runtime.mcp_manager.list_prompts(server_name), ensure_ascii=False))
+
+    asyncio.run(with_runtime(config, _run))
+
+
+@mcp_prompts_app.command('get')
+def get_mcp_prompt(
+    server_name: str = typer.Argument(...),
+    prompt_name: str = typer.Argument(...),
+    arguments: str | None = typer.Option(None, '--arguments'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+) -> None:
+    async def _run(runtime: EasyAgentRuntime) -> None:
+        payload = json.loads(arguments) if arguments else None
+        console.print_json(
+            json.dumps(await runtime.mcp_manager.get_prompt(server_name, prompt_name, arguments=payload), ensure_ascii=False)
+        )
 
     asyncio.run(with_runtime(config, _run))
 

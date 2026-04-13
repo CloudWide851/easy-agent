@@ -4,9 +4,9 @@ This roadmap starts from the published `0.3.4` baseline.
 
 ## Immediate Focus
 
-- Keep the now-green repo-pinned BFCL agentic slice green while extending it toward wider official BFCL v4 coverage.
-- Continue hardening OpenAI-compatible provider behavior around strict function calling and structured outputs.
-- Keep MCP and federation durability moving forward without widening the public runtime surface unnecessarily.
+- Add OpenAI Responses API parity coverage on top of the shipped chat-completions strict-function baseline.
+- Extend the new official BFCL manifest slice support from bounded regressions into wider agentic and multihop official v4 coverage.
+- Keep deepening MCP catalog coordination around prompt or resource templates and richer notification-driven refresh flows without widening the model-facing runtime surface.
 
 ## Web Search Reinforcement
 
@@ -14,7 +14,7 @@ This roadmap starts from the published `0.3.4` baseline.
 - Preserve quota ledger and replay fallback behavior.
 - Keep improving result-id grounding so `web.contents` consumes only URLs justified by the latest search step or replay evidence.
 - Preserve the shipped exact-title, search-plus-contents, and memory-backed agentic cases as a regression floor.
-- Extend the current repo-pinned green path into wider official BFCL v4-style search-plus-contents, multihop, and remaining multi-tool cases, where the final answer should remain grounded to the retrieved evidence.
+- Extend the current repo-pinned green path and the new official manifest slice path into wider official BFCL v4-style search-plus-contents, multihop, and remaining agentic cases, where the final answer should remain grounded to the retrieved evidence.
 - Keep a durable per-case search history so later hops can reuse grounded result ids, grounded URLs, and previously fetched page evidence without widening to ungrounded links.
 - Extend `web.contents` toward the BFCL v4-style `truncate` / `markdown` / `raw` content modes so answer extraction can choose between concise text, readable document text, and markup-sensitive payloads.
 - When a grounded page fetch fails, retry within the grounded search set before falling back to replay-backed contents; do not silently widen the URL boundary.
@@ -50,7 +50,7 @@ Then keep the provider-specific adaptation layers explicit:
   - keep the schema surface normalized to the supported OpenAPI-style subset before request emission, including the current strict nullable/optional modeling path
   - avoid over-claiming explicit single-call enforcement when the provider only exposes mode-level controls
 
-Public regression coverage should continue to assert:
+The shipped regression floor now covers:
 
 - strict schema transport
 - `additionalProperties: false`
@@ -58,13 +58,14 @@ Public regression coverage should continue to assert:
 - optional-to-required-nullable promotion
 - single-call and parallel-call controls
 - `auto` / `none` / `required` / forced tool-choice behavior
+- explicit failure when `required` or `force` mode ends up with no selected tool after filtering
 - OpenAI-compatible parity on the current chat-completions style tool surface before claiming broader compatibility
 
 Better next directions after the current baseline:
 
-- add OpenAI Responses API parity tests and adapter notes instead of assuming chat-completions parity is enough forever
-- add provider-specific negative compatibility slices for Anthropic and Gemini so unsupported schema or mode combinations fail observably during regression
+- add OpenAI Responses API payload and response parsing parity tests instead of assuming chat-completions parity is enough forever
 - add live provider-specific compatibility runs for the current strict function-calling matrix instead of relying only on static payload inspection
+- keep the provider capability matrix explicit about what is normalized, what is enforced, and what still depends on provider-specific best effort
 
 Reference:
 
@@ -76,12 +77,25 @@ Reference:
 
 ## MCP and Federation
 
-Continue reinforcing the official MCP surface:
+The current durable MCP baseline now includes:
+
+- `resources/list`
+- `resources/read`
+- `resources/templates/list`
+- `resources/subscribe`
+- `resources/unsubscribe`
+- `prompts/list`
+- `prompts/get`
+- durable catalog snapshots for tools, resources, and prompts
+- durable resource-subscription state
+
+Next reinforcement should continue around the official MCP surface:
 
 - `notifications/resources/list_changed`
 - `notifications/tools/list_changed`
 - `notifications/prompts/list_changed`
-- `resources/subscribe`
+- `notifications/resources/updated`
+- prompt or resource template refresh coordination and richer cached metadata
 
 Reference:
 

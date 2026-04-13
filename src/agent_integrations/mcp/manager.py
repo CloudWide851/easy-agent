@@ -105,9 +105,7 @@ class McpClientManager:
         return result
 
     async def list_servers(self) -> dict[str, list[ToolSpec]]:
-        if not self._tool_cache:
-            return await self.refresh_tools()
-        return self._tool_cache
+        return await self.refresh_tools()
 
     def capability_summary(self) -> dict[str, dict[str, Any]]:
         return {name: client.capabilities for name, client in self._clients.items()}
@@ -117,6 +115,27 @@ class McpClientManager:
 
     async def refresh_roots(self, server_name: str) -> dict[str, Any]:
         return await self._clients[server_name].refresh_roots()
+
+    async def list_resources(self, server_name: str) -> dict[str, Any]:
+        return await self._clients[server_name].list_resources()
+
+    async def read_resource(self, server_name: str, uri: str) -> dict[str, Any]:
+        return await self._clients[server_name].read_resource(uri)
+
+    async def list_resource_templates(self, server_name: str) -> dict[str, Any]:
+        return await self._clients[server_name].list_resource_templates()
+
+    async def subscribe_resource(self, server_name: str, uri: str) -> dict[str, Any]:
+        return await self._clients[server_name].subscribe_resource(uri)
+
+    async def unsubscribe_resource(self, server_name: str, uri: str) -> dict[str, Any]:
+        return await self._clients[server_name].unsubscribe_resource(uri)
+
+    async def list_prompts(self, server_name: str) -> dict[str, Any]:
+        return await self._clients[server_name].list_prompts()
+
+    async def get_prompt(self, server_name: str, name: str, arguments: dict[str, str] | None = None) -> dict[str, Any]:
+        return await self._clients[server_name].get_prompt(name, arguments=arguments)
 
     async def authorize(self, server_name: str) -> None:
         await self._clients[server_name].authorize()

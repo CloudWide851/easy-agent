@@ -240,6 +240,44 @@ def test_openai_adapter_supports_required_and_forced_tool_choice() -> None:
     assert forced_payload['tool_choice']['function']['name'] == 'simple_tool'
 
 
+def test_openai_adapter_raises_when_required_mode_has_no_selected_tools() -> None:
+    adapter = OpenAIAdapter()
+
+    with pytest.raises(ValueError, match='required tool-calling mode needs at least one selected tool'):
+        adapter.build_payload(
+            ModelConfig.model_validate(
+                {
+                    'provider': 'deepseek',
+                    'protocol': Protocol.OPENAI,
+                    'function_calling': {'mode': 'required', 'allowed_tool_names': ['missing_tool']},
+                }
+            ),
+            [ChatMessage(role='user', content='hello')],
+            [ToolSpec(name='simple_tool', description='Simple', input_schema={'type': 'object'})],
+        )
+
+
+def test_openai_adapter_raises_when_forced_tool_is_filtered_out() -> None:
+    adapter = OpenAIAdapter()
+
+    with pytest.raises(ValueError, match='is not allowed by the current tool filter'):
+        adapter.build_payload(
+            ModelConfig.model_validate(
+                {
+                    'provider': 'deepseek',
+                    'protocol': Protocol.OPENAI,
+                    'function_calling': {
+                        'mode': 'force',
+                        'forced_tool_name': 'simple_tool',
+                        'allowed_tool_names': ['other_tool'],
+                    },
+                }
+            ),
+            [ChatMessage(role='user', content='hello')],
+            [ToolSpec(name='simple_tool', description='Simple', input_schema={'type': 'object'})],
+        )
+
+
 def test_anthropic_adapter_supports_tool_choice_and_serial_mode() -> None:
     adapter = AnthropicAdapter()
     payload = adapter.build_payload(
@@ -279,6 +317,42 @@ def test_gemini_adapter_supports_function_calling_mode_controls() -> None:
     function_config = payload['toolConfig']['functionCallingConfig']
     assert function_config['mode'] == 'ANY'
     assert function_config['allowedFunctionNames'] == ['python_echo']
+
+
+def test_gemini_adapter_does_not_emit_parallel_control_field() -> None:
+    adapter = GeminiAdapter()
+    payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'gemini',
+                'protocol': Protocol.GEMINI,
+                'function_calling': {'mode': 'required', 'parallel_tool_calls': False},
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [ToolSpec(name='python_echo', description='Echo', input_schema={'type': 'object'})],
+    )
+
+    assert payload['toolConfig']['functionCallingConfig']['mode'] == 'ANY'
+    assert 'parallel_tool_calls' not in payload
+    assert 'disable_parallel_tool_use' not in payload
+
+
+def test_anthropic_adapter_raises_when_forced_tool_is_missing() -> None:
+    adapter = AnthropicAdapter()
+
+    with pytest.raises(ValueError, match="forced tool 'missing_tool' is not registered"):
+        adapter.build_payload(
+            ModelConfig.model_validate(
+                {
+                    'provider': 'anthropic',
+                    'protocol': Protocol.ANTHROPIC,
+                    'function_calling': {'mode': 'force', 'forced_tool_name': 'missing_tool'},
+                }
+            ),
+            [ChatMessage(role='user', content='hello')],
+            [ToolSpec(name='complex_tool', description='Complex', input_schema={'type': 'object'})],
+        )
 
 
 def test_allowed_tool_names_filter_payload_tools_across_protocols() -> None:

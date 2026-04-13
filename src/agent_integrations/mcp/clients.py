@@ -98,6 +98,7 @@ class BaseMcpClient:
         self._redirect_handler = redirect_handler
         self._callback_handler = callback_handler
         self.capabilities: dict[str, Any] = {}
+        self._catalog_dirty: dict[str, bool] = {'tools': False, 'resources': False, 'prompts': False}
         self._run_context: contextvars.ContextVar[RunContext | None] = contextvars.ContextVar(
             f'mcp_run_context_{config.name}',
             default=None,
@@ -110,6 +111,27 @@ class BaseMcpClient:
         raise NotImplementedError
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        raise NotImplementedError
+
+    async def list_resources(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def list_resource_templates(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def subscribe_resource(self, uri: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def unsubscribe_resource(self, uri: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def list_prompts(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
     async def list_roots(self) -> list[dict[str, Any]]:
@@ -251,6 +273,31 @@ class BaseMcpClient:
             return
         self._store.save_mcp_root_snapshot(self.config.name, roots, last_notified_at=last_notified_at)
 
+    def _save_catalog_snapshot(
+        self,
+        catalog_kind: str,
+        entries: list[dict[str, Any]],
+        *,
+        last_notified_at: str | None = None,
+    ) -> None:
+        if self._store is None:
+            return
+        self._store.save_mcp_catalog_snapshot(
+            self.config.name,
+            catalog_kind,
+            entries,
+            last_notified_at=last_notified_at,
+        )
+
+    def _mark_catalog_dirty(self, catalog_kind: str) -> None:
+        self._catalog_dirty[catalog_kind] = True
+
+    def _clear_catalog_dirty(self, catalog_kind: str) -> None:
+        self._catalog_dirty[catalog_kind] = False
+
+    def catalog_dirty(self, catalog_kind: str) -> bool:
+        return self._catalog_dirty.get(catalog_kind, False)
+
     def _sampling_approval_payload(
         self,
         params: mcp_types.CreateMessageRequestParams,
@@ -391,7 +438,7 @@ class SessionBackedMcpClient(BaseMcpClient):
         if self._session is None:
             raise RuntimeError('MCP session is not running')
         result = await self._session.list_tools()
-        return [
+        tools = [
             ToolSpec(
                 name=item.name,
                 description=item.description or '',
@@ -399,6 +446,12 @@ class SessionBackedMcpClient(BaseMcpClient):
             )
             for item in result.tools
         ]
+        self._save_catalog_snapshot(
+            'tools',
+            [item.model_dump(mode='json', by_alias=True, exclude_none=True) for item in result.tools],
+        )
+        self._clear_catalog_dirty('tools')
+        return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         if self._session is None:
@@ -407,6 +460,70 @@ class SessionBackedMcpClient(BaseMcpClient):
         if result.structuredContent is not None:
             return result.structuredContent
         return [item.model_dump(by_alias=True, exclude_none=True) for item in result.content]
+
+    async def list_resources(self) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        result = await self._session.list_resources()
+        payload = result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        self._save_catalog_snapshot('resources', cast(list[dict[str, Any]], payload.get('resources', [])))
+        self._clear_catalog_dirty('resources')
+        return payload
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        result = await self._session.read_resource(cast(Any, uri))
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+
+    async def list_resource_templates(self) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        result = await self._session.list_resource_templates()
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+
+    async def subscribe_resource(self, uri: str) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        await self._session.subscribe_resource(cast(Any, uri))
+        payload = {'uri': uri, 'status': 'active'}
+        if self._store is not None:
+            self._store.save_mcp_resource_subscription(
+                self.config.name,
+                uri,
+                status='active',
+                subscription=payload,
+            )
+        return payload
+
+    async def unsubscribe_resource(self, uri: str) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        await self._session.unsubscribe_resource(cast(Any, uri))
+        payload = {'uri': uri, 'status': 'inactive'}
+        if self._store is not None:
+            self._store.save_mcp_resource_subscription(
+                self.config.name,
+                uri,
+                status='inactive',
+                subscription=payload,
+            )
+        return payload
+
+    async def list_prompts(self) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        result = await self._session.list_prompts()
+        payload = result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        self._save_catalog_snapshot('prompts', cast(list[dict[str, Any]], payload.get('prompts', [])))
+        self._clear_catalog_dirty('prompts')
+        return payload
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> dict[str, Any]:
+        if self._session is None:
+            raise RuntimeError('MCP session is not running')
+        result = await self._session.get_prompt(name, arguments=arguments)
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
 
     async def refresh_roots(self) -> dict[str, Any]:
         roots = normalize_root_entries([root_payload(item) for item in self._resolved_roots()])
@@ -466,8 +583,59 @@ class SessionBackedMcpClient(BaseMcpClient):
         match notification.root:
             case mcp_types.ElicitCompleteNotification(params=params):
                 await self._handle_elicitation_complete(params)
+            case mcp_types.ResourceListChangedNotification():
+                await self._handle_catalog_list_changed('resources')
+            case mcp_types.ToolListChangedNotification():
+                await self._handle_catalog_list_changed('tools')
+            case mcp_types.PromptListChangedNotification():
+                await self._handle_catalog_list_changed('prompts')
+            case mcp_types.ResourceUpdatedNotification(params=params):
+                await self._handle_resource_updated(params)
             case _:
                 return
+
+    async def _handle_catalog_list_changed(self, catalog_kind: str) -> None:
+        self._mark_catalog_dirty(catalog_kind)
+        last_notified_at = _utcnow()
+        if catalog_kind == 'tools':
+            tools = await self.list_tools()
+            self._save_catalog_snapshot(
+                'tools',
+                [item.model_dump(mode='json', exclude_none=True) for item in tools],
+                last_notified_at=last_notified_at,
+            )
+            return
+        if catalog_kind == 'resources':
+            payload = await self.list_resources()
+            self._save_catalog_snapshot(
+                'resources',
+                cast(list[dict[str, Any]], payload.get('resources', [])),
+                last_notified_at=last_notified_at,
+            )
+            return
+        if catalog_kind == 'prompts':
+            payload = await self.list_prompts()
+            self._save_catalog_snapshot(
+                'prompts',
+                cast(list[dict[str, Any]], payload.get('prompts', [])),
+                last_notified_at=last_notified_at,
+            )
+
+    async def _handle_resource_updated(self, params: mcp_types.ResourceUpdatedNotificationParams) -> None:
+        if self._store is None:
+            return
+        existing = self._store.load_mcp_resource_subscription(self.config.name, str(params.uri))
+        subscription = dict(existing.get('subscription', {}) if existing is not None else {})
+        subscription['last_update'] = {
+            'uri': str(params.uri),
+            'updated_at': _utcnow(),
+        }
+        self._store.save_mcp_resource_subscription(
+            self.config.name,
+            str(params.uri),
+            status=(existing or {}).get('status', 'updated'),
+            subscription=subscription,
+        )
 
     async def _handle_elicitation_complete(self, params: mcp_types.ElicitCompleteNotificationParams) -> None:
         if self._store is None:

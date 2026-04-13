@@ -54,7 +54,13 @@ def _selected_tools(config: ModelConfig, tools: list[ToolSpec]) -> list[ToolSpec
         allowed = set(function_calling.allowed_tool_names)
         selected = [tool for tool in selected if tool.name in allowed]
     if function_calling.mode == 'force' and function_calling.forced_tool_name:
+        if not any(tool.name == function_calling.forced_tool_name for tool in tools):
+            raise ValueError(f"forced tool '{function_calling.forced_tool_name}' is not registered")
         selected = [tool for tool in selected if tool.name == function_calling.forced_tool_name]
+        if not selected:
+            raise ValueError(f"forced tool '{function_calling.forced_tool_name}' is not allowed by the current tool filter")
+    if function_calling.mode == 'required' and not selected:
+        raise ValueError('required tool-calling mode needs at least one selected tool')
     return selected
 
 

@@ -17,6 +17,13 @@ uv run easy-agent doctor -c easy-agent.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent harness list -c configs/harness.example.yml
 uv run easy-agent federation list -c easy-agent.yml
+uv run easy-agent mcp resources list <server> -c easy-agent.yml
+uv run easy-agent mcp resources read <server> <uri> -c easy-agent.yml
+uv run easy-agent mcp resources templates <server> -c easy-agent.yml
+uv run easy-agent mcp resources subscribe <server> <uri> -c easy-agent.yml
+uv run easy-agent mcp resources unsubscribe <server> <uri> -c easy-agent.yml
+uv run easy-agent mcp prompts list <server> -c easy-agent.yml
+uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"notes"}' -c easy-agent.yml
 ```
 
 ## 本地凭据
@@ -48,6 +55,18 @@ Harness 运行会把工件持久化到配置的 artifact 目录与 durable sessi
 - `features.json`
 - checkpoints
 - session 与 workbench state
+
+## Public Eval Profiles
+
+README 里的公开分数继续以 `full_v4` 为基线。`official_full_v4` 现在支持先跑受控 manifest slice，再逐步扩大官方覆盖面。
+
+`evaluation.public_eval.official_dataset` 下常用字段：
+
+- `suite_allowlist`
+- `case_allowlist`
+- `max_cases`
+- `resume`
+- `checkpoint_path`
 
 ## 操作说明
 

@@ -542,6 +542,9 @@ class PublicEvalOfficialDatasetConfig(BaseModel):
     source_url: str | None = None
     checkpoint_path: str = '.easy-agent/public-eval-progress.json'
     resume: bool = True
+    suite_allowlist: list[str] = Field(default_factory=list)
+    case_allowlist: list[str] = Field(default_factory=list)
+    max_cases: int | None = None
 
 
 class PublicEvalConfig(BaseModel):

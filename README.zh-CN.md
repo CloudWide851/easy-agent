@@ -64,7 +64,7 @@
 
 - 敏感工具、swarm handoff 与 resume 可以进入同一套 durable approval 流程。
 - 运行支持 safe-point interrupt、checkpoint list、replay 与 forked resume。
-- MCP 已支持显式 roots、root snapshot、`notifications/roots/list_changed`、elicitation 审批状态、`streamable_http` 与持久化 OAuth state。
+- MCP 已支持显式 roots、root snapshot、`notifications/roots/list_changed`、resources/prompts catalog 管理、durable resource subscription、elicitation 审批状态、`streamable_http` 与持久化 OAuth state。
 
 参考文档：
 - 详细使用说明：[reference/zh/usage-guide.md](./reference/zh/usage-guide.md)
@@ -179,14 +179,14 @@ uv run easy-agent doctor -c easy-agent.yml
 
 ## 验证方式
 
-`0.3.4` 版本保留 2026 年 4 月 9 日的 benchmark 快照，同时发布 2026 年 4 月 11 日刷新后的 public-eval、Python verification 与 real-network 快照。当前 repo-pinned BFCL agentic 子集已经转绿。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
+`0.3.4` 版本保留 2026 年 4 月 9 日的 benchmark 快照，同时发布 2026 年 4 月 13 日刷新后的 public-eval、Python verification 与 real-network 快照。当前 repo-pinned `full_v4` BFCL 子集已经全绿，运行时也支持受控的 `official_full_v4` manifest slice，用来继续扩大回归覆盖。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
 ### 分数摘要
 
 | 测试集 | 分数 |
 | --- | ---: |
 | benchmark.overall | 100.0 |
-| public_eval.bfcl_overall | 98.21 |
+| public_eval.bfcl_overall | 100.0 |
 | public_eval.tau2_mock | 100.0 |
 
 ## 真实网络测试集结果
@@ -201,10 +201,9 @@ README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 
 
 完整补强路线见 [reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)。近期重点仍然是：
 
-- 把已经转绿的 repo-pinned BFCL agentic 子集继续推进到更广的 official-style BFCL v4 覆盖面，并压缩剩余 multi-tool miss
-- 把 BFCL web-search 继续推进到 multi-hop search-plus-contents 和内容模式感知检索
-- 继续收紧 strict schema transport、provider-specific tool-choice mapping，以及后续 Responses API 对齐这几块 provider 兼容性
-- 在不随意扩展公开运行时表面的前提下，继续推进 durable MCP 与 federation 协调
+- 在已交付 strict chat-completions 基线之上补齐 OpenAI Responses API 对齐覆盖
+- 把 official BFCL v4 覆盖从受控 manifest slice 继续推进到更广的 agentic 与 multihop 回归
+- 继续深化 MCP catalog 协调，包括 prompt/resource templates 与更完整的通知驱动刷新
 
 ## 设计参考
 

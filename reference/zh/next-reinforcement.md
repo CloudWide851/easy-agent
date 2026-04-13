@@ -4,9 +4,9 @@
 
 ## 当前重点
 
-- 在保持 repo-pinned BFCL agentic 子集全绿的前提下，继续向更广的 official BFCL v4 覆盖面推进。
-- 继续强化 OpenAI-compatible provider 在 strict function calling 与 structured outputs 约束下的兼容行为。
-- 在不随意扩大 public runtime surface 的前提下，继续推进 MCP 与 federation 的 durable coordination。
+- 在已交付 chat-completions strict-function 基线之上，补齐 OpenAI Responses API 的对齐覆盖。
+- 把新的 official BFCL manifest slice 支持从受控回归继续推进到更广的 official v4 agentic 与 multihop 覆盖面。
+- 在不随意扩大 model-facing runtime surface 的前提下，继续深化 MCP catalog 协调，包括 prompt/resource templates 与更完整的通知驱动刷新。
 
 ## Web Search 补强
 
@@ -14,7 +14,7 @@
 - 保留 quota ledger 与 replay fallback。
 - 继续收紧 result-id grounding，让 `web.contents` 只消费由最近一次 search 或 replay 证据支撑的 URL。
 - 把当前已经交付的 exact-title、search-plus-contents 与 memory-backed agentic case 作为回归基线。
-- 在此基础上继续扩展到更广的官方 BFCL v4 风格 search-plus-contents、multihop 与剩余 multi-tool case，并保持最终答案对检索证据可回溯。
+- 在此基础上继续把 repo-pinned green path 与新的 official manifest slice path 扩展到更广的官方 BFCL v4 风格 search-plus-contents、multihop 与剩余 agentic case，并保持最终答案对检索证据可回溯。
 - 为每个 case 保留 durable search history，让后续 hop 可以复用 grounded result id、grounded URL 和已抓取页面证据，而不是放宽到未 grounding 的链接。
 - 继续把 `web.contents` 推进到更接近 BFCL v4 的 `truncate` / `markdown` / `raw` 内容模式，让答案抽取可以在简洁文本、可读文档文本与 markup-sensitive 载荷之间切换。
 - 当 grounded page fetch 失败时，先在 grounded search set 内重试，再退回 replay-backed contents；不要静默扩大 URL 边界。
@@ -50,7 +50,7 @@
   - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集，并覆盖当前 strict nullable/optional 参数建模路径
   - 不要把 provider 只有 mode-level 控制的能力误写成显式 single-call enforcement
 
-公开回归覆盖需要继续断言：
+当前已经交付的回归基线包括：
 
 - strict schema transport
 - `additionalProperties: false`
@@ -58,13 +58,14 @@
 - optional-to-required-nullable promotion
 - 单调用与并行调用控制
 - `auto` / `none` / `required` / forced tool-choice 行为
+- 当 `required` 或 `force` 模式在过滤后没有可用工具时，显式失败而不是静默降级
 - 在声称更广兼容性之前，先确保 OpenAI-compatible chat-completions 风格工具面保持可验证对齐
 
 在当前基线之上的更好发展方向：
 
-- 增加 OpenAI Responses API 的对齐测试与适配说明，不再默认 chat-completions 对齐就足够长期成立
-- 为 Anthropic 与 Gemini 增加 provider-specific 的负向兼容回归，让不支持的 schema 或 mode 组合能被明确观测出来
+- 增加 OpenAI Responses API 的 payload 与 response parsing 对齐测试，不再默认 chat-completions 对齐就足够长期成立
 - 为当前 strict function-calling 兼容矩阵增加 live provider-specific 回归，而不是只依赖静态 payload 检查
+- 继续把 provider capability matrix 写清楚哪些能力是归一化实现、哪些是显式约束、哪些仍然依赖 provider-specific best effort
 
 参考：
 
@@ -76,12 +77,25 @@
 
 ## MCP 与 Federation
 
-继续围绕官方 MCP surface 推进：
+当前 durable MCP 基线已经包括：
+
+- `resources/list`
+- `resources/read`
+- `resources/templates/list`
+- `resources/subscribe`
+- `resources/unsubscribe`
+- `prompts/list`
+- `prompts/get`
+- tools/resources/prompts 的 durable catalog snapshots
+- resource subscription 的 durable state
+
+下一步继续围绕官方 MCP surface 推进：
 
 - `notifications/resources/list_changed`
 - `notifications/tools/list_changed`
 - `notifications/prompts/list_changed`
-- `resources/subscribe`
+- `notifications/resources/updated`
+- prompt/resource template refresh coordination 与更丰富的缓存元数据
 
 参考：
 

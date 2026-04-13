@@ -152,6 +152,24 @@ class SQLiteRunStore:
                     last_notified_at TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS mcp_catalog_snapshots (
+                    server_name TEXT NOT NULL,
+                    catalog_kind TEXT NOT NULL,
+                    entries_payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_notified_at TEXT,
+                    PRIMARY KEY(server_name, catalog_kind)
+                );
+
+                CREATE TABLE IF NOT EXISTS mcp_resource_subscriptions (
+                    server_name TEXT NOT NULL,
+                    resource_uri TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    subscription_payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(server_name, resource_uri)
+                );
+
                 CREATE TABLE IF NOT EXISTS federation_auth_state (
                     remote_name TEXT PRIMARY KEY,
                     tokens_payload TEXT,
@@ -809,6 +827,109 @@ class SQLiteRunStore:
             'updated_at': row[1],
             'last_notified_at': row[2],
         }
+
+    def save_mcp_catalog_snapshot(
+        self,
+        server_name: str,
+        catalog_kind: str,
+        entries: list[dict[str, Any]],
+        *,
+        last_notified_at: str | None = None,
+    ) -> dict[str, Any]:
+        updated_at = self._now()
+        current = self.load_mcp_catalog_snapshot(server_name, catalog_kind)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'INSERT INTO mcp_catalog_snapshots(server_name, catalog_kind, entries_payload, updated_at, last_notified_at) '
+                'VALUES (?, ?, ?, ?, ?) '
+                'ON CONFLICT(server_name, catalog_kind) DO UPDATE SET '
+                'entries_payload = excluded.entries_payload, '
+                'updated_at = excluded.updated_at, '
+                'last_notified_at = excluded.last_notified_at',
+                (
+                    server_name,
+                    catalog_kind,
+                    self._encode(entries),
+                    updated_at,
+                    last_notified_at if last_notified_at is not None else cast(str | None, current.get('last_notified_at') if current else None),
+                ),
+            )
+            connection.commit()
+        return cast(dict[str, Any], self.load_mcp_catalog_snapshot(server_name, catalog_kind))
+
+    def load_mcp_catalog_snapshot(self, server_name: str, catalog_kind: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                'SELECT entries_payload, updated_at, last_notified_at '
+                'FROM mcp_catalog_snapshots WHERE server_name = ? AND catalog_kind = ?',
+                (server_name, catalog_kind),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            'server_name': server_name,
+            'catalog_kind': catalog_kind,
+            'entries': cast(list[dict[str, Any]], self._decode(row[0]) or []),
+            'updated_at': row[1],
+            'last_notified_at': row[2],
+        }
+
+    def save_mcp_resource_subscription(
+        self,
+        server_name: str,
+        resource_uri: str,
+        *,
+        status: str,
+        subscription: dict[str, Any],
+    ) -> dict[str, Any]:
+        updated_at = self._now()
+        with closing(self._connect()) as connection:
+            connection.execute(
+                'INSERT INTO mcp_resource_subscriptions(server_name, resource_uri, status, subscription_payload, updated_at) '
+                'VALUES (?, ?, ?, ?, ?) '
+                'ON CONFLICT(server_name, resource_uri) DO UPDATE SET '
+                'status = excluded.status, '
+                'subscription_payload = excluded.subscription_payload, '
+                'updated_at = excluded.updated_at',
+                (server_name, resource_uri, status, self._encode(subscription), updated_at),
+            )
+            connection.commit()
+        return cast(dict[str, Any], self.load_mcp_resource_subscription(server_name, resource_uri))
+
+    def load_mcp_resource_subscription(self, server_name: str, resource_uri: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                'SELECT status, subscription_payload, updated_at '
+                'FROM mcp_resource_subscriptions WHERE server_name = ? AND resource_uri = ?',
+                (server_name, resource_uri),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            'server_name': server_name,
+            'resource_uri': resource_uri,
+            'status': row[0],
+            'subscription': cast(dict[str, Any], self._decode(row[1]) or {}),
+            'updated_at': row[2],
+        }
+
+    def list_mcp_resource_subscriptions(self, server_name: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                'SELECT resource_uri, status, subscription_payload, updated_at '
+                'FROM mcp_resource_subscriptions WHERE server_name = ? ORDER BY resource_uri',
+                (server_name,),
+            ).fetchall()
+        return [
+            {
+                'server_name': server_name,
+                'resource_uri': row[0],
+                'status': row[1],
+                'subscription': cast(dict[str, Any], self._decode(row[2]) or {}),
+                'updated_at': row[3],
+            }
+            for row in rows
+        ]
 
     def save_federation_auth_state(
         self,

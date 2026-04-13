@@ -114,6 +114,27 @@ class _DummyMcpClient(BaseMcpClient):
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         return {'name': name, 'arguments': arguments}
 
+    async def list_resources(self) -> dict[str, Any]:
+        return {'resources': []}
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        return {'contents': [{'uri': uri, 'text': 'stub'}]}
+
+    async def list_resource_templates(self) -> dict[str, Any]:
+        return {'resourceTemplates': []}
+
+    async def subscribe_resource(self, uri: str) -> dict[str, Any]:
+        return {'uri': uri, 'status': 'active'}
+
+    async def unsubscribe_resource(self, uri: str) -> dict[str, Any]:
+        return {'uri': uri, 'status': 'inactive'}
+
+    async def list_prompts(self) -> dict[str, Any]:
+        return {'prompts': []}
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> dict[str, Any]:
+        return {'name': name, 'arguments': arguments or {}}
+
     async def aclose(self) -> None:
         return None
 
@@ -121,9 +142,69 @@ class _DummyMcpClient(BaseMcpClient):
 class _RecordingSession:
     def __init__(self) -> None:
         self.notifications = 0
+        self.subscribed: list[str] = []
+        self.unsubscribed: list[str] = []
 
     async def send_roots_list_changed(self) -> None:
         self.notifications += 1
+
+    async def list_tools(self) -> mcp_types.ListToolsResult:
+        return mcp_types.ListToolsResult(
+            tools=[mcp_types.Tool(name='echo', description='Echo', inputSchema={'type': 'object'})]
+        )
+
+    async def list_resources(self) -> mcp_types.ListResourcesResult:
+        return mcp_types.ListResourcesResult(
+            resources=[
+                mcp_types.Resource(
+                    name='notes',
+                    uri=cast(Any, 'file:///notes.txt'),
+                    description='Notes',
+                    mimeType='text/plain',
+                )
+            ]
+        )
+
+    async def read_resource(self, uri: str) -> mcp_types.ReadResourceResult:
+        return mcp_types.ReadResourceResult(
+            contents=[mcp_types.TextResourceContents(uri=cast(Any, uri), mimeType='text/plain', text='hello world')]
+        )
+
+    async def list_resource_templates(self) -> mcp_types.ListResourceTemplatesResult:
+        return mcp_types.ListResourceTemplatesResult(
+            resourceTemplates=[
+                mcp_types.ResourceTemplate(
+                    name='note',
+                    uriTemplate='file:///notes/{name}.txt',
+                    description='Note template',
+                    mimeType='text/plain',
+                )
+            ]
+        )
+
+    async def subscribe_resource(self, uri: str) -> mcp_types.EmptyResult:
+        self.subscribed.append(uri)
+        return mcp_types.EmptyResult()
+
+    async def unsubscribe_resource(self, uri: str) -> mcp_types.EmptyResult:
+        self.unsubscribed.append(uri)
+        return mcp_types.EmptyResult()
+
+    async def list_prompts(self) -> mcp_types.ListPromptsResult:
+        return mcp_types.ListPromptsResult(
+            prompts=[mcp_types.Prompt(name='summarize', description='Summarize content')]
+        )
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> mcp_types.GetPromptResult:
+        return mcp_types.GetPromptResult(
+            description='Prompt body',
+            messages=[
+                mcp_types.PromptMessage(
+                    role='user',
+                    content=mcp_types.TextContent(type='text', text=f'{name}:{(arguments or {}).get("topic", "")}'),
+                )
+            ],
+        )
 
 
 class _DummySessionMcpClient(SessionBackedMcpClient):
@@ -319,6 +400,102 @@ def test_stdio_filesystem_client_disables_server_roots_capability(tmp_path: Path
     client = manager._clients['filesystem']
 
     assert client._supports_server_roots() is False
+
+
+@pytest.mark.asyncio
+async def test_session_backed_client_tracks_resources_prompts_and_subscriptions(tmp_path: Path) -> None:
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    config = McpServerConfig(
+        name='remote',
+        transport='streamable_http',
+        url='http://example.com',
+    )
+    client = _DummySessionMcpClient(
+        config,
+        store=store,
+        model_client=_ModelClient(),
+        human_loop=None,
+        redirect_handler=None,
+        callback_handler=None,
+    )
+    client._session = cast(Any, _RecordingSession())
+
+    resources = await client.list_resources()
+    contents = await client.read_resource('file:///notes.txt')
+    templates = await client.list_resource_templates()
+    prompts = await client.list_prompts()
+    prompt = await client.get_prompt('summarize', {'topic': 'notes'})
+    subscription = await client.subscribe_resource('file:///notes.txt')
+    unsubscription = await client.unsubscribe_resource('file:///notes.txt')
+
+    resource_snapshot = store.load_mcp_catalog_snapshot('remote', 'resources')
+    prompt_snapshot = store.load_mcp_catalog_snapshot('remote', 'prompts')
+    saved_subscription = store.load_mcp_resource_subscription('remote', 'file:///notes.txt')
+
+    assert resources['resources'][0]['uri'] == 'file:///notes.txt'
+    assert contents['contents'][0]['text'] == 'hello world'
+    assert templates['resourceTemplates'][0]['uriTemplate'] == 'file:///notes/{name}.txt'
+    assert prompts['prompts'][0]['name'] == 'summarize'
+    assert prompt['messages'][0]['content']['text'] == 'summarize:notes'
+    assert subscription['status'] == 'active'
+    assert unsubscription['status'] == 'inactive'
+    assert resource_snapshot is not None
+    assert resource_snapshot['entries'][0]['uri'] == 'file:///notes.txt'
+    assert prompt_snapshot is not None
+    assert prompt_snapshot['entries'][0]['name'] == 'summarize'
+    assert saved_subscription is not None
+    assert saved_subscription['status'] == 'inactive'
+
+
+@pytest.mark.asyncio
+async def test_message_handler_persists_catalog_change_and_resource_update(tmp_path: Path) -> None:
+    store = SQLiteRunStore(tmp_path, 'state.db')
+    config = McpServerConfig(
+        name='remote',
+        transport='streamable_http',
+        url='http://example.com',
+    )
+    client = _DummySessionMcpClient(
+        config,
+        store=store,
+        model_client=_ModelClient(),
+        human_loop=None,
+        redirect_handler=None,
+        callback_handler=None,
+    )
+    client._session = cast(Any, _RecordingSession())
+    await client.subscribe_resource('file:///notes.txt')
+
+    await client._message_handler(
+        mcp_types.ServerNotification(root=mcp_types.ResourceListChangedNotification())
+    )
+    await client._message_handler(
+        mcp_types.ServerNotification(root=mcp_types.ToolListChangedNotification())
+    )
+    await client._message_handler(
+        mcp_types.ServerNotification(root=mcp_types.PromptListChangedNotification())
+    )
+    await client._message_handler(
+        mcp_types.ServerNotification(
+            root=mcp_types.ResourceUpdatedNotification(
+                params=mcp_types.ResourceUpdatedNotificationParams(uri=cast(Any, 'file:///notes.txt'))
+            )
+        )
+    )
+
+    resource_snapshot = store.load_mcp_catalog_snapshot('remote', 'resources')
+    tool_snapshot = store.load_mcp_catalog_snapshot('remote', 'tools')
+    prompt_snapshot = store.load_mcp_catalog_snapshot('remote', 'prompts')
+    saved_subscription = store.load_mcp_resource_subscription('remote', 'file:///notes.txt')
+
+    assert resource_snapshot is not None
+    assert resource_snapshot['last_notified_at'] is not None
+    assert tool_snapshot is not None
+    assert tool_snapshot['entries'][0]['name'] == 'echo'
+    assert prompt_snapshot is not None
+    assert prompt_snapshot['entries'][0]['name'] == 'summarize'
+    assert saved_subscription is not None
+    assert saved_subscription['subscription']['last_update']['uri'] == 'file:///notes.txt'
 
 
 @pytest.mark.asyncio

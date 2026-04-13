@@ -121,10 +121,24 @@ def test_sqlite_run_store_updates_mcp_requests_and_root_snapshots(tmp_path: Path
         [{'path': 'C:/work', 'name': 'work', 'uri': 'file:///C:/work'}],
         last_notified_at='2026-04-10T00:00:00+00:00',
     )
+    store.save_mcp_catalog_snapshot(
+        'remote',
+        'resources',
+        [{'uri': 'file:///notes.txt', 'name': 'notes'}],
+        last_notified_at='2026-04-10T00:05:00+00:00',
+    )
+    store.save_mcp_resource_subscription(
+        'remote',
+        'file:///notes.txt',
+        status='active',
+        subscription={'uri': 'file:///notes.txt', 'status': 'active'},
+    )
 
     updated = store.load_human_request(request.request_id)
     located = store.find_mcp_elicitation_request('remote', 'eli-1')
     snapshot = store.load_mcp_root_snapshot('filesystem')
+    catalog_snapshot = store.load_mcp_catalog_snapshot('remote', 'resources')
+    subscription = store.load_mcp_resource_subscription('remote', 'file:///notes.txt')
 
     assert updated.response_payload == {'action': 'accept', 'completion': {'status': 'completed', 'elicitation_id': 'eli-1'}}
     assert located is not None
@@ -132,6 +146,11 @@ def test_sqlite_run_store_updates_mcp_requests_and_root_snapshots(tmp_path: Path
     assert snapshot is not None
     assert snapshot['roots'][0]['uri'] == 'file:///C:/work'
     assert snapshot['last_notified_at'] == '2026-04-10T00:00:00+00:00'
+    assert catalog_snapshot is not None
+    assert catalog_snapshot['entries'][0]['uri'] == 'file:///notes.txt'
+    assert catalog_snapshot['last_notified_at'] == '2026-04-10T00:05:00+00:00'
+    assert subscription is not None
+    assert subscription['status'] == 'active'
 
 
 def test_sqlite_run_store_tracks_workbench_and_federated_tasks(tmp_path: Path) -> None:

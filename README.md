@@ -64,7 +64,7 @@ Most agent projects move quickly from "call a model" to "ship an application". T
 
 - Sensitive tools, swarm handoffs, and resumptions can enter a durable approval flow.
 - Runs expose safe-point interrupts, checkpoint listing, replay, and forked resume.
-- MCP integrations support explicit roots, root snapshots, `notifications/roots/list_changed`, elicitation approval state, `streamable_http`, and persisted OAuth state.
+- MCP integrations support explicit roots, root snapshots, `notifications/roots/list_changed`, resources or prompts catalog management, durable resource subscriptions, elicitation approval state, `streamable_http`, and persisted OAuth state.
 
 Reference:
 - Detailed usage: [reference/en/usage-guide.md](./reference/en/usage-guide.md)
@@ -179,14 +179,14 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-Release `0.3.4` keeps the retained benchmark snapshot from April 9, 2026 while publishing refreshed public-eval, Python verification, and real-network snapshots from April 11, 2026. The repo-pinned BFCL agentic slice is now green. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+Release `0.3.4` keeps the retained benchmark snapshot from April 9, 2026 while publishing refreshed public-eval, Python verification, and real-network snapshots from April 13, 2026. The repo-pinned `full_v4` BFCL slice is now fully green, and the runtime also supports bounded `official_full_v4` manifest slices for wider regression coverage. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
 | Test Set | Score |
 | --- | ---: |
 | benchmark.overall | 100.0 |
-| public_eval.bfcl_overall | 98.21 |
+| public_eval.bfcl_overall | 100.0 |
 | public_eval.tau2_mock | 100.0 |
 
 ## Real Network Test Set Results
@@ -201,10 +201,9 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
-- extending the now-green repo-pinned BFCL agentic slice into wider official-style BFCL v4 coverage and the remaining multi-tool miss
-- expanding BFCL web-search toward multi-hop search-plus-contents flows and content-mode-aware retrieval
-- tightening provider compatibility around strict schema transport, provider-specific tool-choice mapping, and the next Responses API parity step
-- expanding durable MCP and federation coordination without widening the public runtime surface unnecessarily
+- adding OpenAI Responses API parity coverage on top of the shipped strict chat-completions baseline
+- widening official BFCL v4 coverage from bounded manifest slices into broader agentic and multihop regressions
+- deepening MCP catalog coordination around prompt or resource templates and richer notification-driven refresh flows
 
 ## Design References
 

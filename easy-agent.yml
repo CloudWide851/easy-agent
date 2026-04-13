@@ -91,6 +91,10 @@ evaluation:
       manifest_path: .easy-agent/public-eval-cache/bfcl_v4_manifest.json
       checkpoint_path: .easy-agent/public-eval-progress.json
       resume: true
+      # Use these filters to run a bounded official BFCL slice before widening coverage.
+      suite_allowlist: []
+      case_allowlist: []
+      max_cases:
   real_network:
     # Persist history so warm-start latency and snapshot drift can be compared across runs.
     history_path: .easy-agent/real-network-history.jsonl

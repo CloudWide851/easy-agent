@@ -215,6 +215,25 @@ def _flatten_official_manifest_cases(payload: dict[str, Any]) -> list[dict[str, 
     raise RuntimeError('official BFCL manifest does not contain a supported cases payload')
 
 
+def _filter_official_manifest_cases(
+    cases: list[dict[str, Any]],
+    *,
+    suite_allowlist: list[str],
+    case_allowlist: list[str],
+    max_cases: int | None,
+) -> list[dict[str, Any]]:
+    selected = list(cases)
+    if suite_allowlist:
+        suites = {item.strip() for item in suite_allowlist if item.strip()}
+        selected = [case for case in selected if str(case.get('suite') or '').strip() in suites]
+    if case_allowlist:
+        case_ids = {item.strip() for item in case_allowlist if item.strip()}
+        selected = [case for case in selected if str(case.get('id') or '').strip() in case_ids]
+    if max_cases is not None:
+        selected = selected[: max(0, max_cases)]
+    return selected
+
+
 def _load_official_full_v4_inputs(base_config: AppConfig) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     official = base_config.evaluation.public_eval.official_dataset
     manifest_path = Path(official.manifest_path)
@@ -227,7 +246,12 @@ def _load_official_full_v4_inputs(base_config: AppConfig) -> tuple[list[dict[str
         raise RuntimeError(
             f"official BFCL profile requires '{manifest_path}' or evaluation.public_eval.official_dataset.source_url"
         )
-    bfcl_cases = _flatten_official_manifest_cases(manifest)
+    bfcl_cases = _filter_official_manifest_cases(
+        _flatten_official_manifest_cases(manifest),
+        suite_allowlist=official.suite_allowlist,
+        case_allowlist=official.case_allowlist,
+        max_cases=official.max_cases,
+    )
     tau_cases = cast(list[dict[str, Any]], _load_fixture('tau2_mock_subset.json')['cases'])
     return bfcl_cases, tau_cases
 
@@ -258,8 +282,14 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         budget = 'Make exactly one tool call total only if it is clearly necessary, then stop.'
     else:
         budget = f'Use exactly {expected_calls} tool calls only when the requested actions are independent and necessary.'
+    action_directive = (
+        'Choose the single best action based on the user request. '
+        if expected_calls <= 1
+        else 'Choose the full set of required tool actions based on the user request. '
+    )
     prompt = (
-        'You are evaluating tool-calling behavior. Choose the single best action based on the user request. '
+        'You are evaluating tool-calling behavior. '
+        + action_directive
         + budget
         + ' If the request is irrelevant to the available tools, answer directly without any tool call. '
         'If one tool already covers the request, prefer that single tool rather than decomposing the request into narrower follow-up calls. '
@@ -277,7 +307,8 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
             'treat them as coordinated required actions and issue one tool call per required analysis instead of collapsing them into a single partial answer. '
             'Reuse the same grounded entity, location, and timeframe arguments across those calls when the request implies they are shared. '
             'If one required tool needs a contextual field such as ecosystem or timeframe, infer it from nearby nouns in the user request, '
-            'for example woodland, forest, wetland, river, city, or decade, instead of dropping the second required call.'
+            'for example woodland, forest, wetland, river, city, or decade, instead of dropping the second required call. '
+            'Do not stop after the first successful call when another required analysis is still missing from the tool budget.'
         )
     if str(case.get('suite') or '') == 'web_search':
         prompt += (
@@ -883,7 +914,12 @@ def _looks_multi_intent(prompt: str, scored: list[tuple[dict[str, Any], int, int
     return len(close_matches) >= 2
 
 
-def _select_bfcl_candidate_functions(prompt: str, functions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _select_bfcl_candidate_functions(
+    prompt: str,
+    functions: list[dict[str, Any]],
+    *,
+    allow_multi_intent: bool = True,
+) -> list[dict[str, Any]]:
     prompt_tokens = _tokenize_public_eval_text(prompt)
     scored = [
         (
@@ -901,7 +937,7 @@ def _select_bfcl_candidate_functions(prompt: str, functions: list[dict[str, Any]
     best_name_overlap = max(name_overlap for _, score, name_overlap in scored if score == best_score)
     if best_name_overlap == 0 and best_score < 6:
         return []
-    if _looks_multi_intent(prompt, scored):
+    if allow_multi_intent and _looks_multi_intent(prompt, scored):
         coordinated = [
             function
             for function, score, name_overlap in scored
@@ -938,6 +974,10 @@ def _is_retryable_provider_400(base_config: AppConfig, exc: BaseException) -> bo
     return False
 
 
+def _is_retryable_budget_overcall(exc: BaseException) -> bool:
+    return 'tool call budget exhausted' in str(exc).lower()
+
+
 def _same_function_selection(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
     return [str(item['name']) for item in left] == [str(item['name']) for item in right]
 
@@ -946,8 +986,14 @@ def _candidate_pruned_functions(
     prompt: str,
     current_functions: list[dict[str, Any]],
     all_functions: list[dict[str, Any]],
+    *,
+    expected_call_count: int | None = None,
 ) -> list[dict[str, Any]] | None:
-    candidate_functions = _select_bfcl_candidate_functions(prompt, all_functions)
+    candidate_functions = _select_bfcl_candidate_functions(
+        prompt,
+        all_functions,
+        allow_multi_intent=(expected_call_count or 0) > 1,
+    )
     if not candidate_functions or _same_function_selection(candidate_functions, current_functions):
         return None
     return candidate_functions
@@ -1432,7 +1478,12 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
             if attempt.record.success:
                 return attempt.record
             if fallback_stage == 'strict_schema_retry':
-                candidate_functions = _candidate_pruned_functions(prompt, functions, all_functions)
+                candidate_functions = _candidate_pruned_functions(
+                    prompt,
+                    functions,
+                    all_functions,
+                    expected_call_count=len(case.get('ground_truth', [])),
+                )
                 if candidate_functions is not None:
                     stages.append(('candidate_pruned_retry', candidate_functions, True))
             continue
@@ -1440,6 +1491,16 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
             break
         last_error = attempt.error
         last_duration = attempt.duration_seconds
+        if _is_retryable_budget_overcall(attempt.error):
+            candidate_functions = _candidate_pruned_functions(
+                prompt,
+                functions,
+                all_functions,
+                expected_call_count=len(case.get('ground_truth', [])),
+            )
+            if candidate_functions is not None:
+                stages.insert(0, ('candidate_pruned_retry', candidate_functions, True))
+                continue
         if not attempt.retryable_provider_400:
             return _make_bfcl_failure_record(
                 case,
@@ -1450,7 +1511,12 @@ async def _run_bfcl_case(base_config: AppConfig, case: dict[str, Any]) -> Public
             )
         if fallback_stage != 'strict_schema_retry':
             continue
-        candidate_functions = _candidate_pruned_functions(prompt, functions, all_functions)
+        candidate_functions = _candidate_pruned_functions(
+            prompt,
+            functions,
+            all_functions,
+            expected_call_count=len(case.get('ground_truth', [])),
+        )
         if candidate_functions is not None:
             stages.append(('candidate_pruned_retry', candidate_functions, True))
     if last_record is not None:
@@ -1724,6 +1790,18 @@ def _checkpoint_record_key(record: PublicEvalRecord) -> str:
     return f'{record.suite}:{record.case_id}'
 
 
+def _checkpoint_selection_signature(base_config: AppConfig, profile: str) -> dict[str, Any]:
+    if profile != 'official_full_v4':
+        return {'profile': profile}
+    official = base_config.evaluation.public_eval.official_dataset
+    return {
+        'profile': profile,
+        'suite_allowlist': list(official.suite_allowlist),
+        'case_allowlist': list(official.case_allowlist),
+        'max_cases': official.max_cases,
+    }
+
+
 def _load_public_eval_checkpoint(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {'records': {}}
@@ -1735,6 +1813,7 @@ def _save_public_eval_checkpoint(
     *,
     profile: str,
     bfcl_version: str,
+    selection_signature: dict[str, Any],
     records: list[PublicEvalRecord],
     run_status: str,
     interrupted: dict[str, Any] | None = None,
@@ -1742,6 +1821,7 @@ def _save_public_eval_checkpoint(
     payload = {
         'profile': profile,
         'bfcl_version': bfcl_version,
+        'selection_signature': selection_signature,
         'run_status': run_status,
         'interrupted': interrupted,
         'records': {
@@ -1752,9 +1832,17 @@ def _save_public_eval_checkpoint(
     _write_json_path(path, payload)
 
 
-def _restore_checkpoint_records(path: Path, *, profile: str, bfcl_version: str) -> dict[str, PublicEvalRecord]:
+def _restore_checkpoint_records(
+    path: Path,
+    *,
+    profile: str,
+    bfcl_version: str,
+    selection_signature: dict[str, Any],
+) -> dict[str, PublicEvalRecord]:
     checkpoint = _load_public_eval_checkpoint(path)
     if checkpoint.get('profile') != profile or checkpoint.get('bfcl_version') != bfcl_version:
+        return {}
+    if checkpoint.get('selection_signature') != selection_signature:
         return {}
     restored: dict[str, PublicEvalRecord] = {}
     for key, payload in cast(dict[str, Any], checkpoint.get('records', {})).items():
@@ -1777,7 +1865,17 @@ def _run_public_eval_records(
 ) -> tuple[list[PublicEvalRecord], dict[str, Any]]:
     checkpoint_path = _checkpoint_path_for_run(base_config)
     restore_enabled = base_config.evaluation.public_eval.official_dataset.resume
-    restored = _restore_checkpoint_records(checkpoint_path, profile=profile, bfcl_version=bfcl_version) if restore_enabled else {}
+    selection_signature = _checkpoint_selection_signature(base_config, profile)
+    restored = (
+        _restore_checkpoint_records(
+            checkpoint_path,
+            profile=profile,
+            bfcl_version=bfcl_version,
+            selection_signature=selection_signature,
+        )
+        if restore_enabled
+        else {}
+    )
     records: list[PublicEvalRecord] = []
     resumed_records = 0
     interrupted: dict[str, Any] | None = None
@@ -1802,6 +1900,7 @@ def _run_public_eval_records(
                 checkpoint_path,
                 profile=profile,
                 bfcl_version=bfcl_version,
+                selection_signature=selection_signature,
                 records=records,
                 run_status='interrupted_quota',
                 interrupted=interrupted,
@@ -1812,6 +1911,7 @@ def _run_public_eval_records(
             checkpoint_path,
             profile=profile,
             bfcl_version=bfcl_version,
+            selection_signature=selection_signature,
             records=records,
             run_status='running',
         )
@@ -1829,6 +1929,7 @@ def _run_public_eval_records(
                 checkpoint_path,
                 profile=profile,
                 bfcl_version=bfcl_version,
+                selection_signature=selection_signature,
                 records=records,
                 run_status='running',
             )
@@ -1838,6 +1939,7 @@ def _run_public_eval_records(
         checkpoint_path,
         profile=profile,
         bfcl_version=bfcl_version,
+        selection_signature=selection_signature,
         records=records,
         run_status=final_status,
         interrupted=interrupted,
@@ -1865,6 +1967,11 @@ def _public_eval_sources(base_config: AppConfig, selected_profile: str) -> dict[
         sources['official_manifest_path'] = official.manifest_path
         if official.source_url:
             sources['official_manifest_url'] = official.source_url
+        sources['official_selection'] = {
+            'suite_allowlist': list(official.suite_allowlist),
+            'case_allowlist': list(official.case_allowlist),
+            'max_cases': official.max_cases,
+        }
     return sources
 
 
