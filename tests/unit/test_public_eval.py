@@ -173,6 +173,44 @@ def test_select_bfcl_candidate_functions_keeps_multiple_high_relevance_tools() -
     assert [item['name'] for item in selected] == ['area_rectangle.calculate', 'area_circle.calculate']
 
 
+def test_select_bfcl_candidate_functions_handles_coordinated_analysis_prompt() -> None:
+    prompt = 'How to assess the population growth in deer and their impact on woodland in Washington state over the past decade?'
+    functions = [
+        {
+            'name': 'wildlife_population.assess_growth',
+            'description': 'Assesses the population growth of a specific species in a specified location over a period.',
+            'parameters': {
+                'type': 'dict',
+                'properties': {
+                    'species': {'type': 'string'},
+                    'location': {'type': 'string'},
+                    'duration': {'type': 'integer'},
+                },
+            },
+        },
+        {
+            'name': 'ecological_impact.analyze',
+            'description': 'Analyzes the impact of a species on a particular ecosystem.',
+            'parameters': {
+                'type': 'dict',
+                'properties': {
+                    'species': {'type': 'string'},
+                    'ecosystem': {'type': 'string'},
+                    'location': {'type': 'string'},
+                    'timeframe': {'type': 'integer'},
+                },
+            },
+        },
+    ]
+
+    selected = _select_bfcl_candidate_functions(prompt, functions)
+
+    assert [item['name'] for item in selected] == [
+        'wildlife_population.assess_growth',
+        'ecological_impact.analyze',
+    ]
+
+
 def test_retryable_provider_400_checks_openai_compatible_provider() -> None:
     request = httpx.Request('POST', 'https://api.deepseek.com/chat/completions')
     response = httpx.Response(400, request=request)
@@ -590,6 +628,58 @@ def test_fetch_web_contents_uses_http_fetch_and_normalizes_response(tmp_path: Pa
 
     assert route.called is True
     assert result['results'][0]['text'] == 'Body'
+    assert result['mode'] == 'truncate'
+
+
+@respx.mock
+def test_fetch_web_contents_supports_raw_mode(tmp_path: Path) -> None:
+    route = respx.get('https://example.com/raw').mock(
+        return_value=httpx.Response(
+            200,
+            text='<html><body><main><h1>Title</h1><p>Body</p></main></body></html>',
+            headers={'content-type': 'text/html; charset=utf-8'},
+        )
+    )
+    result = _fetch_web_contents(
+        {'urls': ['https://example.com/raw'], 'mode': 'raw'},
+        {'replay_contents': []},
+        AppConfig.model_validate(
+            {
+                'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+                'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+            }
+        ).evaluation.public_eval.web_search,
+    )
+
+    assert route.called is True
+    assert result['mode'] == 'raw'
+    assert '<h1>Title</h1>' in result['results'][0]['text']
+
+
+@respx.mock
+def test_fetch_web_contents_supports_markdown_mode(tmp_path: Path) -> None:
+    route = respx.get('https://example.com/markdown').mock(
+        return_value=httpx.Response(
+            200,
+            text='<html><body><h1>Guide</h1><ul><li>One</li><li>Two</li></ul></body></html>',
+            headers={'content-type': 'text/html; charset=utf-8'},
+        )
+    )
+    result = _fetch_web_contents(
+        {'urls': ['https://example.com/markdown'], 'mode': 'markdown'},
+        {'replay_contents': []},
+        AppConfig.model_validate(
+            {
+                'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+                'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+            }
+        ).evaluation.public_eval.web_search,
+    )
+
+    assert route.called is True
+    assert result['mode'] == 'markdown'
+    assert 'Guide' in result['results'][0]['text']
+    assert '- One' in result['results'][0]['text']
 
 
 def test_fetch_web_contents_rejects_ungrounded_urls(tmp_path: Path) -> None:

@@ -15,6 +15,9 @@
 - 继续收紧 result-id grounding，让 `web.contents` 只消费由最近一次 search 或 replay 证据支撑的 URL。
 - 把当前已经交付的 exact-title、search-plus-contents 与 memory-backed agentic case 作为回归基线。
 - 在此基础上继续扩展到更广的官方 BFCL v4 风格 search-plus-contents、multihop 与剩余 multi-tool case，并保持最终答案对检索证据可回溯。
+- 为每个 case 保留 durable search history，让后续 hop 可以复用 grounded result id、grounded URL 和已抓取页面证据，而不是放宽到未 grounding 的链接。
+- 继续把 `web.contents` 推进到更接近 BFCL v4 的 `truncate` / `markdown` / `raw` 内容模式，让答案抽取可以在简洁文本、可读文档文本与 markup-sensitive 载荷之间切换。
+- 当 grounded page fetch 失败时，先在 grounded search set 内重试，再退回 replay-backed contents；不要静默扩大 URL 边界。
 - 让最终答案同时兼容简洁纯文本或 `{\"answer\": ..., \"context\": ...}` 这样的结构化载荷，这样可以增强 answer scoring，而不是放松 evaluator。
 - 对 memory read/delete 这类 case，继续保持 tool-result truth 校验，而不是只看 arguments 命中。
 

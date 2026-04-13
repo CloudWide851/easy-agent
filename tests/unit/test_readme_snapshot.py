@@ -26,6 +26,10 @@ def test_readmes_reference_logo_and_split_reference_docs() -> None:
     assert './reference/zh/next-reinforcement.md' in chinese
     assert 'Warm-Start Telemetry Snapshot' not in english
     assert 'Warm-Start Telemetry 快照' not in chinese
+    assert 'https://linux.do/logo-128.svg' not in english
+    assert 'https://linux.do/logo-128.svg' not in chinese
+    assert '[Linux.do](https://linux.do/)' in english
+    assert '[Linux.do](https://linux.do/)' in chinese
     assert '.easy-agent/' not in english
     assert '.easy-agent/' not in chinese
     assert 'MEMORY.md' not in english

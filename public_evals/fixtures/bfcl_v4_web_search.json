@@ -230,6 +230,11 @@
                   "type": "string"
                 },
                 "optional": true
+              },
+              "mode": {
+                "type": "string",
+                "optional": true,
+                "description": "Content extraction mode: truncate, markdown, or raw."
               }
             }
           }
@@ -350,6 +355,11 @@
                   "type": "string"
                 },
                 "optional": true
+              },
+              "mode": {
+                "type": "string",
+                "optional": true,
+                "description": "Content extraction mode: truncate, markdown, or raw."
               }
             }
           }

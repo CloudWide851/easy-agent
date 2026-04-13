@@ -15,6 +15,9 @@ This roadmap starts from the published `0.3.4` baseline.
 - Keep improving result-id grounding so `web.contents` consumes only URLs justified by the latest search step or replay evidence.
 - Preserve the shipped exact-title, search-plus-contents, and memory-backed agentic cases as a regression floor.
 - Extend the current repo-pinned green path into wider official BFCL v4-style search-plus-contents, multihop, and remaining multi-tool cases, where the final answer should remain grounded to the retrieved evidence.
+- Keep a durable per-case search history so later hops can reuse grounded result ids, grounded URLs, and previously fetched page evidence without widening to ungrounded links.
+- Extend `web.contents` toward the BFCL v4-style `truncate` / `markdown` / `raw` content modes so answer extraction can choose between concise text, readable document text, and markup-sensitive payloads.
+- When a grounded page fetch fails, retry within the grounded search set before falling back to replay-backed contents; do not silently widen the URL boundary.
 - Keep the final-answer path compatible with either concise plain text or a structured `{"answer": ..., "context": ...}` payload so answer scoring stays robust without loosening the evaluator.
 - Keep memory semantics explicit by validating tool-result truth for read/delete style cases instead of relying on argument matches alone.
 

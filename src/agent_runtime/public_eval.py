@@ -92,6 +92,7 @@ _GENERIC_TOKENS = {
 }
 _MULTI_INTENT_PATTERN = re.compile(r'\b(also|both|as well as|in addition)\b', re.IGNORECASE)
 _SINGULAR_TASK_REFERENCE_PATTERN = re.compile(r'\b(the task|that task|it)\b', re.IGNORECASE)
+_COORDINATED_INTENT_PATTERN = re.compile(r'\b(and|along with|plus)\b', re.IGNORECASE)
 _SCHEMA_MATRIX_SAMPLE = {
     'type': 'dict',
     'properties': {
@@ -270,11 +271,19 @@ def _bfcl_system_prompt(case: dict[str, Any]) -> str:
         'Arguments must match the tool schema exactly. If a validation error is returned, correct the arguments and try again. '
         'After any required tool call, provide the final answer as a concise answer string only.'
     )
+    if len(case.get('ground_truth', [])) > 1:
+        prompt += (
+            ' When the user asks for two distinct analyses or outcomes about the same subject, '
+            'treat them as coordinated required actions and issue one tool call per required analysis instead of collapsing them into a single partial answer. '
+            'Reuse the same grounded entity, location, and timeframe arguments across those calls when the request implies they are shared.'
+        )
     if str(case.get('suite') or '') == 'web_search':
         prompt += (
             ' For web-search title lookups, answer with the exact grounded page title only. '
             'If the user explicitly asks you to read the page contents or answer a detail that depends on page text rather than the title/snippet, '
             'first call web.search and then call web.contents only on grounded result ids or URLs from that search. '
+            'Use web.contents mode=truncate for concise extraction, mode=markdown for readable document text, and mode=raw only when markup-sensitive text is explicitly needed. '
+            'If the first grounded page fetch fails, use another grounded result rather than widening to an ungrounded URL. '
             'If you provide structured output, use a JSON object with "answer" and optional "context" fields.'
         )
     if str(case.get('suite') or '') == 'memory':
@@ -857,8 +866,19 @@ def _function_relevance_score(function: dict[str, Any], prompt_tokens: set[str])
     )
 
 
-def _looks_multi_intent(prompt: str) -> bool:
-    return _MULTI_INTENT_PATTERN.search(prompt) is not None
+def _looks_multi_intent(prompt: str, scored: list[tuple[dict[str, Any], int, int]] | None = None) -> bool:
+    if _MULTI_INTENT_PATTERN.search(prompt) is not None:
+        return True
+    if _COORDINATED_INTENT_PATTERN.search(prompt) is None or scored is None:
+        return False
+    meaningful = [item for item in scored if item[1] >= 4]
+    if len(meaningful) < 2:
+        return False
+    if len([item for item in meaningful if item[2] > 0]) >= 2:
+        return True
+    best_score = max(score for _, score, _ in meaningful)
+    close_matches = [item for item in meaningful if item[1] >= max(4, best_score - 2)]
+    return len(close_matches) >= 2
 
 
 def _select_bfcl_candidate_functions(prompt: str, functions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -879,9 +899,14 @@ def _select_bfcl_candidate_functions(prompt: str, functions: list[dict[str, Any]
     best_name_overlap = max(name_overlap for _, score, name_overlap in scored if score == best_score)
     if best_name_overlap == 0 and best_score < 6:
         return []
-    if _looks_multi_intent(prompt):
-        threshold = max(3, best_score - 1)
-        return [function for function, score, _ in scored if score >= threshold]
+    if _looks_multi_intent(prompt, scored):
+        coordinated = [
+            function
+            for function, score, name_overlap in scored
+            if name_overlap > 0 and score >= 4
+        ]
+        if len(coordinated) >= 2:
+            return coordinated
     return [function for function, score, _ in scored if score == best_score]
 
 
@@ -1109,7 +1134,20 @@ def _build_eval_tool_handler(
         def search_handler(arguments: dict[str, Any], context: Any) -> dict[str, Any]:
             guard_call_budget()
             result = _web_serpapi_search(arguments, case, web_search)
-            search_state['latest_results'] = list(result.get('results', []))
+            latest_results = list(result.get('results', []))
+            search_state['latest_results'] = latest_results
+            search_state.setdefault('history', []).append(
+                {
+                    'tool': tool_name,
+                    'query': result.get('query'),
+                    'results': latest_results,
+                    'grounded_urls': [
+                        str(item.get('link') or '').strip()
+                        for item in latest_results
+                        if str(item.get('link') or '').strip()
+                    ],
+                }
+            )
             budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
@@ -1131,7 +1169,13 @@ def _build_eval_tool_handler(
                 latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
                 grounded_urls=grounded_urls,
             )
-            search_state['latest_contents'] = list(result.get('results', []))
+            latest_contents = list(result.get('results', []))
+            search_state['latest_contents'] = latest_contents
+            contents_by_url = cast(dict[str, dict[str, Any]], search_state.setdefault('contents_by_url', {}))
+            for item in latest_contents:
+                link = str(item.get('link') or '').strip()
+                if link:
+                    contents_by_url[link] = dict(item)
             budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
@@ -1251,7 +1295,12 @@ async def _run_bfcl_case_attempt(
                     if alias_text and alias_text != canonical:
                         memory_aliases[alias_text] = canonical
         budget_state = {'allowed_calls': len(case.get('ground_truth', [])), 'successful_calls': 0}
-        search_state: dict[str, Any] = {'latest_results': [], 'latest_contents': []}
+        search_state: dict[str, Any] = {
+            'latest_results': [],
+            'latest_contents': [],
+            'history': [],
+            'contents_by_url': {},
+        }
         for function in functions:
             original_name = str(function['name'])
             tool_name = tool_name_map[original_name]

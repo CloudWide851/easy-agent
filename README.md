@@ -202,6 +202,7 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
 - extending the now-green repo-pinned BFCL agentic slice into wider official-style BFCL v4 coverage and the remaining multi-tool miss
+- expanding BFCL web-search toward multi-hop search-plus-contents flows and content-mode-aware retrieval
 - tightening provider compatibility around OpenAI, Anthropic, and Gemini tool-calling constraints
 - expanding durable MCP and federation coordination without widening the public runtime surface unnecessarily
 
@@ -219,7 +220,7 @@ The next reinforcement track is documented in full at [reference/en/next-reinfor
 
 ## Acknowledgements
 
-- <a href="https://linux.do/"><img alt="Linux.do" src="https://linux.do/logo-128.svg" width="20"></a> [Linux.do](https://linux.do/) for community discussion and open knowledge sharing.
+- [Linux.do](https://linux.do/) for community discussion and open knowledge sharing.
 - [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) for the real verification baseline and model endpoint.
 
 ## License

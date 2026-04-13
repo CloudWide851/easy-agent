@@ -22,6 +22,7 @@ _TRAILING_TITLE_QUESTION_PATTERN = re.compile(
 )
 _QUOTE_STRIP = "\"'` "
 _MAX_QUERY_LENGTH = 180
+_SUPPORTED_CONTENT_MODES = {'truncate', 'raw', 'markdown'}
 
 
 class WebSearchQuotaExceeded(RuntimeError):
@@ -168,6 +169,11 @@ def _normalize_web_contents_results(payload: dict[str, Any]) -> list[dict[str, A
     return normalized
 
 
+def _normalize_contents_mode(value: Any) -> str:
+    mode = str(value or 'truncate').strip().casefold()
+    return mode if mode in _SUPPORTED_CONTENT_MODES else 'truncate'
+
+
 def _normalize_title_key(value: str) -> str:
     lowered = value.casefold()
     lowered = re.sub(r'[^0-9a-z]+', ' ', lowered)
@@ -179,6 +185,32 @@ def _strip_html_text(value: str) -> str:
     collapsed = re.sub(r'<[^>]+>', ' ', collapsed)
     collapsed = re.sub(r'\s+', ' ', collapsed)
     return collapsed.strip()
+
+
+def _html_to_markdown_like_text(value: str) -> str:
+    text = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', value, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<\s*br\s*/?\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/?\s*p\s*>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/?\s*div\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*h([1-6])\s*>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/\s*h[1-6]\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*li\s*>', '\n- ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/\s*li\s*>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'[ \t]+\n', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    return text.strip()
+
+
+def _render_contents_text(body: str, content_type: str, *, mode: str) -> str:
+    lowered_body = body.lower()
+    looks_html = 'html' in content_type or '<html' in lowered_body or '<body' in lowered_body
+    if mode == 'raw':
+        return body.strip()
+    if mode == 'markdown':
+        return _html_to_markdown_like_text(body) if looks_html else body.strip()
+    return _strip_html_text(body) if looks_html else body.strip()
 
 
 def _serpapi_query_params(arguments: dict[str, Any], case: dict[str, Any], web_search: PublicEvalWebSearchConfig) -> dict[str, Any]:
@@ -318,16 +350,17 @@ def _fetch_web_contents(
     grounded_urls: set[str] | None = None,
 ) -> dict[str, Any]:
     replay_contents = cast(list[dict[str, Any]], case.get('replay_contents', []))
+    mode = _normalize_contents_mode(arguments.get('mode'))
     urls = _resolve_content_urls(arguments, case, latest_results=latest_results, grounded_urls=grounded_urls)
     if not urls:
         if replay_contents:
-            return {'results': replay_contents, 'backend': 'replay', 'source': 'replay'}
+            return {'results': replay_contents, 'backend': 'replay', 'source': 'replay', 'mode': mode}
         raise RuntimeError('web.contents requires urls/links grounded in search results or replay_contents')
     try:
         _record_web_search_usage(web_search, kind='contents')
     except WebSearchQuotaExceeded:
         if web_search.quota_policy == 'replay' and replay_contents:
-            return {'results': replay_contents, 'backend': 'quota_replay', 'source': 'replay'}
+            return {'results': replay_contents, 'backend': 'quota_replay', 'source': 'replay', 'mode': mode}
         raise
     results: list[dict[str, Any]] = []
     for url in urls:
@@ -338,8 +371,13 @@ def _fetch_web_contents(
             continue
         content_type = response.headers.get('content-type', '').lower()
         body = response.text
-        text = _strip_html_text(body) if 'html' in content_type or '<html' in body.lower() else body.strip()
+        text = _render_contents_text(body, content_type, mode=mode)
         results.append({'title': url, 'link': url, 'text': text[:4000]})
     if not results and replay_contents:
-        return {'results': replay_contents, 'backend': 'service_unavailable_replay', 'source': 'replay'}
-    return {'results': _normalize_web_contents_results({'results': results}), 'backend': 'http_fetch', 'source': 'network'}
+        return {'results': replay_contents, 'backend': 'service_unavailable_replay', 'source': 'replay', 'mode': mode}
+    return {
+        'results': _normalize_web_contents_results({'results': results}),
+        'backend': 'http_fetch',
+        'source': 'network',
+        'mode': mode,
+    }

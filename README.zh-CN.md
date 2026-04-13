@@ -202,6 +202,7 @@ README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 
 完整补强路线见 [reference/zh/next-reinforcement.md](./reference/zh/next-reinforcement.md)。近期重点仍然是：
 
 - 把已经转绿的 repo-pinned BFCL agentic 子集继续推进到更广的 official-style BFCL v4 覆盖面，并压缩剩余 multi-tool miss
+- 把 BFCL web-search 继续推进到 multi-hop search-plus-contents 和内容模式感知检索
 - 继续收紧围绕 OpenAI、Anthropic、Gemini tool-calling 约束的 provider 兼容性
 - 在不随意扩展公开运行时表面的前提下，继续推进 durable MCP 与 federation 协调
 
@@ -219,7 +220,7 @@ README 这里只保留分数展示。耗时、telemetry、warm-start budget 与 
 
 ## 致谢
 
-- <a href="https://linux.do/"><img alt="Linux.do" src="https://linux.do/logo-128.svg" width="20"></a> [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
+- [Linux.do](https://linux.do/) 提供了开放的社区讨论与知识分享环境。
 - [![DeepSeek](https://img.shields.io/badge/DeepSeek-deepseek--chat-2563EB?style=flat-square)](https://www.deepseek.com/) 为本仓库真实验证流程提供了模型端点基线。
 
 ## License
