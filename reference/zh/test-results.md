@@ -4,6 +4,7 @@
 
 - `0.3.4` 版本保留 2026 年 4 月 9 日的 benchmark 快照。
 - 本次发布采用 2026 年 4 月 13 日刷新后的 public-eval、Python verification 与 real-network 快照。
+- 2026 年 4 月 14 日这轮未发布补强在加入 OpenAI Responses API 对齐、raw official BFCL manifest 归一化，以及更深入的 MCP template refresh 协调之后，重新跑了 Python 验证套件，但没有改动 README 分数基线。
 - 仓库公开文档只保留方法说明与分数，不暴露机器本地协作日志。
 
 ## Benchmark 快照
@@ -46,7 +47,9 @@
 - `public_eval.bfcl_case_pass_rate` 保留为诊断指标，用来观察单 case 成功率。
 - `public_eval.bfcl_web_search` 以规范化最终答案准确率为主，tool-call 命中率继续保留为诊断信号。
 - 这次 repo-pinned `full_v4` BFCL 子集已经全绿，既包括 core multi-tool cases，也包括新增的 search-plus-contents 与 memory-backed cases。
-- 现在也支持受控的 `official_full_v4` manifest slice，用来继续扩大覆盖面，而不直接切换 README headline score 的基线。
+- `official_full_v4` 现在已经可以先把 JSON / JSONL 的 raw official manifest 做归一化，再进入过滤和执行流程，而不直接切换 README headline score 的基线。
+- provider compatibility matrix 现在同时覆盖 OpenAI-compatible 的 chat-completions 与 Responses API payload / parsing 对齐，建立在 strict function-calling 基线之上。
+- MCP catalog durability 现在也覆盖 `resource_templates`、prompt detail cache entries 与通知驱动的 stale 标记。
 
 ## Real-Network 快照
 
@@ -91,9 +94,9 @@ README 只保留高层摘要，本页保留公开证据映射。
 本轮只使用 Python-based verification。
 
 - 静态检查：`ruff` 与 `mypy`
-- 定向回归：provider adapters、BFCL retry routing、official-manifest filtering、MCP catalog durability、README snapshots
-- 全量 unit tests：`182 passed`
+- 定向回归：provider adapters、BFCL retry routing、raw official-manifest normalization、MCP catalog durability、README snapshots
+- 全量 unit tests：`185 passed`
 - 全量 real integration：`6 passed`、`3 warnings`
-- 在最终 BFCL 单调用重试调整后，重新以临时 checkpoint 和 usage ledger 刷新 live public-eval
+- 这轮 real integration 在沙箱外重跑，用来重新验证 live model/network 与 MCP-backed 路径，同时确认 temp-root 修复生效
 
 机器本地的完整执行日志不进入仓库公开文档。

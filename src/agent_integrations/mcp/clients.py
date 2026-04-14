@@ -278,6 +278,7 @@ class BaseMcpClient:
         catalog_kind: str,
         entries: list[dict[str, Any]],
         *,
+        metadata: dict[str, Any] | None = None,
         last_notified_at: str | None = None,
     ) -> None:
         if self._store is None:
@@ -286,8 +287,19 @@ class BaseMcpClient:
             self.config.name,
             catalog_kind,
             entries,
+            metadata=metadata,
             last_notified_at=last_notified_at,
         )
+
+    @staticmethod
+    def _catalog_metadata(*, dirty: bool, reason: str, last_refreshed_at: str | None = None) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            'dirty': dirty,
+            'last_refresh_reason': reason,
+        }
+        if last_refreshed_at is not None:
+            metadata['last_refreshed_at'] = last_refreshed_at
+        return metadata
 
     def _mark_catalog_dirty(self, catalog_kind: str) -> None:
         self._catalog_dirty[catalog_kind] = True
@@ -466,7 +478,11 @@ class SessionBackedMcpClient(BaseMcpClient):
             raise RuntimeError('MCP session is not running')
         result = await self._session.list_resources()
         payload = result.model_dump(mode='json', by_alias=True, exclude_none=True)
-        self._save_catalog_snapshot('resources', cast(list[dict[str, Any]], payload.get('resources', [])))
+        self._save_catalog_snapshot(
+            'resources',
+            cast(list[dict[str, Any]], payload.get('resources', [])),
+            metadata=self._catalog_metadata(dirty=False, reason='list_resources', last_refreshed_at=_utcnow()),
+        )
         self._clear_catalog_dirty('resources')
         return payload
 
@@ -480,7 +496,13 @@ class SessionBackedMcpClient(BaseMcpClient):
         if self._session is None:
             raise RuntimeError('MCP session is not running')
         result = await self._session.list_resource_templates()
-        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        payload = result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        self._save_catalog_snapshot(
+            'resource_templates',
+            cast(list[dict[str, Any]], payload.get('resourceTemplates', [])),
+            metadata=self._catalog_metadata(dirty=False, reason='list_resource_templates', last_refreshed_at=_utcnow()),
+        )
+        return payload
 
     async def subscribe_resource(self, uri: str) -> dict[str, Any]:
         if self._session is None:
@@ -515,7 +537,11 @@ class SessionBackedMcpClient(BaseMcpClient):
             raise RuntimeError('MCP session is not running')
         result = await self._session.list_prompts()
         payload = result.model_dump(mode='json', by_alias=True, exclude_none=True)
-        self._save_catalog_snapshot('prompts', cast(list[dict[str, Any]], payload.get('prompts', [])))
+        self._save_catalog_snapshot(
+            'prompts',
+            cast(list[dict[str, Any]], payload.get('prompts', [])),
+            metadata=self._catalog_metadata(dirty=False, reason='list_prompts', last_refreshed_at=_utcnow()),
+        )
         self._clear_catalog_dirty('prompts')
         return payload
 
@@ -523,7 +549,30 @@ class SessionBackedMcpClient(BaseMcpClient):
         if self._session is None:
             raise RuntimeError('MCP session is not running')
         result = await self._session.get_prompt(name, arguments=arguments)
-        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        payload = result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        existing = self._store.load_mcp_catalog_snapshot(self.config.name, 'prompt_details') if self._store is not None else None
+        entries = cast(list[dict[str, Any]], existing.get('entries', [])) if existing is not None else []
+        next_entry = {
+            'name': name,
+            'arguments': arguments or {},
+            'result': payload,
+            'stale': False,
+        }
+        filtered = [
+            item
+            for item in entries
+            if not (
+                str(item.get('name') or '') == name
+                and cast(dict[str, Any], item.get('arguments', {})) == (arguments or {})
+            )
+        ]
+        filtered.append(next_entry)
+        self._save_catalog_snapshot(
+            'prompt_details',
+            filtered,
+            metadata=self._catalog_metadata(dirty=False, reason='get_prompt', last_refreshed_at=_utcnow()),
+        )
+        return payload
 
     async def refresh_roots(self) -> dict[str, Any]:
         roots = normalize_root_entries([root_payload(item) for item in self._resolved_roots()])
@@ -602,6 +651,7 @@ class SessionBackedMcpClient(BaseMcpClient):
             self._save_catalog_snapshot(
                 'tools',
                 [item.model_dump(mode='json', exclude_none=True) for item in tools],
+                metadata=self._catalog_metadata(dirty=False, reason='notifications/tools/list_changed', last_refreshed_at=last_notified_at),
                 last_notified_at=last_notified_at,
             )
             return
@@ -610,6 +660,18 @@ class SessionBackedMcpClient(BaseMcpClient):
             self._save_catalog_snapshot(
                 'resources',
                 cast(list[dict[str, Any]], payload.get('resources', [])),
+                metadata=self._catalog_metadata(dirty=False, reason='notifications/resources/list_changed', last_refreshed_at=last_notified_at),
+                last_notified_at=last_notified_at,
+            )
+            templates = await self.list_resource_templates()
+            self._save_catalog_snapshot(
+                'resource_templates',
+                cast(list[dict[str, Any]], templates.get('resourceTemplates', [])),
+                metadata=self._catalog_metadata(
+                    dirty=False,
+                    reason='notifications/resources/list_changed',
+                    last_refreshed_at=last_notified_at,
+                ),
                 last_notified_at=last_notified_at,
             )
             return
@@ -618,8 +680,23 @@ class SessionBackedMcpClient(BaseMcpClient):
             self._save_catalog_snapshot(
                 'prompts',
                 cast(list[dict[str, Any]], payload.get('prompts', [])),
+                metadata=self._catalog_metadata(dirty=False, reason='notifications/prompts/list_changed', last_refreshed_at=last_notified_at),
                 last_notified_at=last_notified_at,
             )
+            if self._store is not None:
+                existing = self._store.load_mcp_catalog_snapshot(self.config.name, 'prompt_details')
+                if existing is not None:
+                    stale_entries = [dict(item, stale=True) for item in cast(list[dict[str, Any]], existing.get('entries', []))]
+                    self._save_catalog_snapshot(
+                        'prompt_details',
+                        stale_entries,
+                        metadata=self._catalog_metadata(
+                            dirty=True,
+                            reason='notifications/prompts/list_changed',
+                            last_refreshed_at=last_notified_at,
+                        ),
+                        last_notified_at=last_notified_at,
+                    )
 
     async def _handle_resource_updated(self, params: mcp_types.ResourceUpdatedNotificationParams) -> None:
         if self._store is None:

@@ -4,6 +4,8 @@ model:
   model: deepseek-chat
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
+  # OpenAI-compatible providers can stay on chat_completions or switch to responses explicitly.
+  openai_api_style: chat_completions
   timeout_seconds: 60
   max_tokens: 2048
   temperature: 0.1
@@ -91,10 +93,13 @@ evaluation:
       manifest_path: .easy-agent/public-eval-cache/bfcl_v4_manifest.json
       checkpoint_path: .easy-agent/public-eval-progress.json
       resume: true
-      # Use these filters to run a bounded official BFCL slice before widening coverage.
+      # Raw official manifests can be filtered by category, suite, case id, and selection mode.
+      category_allowlist: []
       suite_allowlist: []
       case_allowlist: []
+      selection_mode: manifest_order
       max_cases:
+      max_cases_per_suite:
   real_network:
     # Persist history so warm-start latency and snapshot drift can be compared across runs.
     history_path: .easy-agent/real-network-history.jsonl

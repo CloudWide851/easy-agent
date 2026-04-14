@@ -64,7 +64,7 @@ Most agent projects move quickly from "call a model" to "ship an application". T
 
 - Sensitive tools, swarm handoffs, and resumptions can enter a durable approval flow.
 - Runs expose safe-point interrupts, checkpoint listing, replay, and forked resume.
-- MCP integrations support explicit roots, root snapshots, `notifications/roots/list_changed`, resources or prompts catalog management, durable resource subscriptions, elicitation approval state, `streamable_http`, and persisted OAuth state.
+- MCP integrations support explicit roots, root snapshots, `notifications/roots/list_changed`, resources or prompts catalog management, durable resource subscriptions, resource-template snapshots, prompt-detail invalidation, elicitation approval state, `streamable_http`, and persisted OAuth state.
 
 Reference:
 - Detailed usage: [reference/en/usage-guide.md](./reference/en/usage-guide.md)
@@ -129,9 +129,9 @@ The worker loop persists artifacts and checkpoints so long-running tasks can con
 
 ## Protocol and Tool Model
 
-- Model protocols: OpenAI-compatible, Anthropic-style, and Gemini-style payload normalization.
+- Model protocols: OpenAI-compatible chat-completions or Responses API payload normalization, Anthropic-style payloads, and Gemini-style payload normalization.
 - Tool calling: strict schema transport, nullable/optional modeling, validation-repair loops, provider-neutral tool-choice controls, and provider-schema compatibility telemetry.
-- Web-search eval hardening: SerpApi `/search.json`, replay-backed contents, quota ledger, result grounding, and single-call regression guards.
+- Web-search eval hardening: SerpApi `/search.json`, replay-backed contents, quota ledger, result grounding, raw official BFCL manifest normalization, and single-call regression guards.
 
 Provider behavior details and structured-output notes live in [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md).
 
@@ -179,7 +179,7 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-Release `0.3.4` keeps the retained benchmark snapshot from April 9, 2026 while publishing refreshed public-eval, Python verification, and real-network snapshots from April 13, 2026. The repo-pinned `full_v4` BFCL slice is now fully green, and the runtime also supports bounded `official_full_v4` manifest slices for wider regression coverage. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+The latest published patch remains `0.3.4`. The current unreleased reinforcement keeps the retained benchmark snapshot from April 9, 2026 and the published score baseline from the April 13, 2026 refresh, while extending the runtime with OpenAI Responses API parity, raw `official_full_v4` manifest normalization, and deeper MCP template-refresh coordination. The Python verification suite was rerun on April 14, 2026 without changing the public score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
@@ -201,9 +201,9 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
-- adding OpenAI Responses API parity coverage on top of the shipped strict chat-completions baseline
-- widening official BFCL v4 coverage from bounded manifest slices into broader agentic and multihop regressions
-- deepening MCP catalog coordination around prompt or resource templates and richer notification-driven refresh flows
+- turning the shipped chat-completions and Responses API parity into live provider-specific compatibility evidence
+- expanding raw official BFCL v4 coverage into wider agentic and multihop regressions with clearer official-category diagnostics
+- deepening MCP notification parity around resource updates, prompt-detail refresh, and template diff telemetry
 
 ## Design References
 

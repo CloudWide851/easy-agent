@@ -4,9 +4,9 @@
 
 ## 当前重点
 
-- 在已交付 chat-completions strict-function 基线之上，补齐 OpenAI Responses API 的对齐覆盖。
-- 把新的 official BFCL manifest slice 支持从受控回归继续推进到更广的 official v4 agentic 与 multihop 覆盖面。
-- 在不随意扩大 model-facing runtime surface 的前提下，继续深化 MCP catalog 协调，包括 prompt/resource templates 与更完整的通知驱动刷新。
+- 把已交付的 OpenAI-compatible chat-completions / Responses API 双路径对齐，继续推进成 live provider-specific 兼容证据。
+- 把 raw official BFCL v4 归一化路径继续推进到更广的 agentic 与 multihop 覆盖，并补齐更清晰的官方分类诊断。
+- 在不随意扩大 model-facing runtime surface 的前提下，继续深化 MCP 通知对齐，包括 resources updated、prompt detail refresh 与 template diff telemetry。
 
 ## Web Search 补强
 
@@ -61,11 +61,16 @@
 - 当 `required` 或 `force` 模式在过滤后没有可用工具时，显式失败而不是静默降级
 - 在声称更广兼容性之前，先确保 OpenAI-compatible chat-completions 风格工具面保持可验证对齐
 
+当前已经交付的回归基线也已经包括：
+
+- OpenAI-compatible Responses API payload 对齐
+- OpenAI-compatible Responses API response parsing 对齐
+
 在当前基线之上的更好发展方向：
 
-- 增加 OpenAI Responses API 的 payload 与 response parsing 对齐测试，不再默认 chat-completions 对齐就足够长期成立
 - 为当前 strict function-calling 兼容矩阵增加 live provider-specific 回归，而不是只依赖静态 payload 检查
 - 继续把 provider capability matrix 写清楚哪些能力是归一化实现、哪些是显式约束、哪些仍然依赖 provider-specific best effort
+- 等当前 live matrix 稳定之后，再把同样的显式矩阵方法扩展到未来的 realtime 或 streaming tool surface
 
 参考：
 
@@ -87,6 +92,7 @@
 - `prompts/list`
 - `prompts/get`
 - tools/resources/prompts 的 durable catalog snapshots
+- resource templates 与 prompt detail cache entries 的 durable catalog snapshots
 - resource subscription 的 durable state
 
 下一步继续围绕官方 MCP surface 推进：
@@ -96,6 +102,7 @@
 - `notifications/prompts/list_changed`
 - `notifications/resources/updated`
 - prompt/resource template refresh coordination 与更丰富的缓存元数据
+- prompt detail refresh telemetry 与 diff-aware invalidation
 
 参考：
 

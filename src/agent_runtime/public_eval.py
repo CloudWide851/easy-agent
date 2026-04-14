@@ -5,6 +5,7 @@ import json
 import re
 import tempfile
 import time
+from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import mean
@@ -128,6 +129,17 @@ _BFCL_SUBCATEGORY_GROUPS = {
     'bfcl_memory',
     'bfcl_format_sensitivity',
 }
+_OFFICIAL_CATEGORY_TOKENS = {
+    'simple',
+    'multiple',
+    'parallel_multiple',
+    'irrelevance',
+    'web_search',
+    'memory',
+    'format_sensitivity',
+    'agentic',
+    'multihop',
+}
 
 
 @dataclass(slots=True)
@@ -177,7 +189,16 @@ def _load_fixture(name: str) -> dict[str, Any]:
 
 
 def _load_json_path(path: Path) -> dict[str, Any]:
-    return cast(dict[str, Any], json.loads(path.read_text(encoding='utf-8')))
+    text = path.read_text(encoding='utf-8').strip()
+    if not text:
+        return {}
+    if path.suffix.lower() == '.jsonl':
+        return {'bfcl_cases': [json.loads(line) for line in text.splitlines() if line.strip()]}
+    try:
+        return cast(dict[str, Any], json.loads(text))
+    except json.JSONDecodeError:
+        lines = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return {'bfcl_cases': lines}
 
 
 def _write_json_path(path: Path, payload: dict[str, Any]) -> None:
@@ -196,6 +217,8 @@ def _cache_json_from_url(url: str, cache_path: Path) -> dict[str, Any]:
 
 
 def _flatten_official_manifest_cases(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return cast(list[dict[str, Any]], payload)
     direct = payload.get('bfcl_cases')
     if isinstance(direct, list):
         return cast(list[dict[str, Any]], direct)
@@ -215,22 +238,249 @@ def _flatten_official_manifest_cases(payload: dict[str, Any]) -> list[dict[str, 
     raise RuntimeError('official BFCL manifest does not contain a supported cases payload')
 
 
+def _case_message_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get('text')
+                if isinstance(text, str):
+                    parts.append(text)
+        return '\n'.join(part for part in parts if part)
+    if isinstance(value, dict):
+        text = value.get('text')
+        if isinstance(text, str):
+            return text
+    return str(value or '')
+
+
+def _normalize_official_messages(case: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_messages = case.get('messages')
+    if isinstance(raw_messages, list) and raw_messages:
+        messages: list[dict[str, Any]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get('role') or 'user')
+            content = _case_message_content(item.get('content') or item.get('text') or '')
+            messages.append({'role': role, 'content': content})
+        if messages:
+            return messages
+    for key in ('question', 'prompt', 'input', 'instruction', 'user_input'):
+        value = case.get(key)
+        if isinstance(value, str) and value.strip():
+            return [{'role': 'user', 'content': value}]
+    nested = case.get('user_scenario')
+    if isinstance(nested, dict):
+        instructions = nested.get('instructions')
+        if isinstance(instructions, str) and instructions.strip():
+            return [{'role': 'user', 'content': instructions}]
+    raise RuntimeError('official BFCL case does not contain a supported prompt payload')
+
+
+def _normalize_official_function(function: dict[str, Any]) -> dict[str, Any]:
+    parameters = function.get('parameters') or function.get('input_schema') or function.get('inputSchema') or {'type': 'object'}
+    return {
+        'name': str(function.get('name') or function.get('tool_name') or function.get('function') or ''),
+        'description': str(function.get('description') or function.get('summary') or ''),
+        'parameters': cast(dict[str, Any], parameters if isinstance(parameters, dict) else {'type': 'object'}),
+    }
+
+
+def _normalize_truth_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if isinstance(value, list):
+            normalized[str(key)] = value
+        elif isinstance(value, dict):
+            normalized[str(key)] = [value]
+        else:
+            normalized[str(key)] = [value]
+    return normalized
+
+
+def _normalize_official_ground_truth(case: dict[str, Any]) -> list[dict[str, Any]]:
+    ground_truth = case.get('ground_truth')
+    if isinstance(ground_truth, list) and ground_truth:
+        normalized: list[dict[str, Any]] = []
+        for item in ground_truth:
+            if not isinstance(item, dict):
+                continue
+            if len(item) == 1 and all(isinstance(key, str) for key in item):
+                tool_name = next(iter(item.keys()))
+                arguments = item[tool_name]
+                if isinstance(arguments, dict):
+                    normalized.append({tool_name: _normalize_truth_arguments(arguments)})
+                continue
+            tool_name = str(item.get('name') or item.get('tool_name') or item.get('function') or '')
+            arguments = item.get('arguments') or item.get('args') or item.get('input') or {}
+            if tool_name and isinstance(arguments, dict):
+                normalized.append({tool_name: _normalize_truth_arguments(cast(dict[str, Any], arguments))})
+        if normalized:
+            return normalized
+    expected_calls = case.get('expected_tool_calls') or case.get('tool_calls') or case.get('expected_calls')
+    if isinstance(expected_calls, list):
+        normalized = []
+        for item in expected_calls:
+            if not isinstance(item, dict):
+                continue
+            tool_name = str(item.get('name') or item.get('tool_name') or item.get('function') or '')
+            arguments = item.get('arguments') or item.get('args') or item.get('input') or {}
+            if tool_name and isinstance(arguments, dict):
+                normalized.append({tool_name: _normalize_truth_arguments(cast(dict[str, Any], arguments))})
+        if normalized:
+            return normalized
+    return []
+
+
+def _official_category_tokens(case: dict[str, Any], normalized_suite: str) -> set[str]:
+    values: list[str] = []
+    for key in ('suite', 'category', 'subcategory', 'type'):
+        value = case.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    tags = case.get('tags')
+    if isinstance(tags, list):
+        values.extend(str(item) for item in tags if item)
+    tokens: set[str] = set()
+    for value in values:
+        normalized = value.casefold().replace('-', '_')
+        tokens.update(token for token in re.split(r'[^a-z0-9]+', normalized) if token)
+        tokens.update(token for token in normalized.split('_') if token)
+    categories = {token for token in tokens if token in _OFFICIAL_CATEGORY_TOKENS}
+    categories.add(normalized_suite)
+    if normalized_suite in {'web_search', 'memory', 'format_sensitivity'} or 'multihop' in categories:
+        categories.add('agentic')
+    return categories
+
+
+def _normalize_official_suite(case: dict[str, Any], ground_truth: list[dict[str, Any]], functions: list[dict[str, Any]]) -> str:
+    values: list[str] = []
+    for key in ('suite', 'category', 'subcategory', 'type'):
+        value = case.get(key)
+        if isinstance(value, str):
+            values.append(value.casefold())
+    tags = case.get('tags')
+    if isinstance(tags, list):
+        values.extend(str(item).casefold() for item in tags if item)
+    joined = ' '.join(values)
+    function_names = ' '.join(str(item.get('name') or '').casefold() for item in functions)
+    if 'irrelevance' in joined or 'no_tool' in joined:
+        return 'irrelevance'
+    if 'format' in joined or 'xml' in joined or '<task>' in ' '.join(item['content'] for item in _normalize_official_messages(case)):
+        return 'format_sensitivity'
+    if 'memory' in joined or 'memory.' in function_names:
+        return 'memory'
+    if 'web_search' in joined or 'search' in joined or 'multihop' in joined or 'web.' in function_names:
+        return 'web_search'
+    if 'parallel' in joined:
+        return 'parallel_multiple'
+    if len(ground_truth) > 1:
+        return 'multiple'
+    return 'simple'
+
+
+def _normalize_official_manifest_case(case: dict[str, Any], *, index: int) -> dict[str, Any]:
+    functions_raw = case.get('functions') or case.get('tools') or case.get('available_tools') or []
+    functions = [
+        _normalize_official_function(item)
+        for item in cast(list[dict[str, Any]], functions_raw)
+        if isinstance(item, dict)
+    ]
+    ground_truth = _normalize_official_ground_truth(case)
+    normalized_suite = _normalize_official_suite(case, ground_truth, functions)
+    case_id = str(case.get('id') or case.get('case_id') or case.get('question_id') or f'official_{normalized_suite}_{index}')
+    metadata = {
+        'official_categories': sorted(_official_category_tokens(case, normalized_suite)),
+        'official_source_suite': str(case.get('suite') or case.get('category') or normalized_suite),
+        'official_tags': [str(item) for item in cast(list[Any], case.get('tags', []))],
+    }
+    initial_state = cast(dict[str, Any], case.get('initial_state') or {})
+    return {
+        'id': case_id,
+        'suite': normalized_suite,
+        'messages': _normalize_official_messages(case),
+        'functions': functions,
+        'ground_truth': ground_truth,
+        'expect_no_tool': bool(case.get('expect_no_tool') or (normalized_suite == 'irrelevance' and not ground_truth)),
+        'initial_state': initial_state,
+        'expected_answer': case.get('expected_answer'),
+        'expected_answer_aliases': case.get('expected_answer_aliases', []),
+        'replay_results': case.get('replay_results', []),
+        'expected_tool_result': case.get('expected_tool_result'),
+        'source_url': case.get('source_url') or case.get('source') or case.get('question_url'),
+        'metadata': metadata,
+    }
+
+
+def _balanced_case_selection(cases: list[dict[str, Any]], max_cases: int) -> list[dict[str, Any]]:
+    grouped: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
+    suite_order: list[str] = []
+    for case in cases:
+        suite = str(case.get('suite') or '')
+        if suite not in grouped:
+            suite_order.append(suite)
+        grouped[suite].append(case)
+    selected: list[dict[str, Any]] = []
+    while len(selected) < max_cases:
+        progressed = False
+        for suite in suite_order:
+            queue = grouped[suite]
+            if not queue:
+                continue
+            selected.append(queue.popleft())
+            progressed = True
+            if len(selected) >= max_cases:
+                break
+        if not progressed:
+            break
+    return selected
+
+
 def _filter_official_manifest_cases(
     cases: list[dict[str, Any]],
     *,
+    category_allowlist: list[str],
     suite_allowlist: list[str],
     case_allowlist: list[str],
+    selection_mode: str,
     max_cases: int | None,
+    max_cases_per_suite: int | None,
 ) -> list[dict[str, Any]]:
     selected = list(cases)
+    if category_allowlist:
+        categories = {item.strip() for item in category_allowlist if item.strip()}
+        selected = [
+            case
+            for case in selected
+            if categories.intersection(set(cast(list[str], cast(dict[str, Any], case.get('metadata', {})).get('official_categories', []))))
+        ]
     if suite_allowlist:
         suites = {item.strip() for item in suite_allowlist if item.strip()}
         selected = [case for case in selected if str(case.get('suite') or '').strip() in suites]
     if case_allowlist:
         case_ids = {item.strip() for item in case_allowlist if item.strip()}
         selected = [case for case in selected if str(case.get('id') or '').strip() in case_ids]
+    if max_cases_per_suite is not None:
+        suite_counts: dict[str, int] = defaultdict(int)
+        limited: list[dict[str, Any]] = []
+        for case in selected:
+            suite = str(case.get('suite') or '')
+            if suite_counts[suite] >= max(0, max_cases_per_suite):
+                continue
+            suite_counts[suite] += 1
+            limited.append(case)
+        selected = limited
     if max_cases is not None:
-        selected = selected[: max(0, max_cases)]
+        limit = max(0, max_cases)
+        if selection_mode == 'balanced_per_suite':
+            selected = _balanced_case_selection(selected, limit)
+        else:
+            selected = selected[:limit]
     return selected
 
 
@@ -246,11 +496,19 @@ def _load_official_full_v4_inputs(base_config: AppConfig) -> tuple[list[dict[str
         raise RuntimeError(
             f"official BFCL profile requires '{manifest_path}' or evaluation.public_eval.official_dataset.source_url"
         )
+    normalized_cases = [
+        _normalize_official_manifest_case(case, index=index)
+        for index, case in enumerate(_flatten_official_manifest_cases(manifest))
+        if isinstance(case, dict)
+    ]
     bfcl_cases = _filter_official_manifest_cases(
-        _flatten_official_manifest_cases(manifest),
+        normalized_cases,
+        category_allowlist=official.category_allowlist,
         suite_allowlist=official.suite_allowlist,
         case_allowlist=official.case_allowlist,
+        selection_mode=official.selection_mode,
         max_cases=official.max_cases,
+        max_cases_per_suite=official.max_cases_per_suite,
     )
     tau_cases = cast(list[dict[str, Any]], _load_fixture('tau2_mock_subset.json')['cases'])
     return bfcl_cases, tau_cases
@@ -361,12 +619,14 @@ def _protocol_matrix_sample_schema(
     provider: str,
     *,
     function_calling: dict[str, Any] | None = None,
+    openai_api_style: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = adapter.build_payload(
         ModelConfig.model_validate(
             {
                 'provider': provider,
                 'protocol': adapter.protocol,
+                **({'openai_api_style': openai_api_style} if openai_api_style is not None else {}),
                 **({'function_calling': function_calling} if function_calling is not None else {}),
             }
         ),
@@ -374,6 +634,8 @@ def _protocol_matrix_sample_schema(
         [ToolSpec(name='schema_probe', description='schema probe', input_schema=_SCHEMA_MATRIX_SAMPLE)],
     )
     if adapter.protocol is Protocol.OPENAI:
+        if openai_api_style == 'responses':
+            return payload, cast(dict[str, Any], payload['tools'][0]['parameters'])
         return payload, cast(dict[str, Any], payload['tools'][0]['function']['parameters'])
     if adapter.protocol is Protocol.ANTHROPIC:
         return payload, cast(dict[str, Any], payload['tools'][0]['input_schema'])
@@ -422,6 +684,37 @@ def _provider_schema_matrix() -> dict[str, Any]:
         )
         parallel_control = payload.get('parallel_tool_calls')
         params_item_type = cast(dict[str, Any], cast(dict[str, Any], properties.get('params', {})).get('items', {})).get('type')
+        responses_payload: dict[str, Any] | None = None
+        responses_parse: dict[str, Any] | None = None
+        if adapter.protocol is Protocol.OPENAI:
+            responses_payload, _ = _protocol_matrix_sample_schema(
+                adapter,
+                config_provider,
+                openai_api_style='responses',
+                function_calling={'mode': 'force', 'forced_tool_name': 'schema_probe', 'parallel_tool_calls': False},
+            )
+            responses_result = adapter.parse_response(
+                {
+                    'output': [
+                        {
+                            'type': 'message',
+                            'role': 'assistant',
+                            'content': [{'type': 'output_text', 'text': 'responses ok'}],
+                        },
+                        {
+                            'type': 'function_call',
+                            'call_id': 'call_probe',
+                            'name': 'schema_probe',
+                            'arguments': '{"value":"alpha"}',
+                        },
+                    ]
+                }
+            )
+            responses_parse = {
+                'text': responses_result.text,
+                'tool_name': responses_result.tool_calls[0].name if responses_result.tool_calls else None,
+                'tool_id': responses_result.tool_calls[0].id if responses_result.tool_calls else None,
+            }
 
         none_supported = False
         required_supported = False
@@ -526,6 +819,29 @@ def _provider_schema_matrix() -> dict[str, Any]:
                     'observed': force_payload.get('tool_choice')
                     if adapter.protocol is not Protocol.GEMINI
                     else cast(dict[str, Any], force_payload.get('toolConfig', {})).get('functionCallingConfig'),
+                },
+                'responses_payload_shape': {
+                    'supported': (
+                        isinstance(responses_payload, dict)
+                        and isinstance(responses_payload.get('input'), list)
+                        and responses_payload.get('max_output_tokens') is not None
+                    ),
+                    'observed': (
+                        {
+                            'endpoint_hint': 'responses',
+                            'input_item_types': [item.get('type') for item in cast(list[dict[str, Any]], responses_payload.get('input', []))],
+                            'tool_shape': cast(list[dict[str, Any]], responses_payload.get('tools', []))[0].get('type')
+                            if isinstance(responses_payload, dict) and responses_payload.get('tools')
+                            else None,
+                            'tool_choice': responses_payload.get('tool_choice') if isinstance(responses_payload, dict) else None,
+                        }
+                        if responses_payload is not None
+                        else None
+                    ),
+                },
+                'responses_response_parsing': {
+                    'supported': responses_parse == {'text': 'responses ok', 'tool_name': 'schema_probe', 'tool_id': 'call_probe'},
+                    'observed': responses_parse,
                 },
             },
         }
@@ -1796,9 +2112,12 @@ def _checkpoint_selection_signature(base_config: AppConfig, profile: str) -> dic
     official = base_config.evaluation.public_eval.official_dataset
     return {
         'profile': profile,
+        'category_allowlist': list(official.category_allowlist),
         'suite_allowlist': list(official.suite_allowlist),
         'case_allowlist': list(official.case_allowlist),
+        'selection_mode': official.selection_mode,
         'max_cases': official.max_cases,
+        'max_cases_per_suite': official.max_cases_per_suite,
     }
 
 
@@ -1968,9 +2287,12 @@ def _public_eval_sources(base_config: AppConfig, selected_profile: str) -> dict[
         if official.source_url:
             sources['official_manifest_url'] = official.source_url
         sources['official_selection'] = {
+            'category_allowlist': list(official.category_allowlist),
             'suite_allowlist': list(official.suite_allowlist),
             'case_allowlist': list(official.case_allowlist),
+            'selection_mode': official.selection_mode,
             'max_cases': official.max_cases,
+            'max_cases_per_suite': official.max_cases_per_suite,
         }
     return sources
 

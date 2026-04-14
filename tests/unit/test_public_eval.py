@@ -280,6 +280,8 @@ def test_provider_schema_matrix_reflects_adapter_behavior() -> None:
     assert matrix['openai_compatible']['features']['single_tool_call_control']['supported'] is True
     assert matrix['openai_compatible']['features']['tool_choice_required']['supported'] is True
     assert matrix['openai_compatible']['features']['forced_tool_choice']['supported'] is True
+    assert matrix['openai_compatible']['features']['responses_payload_shape']['supported'] is True
+    assert matrix['openai_compatible']['features']['responses_response_parsing']['supported'] is True
     assert matrix['anthropic']['features']['root_object_alias']['supported'] is True
     assert matrix['anthropic']['features']['invalid_required_pruned']['supported'] is True
     assert matrix['anthropic']['features']['additional_properties_false']['supported'] is True
@@ -720,15 +722,22 @@ def test_load_public_eval_inputs_supports_official_profile(tmp_path: Path) -> No
         json.dumps(
             {
                 'categories': {
-                    'web_search': {
+                    'agentic': {
                         'cases': [
                             {
                                 'id': 'official_web_0',
-                                'suite': 'web_search',
-                                'messages': [{'role': 'user', 'content': 'Search the web.'}],
-                                'functions': [],
-                                'ground_truth': [],
-                                'expect_no_tool': True,
+                                'category': 'multihop',
+                                'question': 'Search the web.',
+                                'tools': [
+                                    {
+                                        'name': 'web.search',
+                                        'description': 'Search the web.',
+                                        'inputSchema': {'type': 'object', 'properties': {'query': {'type': 'string'}}},
+                                    }
+                                ],
+                                'expected_tool_calls': [{'name': 'web.search', 'arguments': {'query': 'Search the web.'}}],
+                                'expected_answer': 'Search the web.',
+                                'tags': ['agentic', 'multihop'],
                             }
                         ]
                     }
@@ -755,6 +764,10 @@ def test_load_public_eval_inputs_supports_official_profile(tmp_path: Path) -> No
     assert profile == 'official_full_v4'
     assert bfcl_version == 'v4'
     assert bfcl_cases[0]['id'] == 'official_web_0'
+    assert bfcl_cases[0]['suite'] == 'web_search'
+    assert bfcl_cases[0]['functions'][0]['name'] == 'web.search'
+    assert bfcl_cases[0]['ground_truth'][0]['web.search']['query'] == ['Search the web.']
+    assert bfcl_cases[0]['metadata']['official_categories'] == ['agentic', 'multihop', 'web_search']
     assert tau_cases
 
 
@@ -766,19 +779,21 @@ def test_load_official_full_v4_inputs_applies_manifest_filters(tmp_path: Path) -
                 'bfcl_cases': [
                     {
                         'id': 'official_memory_0',
+                        'category': 'agentic',
                         'suite': 'memory',
-                        'messages': [{'role': 'user', 'content': 'Remember this.'}],
-                        'functions': [],
-                        'ground_truth': [],
-                        'expect_no_tool': True,
+                        'question': 'Remember this.',
+                        'tools': [{'name': 'memory.put', 'inputSchema': {'type': 'object'}}],
+                        'expected_tool_calls': [{'name': 'memory.put', 'arguments': {'key': 'note', 'value': 'x'}}],
+                        'tags': ['agentic'],
                     },
                     {
                         'id': 'official_web_0',
+                        'category': 'agentic',
                         'suite': 'web_search',
-                        'messages': [{'role': 'user', 'content': 'Search the web.'}],
-                        'functions': [],
-                        'ground_truth': [],
-                        'expect_no_tool': True,
+                        'question': 'Search the web.',
+                        'tools': [{'name': 'web.search', 'inputSchema': {'type': 'object'}}],
+                        'expected_tool_calls': [{'name': 'web.search', 'arguments': {'query': 'Search the web.'}}],
+                        'tags': ['agentic', 'multihop'],
                     },
                 ]
             },
@@ -794,6 +809,7 @@ def test_load_official_full_v4_inputs_applies_manifest_filters(tmp_path: Path) -
                     'profile': 'official_full_v4',
                     'official_dataset': {
                         'manifest_path': str(manifest_path),
+                        'category_allowlist': ['multihop'],
                         'suite_allowlist': ['web_search'],
                         'case_allowlist': ['official_web_0'],
                         'max_cases': 1,
@@ -806,7 +822,57 @@ def test_load_official_full_v4_inputs_applies_manifest_filters(tmp_path: Path) -
     bfcl_cases, tau_cases = _load_official_full_v4_inputs(config)
 
     assert [case['id'] for case in bfcl_cases] == ['official_web_0']
+    assert bfcl_cases[0]['metadata']['official_categories'] == ['agentic', 'multihop', 'web_search']
     assert tau_cases
+
+
+def test_load_official_full_v4_inputs_supports_jsonl_and_balanced_selection(tmp_path: Path) -> None:
+    manifest_path = tmp_path / 'bfcl_v4_manifest.jsonl'
+    rows = [
+        {
+            'id': 'simple_0',
+            'suite': 'simple',
+            'question': 'Compute triangle area.',
+            'tools': [{'name': 'triangle.area', 'inputSchema': {'type': 'object'}}],
+            'expected_tool_calls': [{'name': 'triangle.area', 'arguments': {'base': 1, 'height': 2}}],
+        },
+        {
+            'id': 'simple_1',
+            'suite': 'simple',
+            'question': 'Compute rectangle area.',
+            'tools': [{'name': 'rectangle.area', 'inputSchema': {'type': 'object'}}],
+            'expected_tool_calls': [{'name': 'rectangle.area', 'arguments': {'width': 2, 'height': 3}}],
+        },
+        {
+            'id': 'memory_0',
+            'suite': 'memory',
+            'question': 'Remember a preference.',
+            'tools': [{'name': 'memory.put', 'inputSchema': {'type': 'object'}}],
+            'expected_tool_calls': [{'name': 'memory.put', 'arguments': {'key': 'k', 'value': 'v'}}],
+            'tags': ['agentic'],
+        },
+    ]
+    manifest_path.write_text('\n'.join(json.dumps(row, ensure_ascii=False) for row in rows), encoding='utf-8')
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {
+                'public_eval': {
+                    'profile': 'official_full_v4',
+                    'official_dataset': {
+                        'manifest_path': str(manifest_path),
+                        'selection_mode': 'balanced_per_suite',
+                        'max_cases': 2,
+                        'max_cases_per_suite': 1,
+                    },
+                }
+            },
+        }
+    )
+
+    bfcl_cases, _ = _load_official_full_v4_inputs(config)
+
+    assert [case['id'] for case in bfcl_cases] == ['simple_0', 'memory_0']
 
 
 def test_normalize_serpapi_search_results_keeps_title_link_and_text() -> None:

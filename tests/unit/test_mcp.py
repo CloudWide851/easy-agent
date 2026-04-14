@@ -429,7 +429,9 @@ async def test_session_backed_client_tracks_resources_prompts_and_subscriptions(
     unsubscription = await client.unsubscribe_resource('file:///notes.txt')
 
     resource_snapshot = store.load_mcp_catalog_snapshot('remote', 'resources')
+    template_snapshot = store.load_mcp_catalog_snapshot('remote', 'resource_templates')
     prompt_snapshot = store.load_mcp_catalog_snapshot('remote', 'prompts')
+    prompt_detail_snapshot = store.load_mcp_catalog_snapshot('remote', 'prompt_details')
     saved_subscription = store.load_mcp_resource_subscription('remote', 'file:///notes.txt')
 
     assert resources['resources'][0]['uri'] == 'file:///notes.txt'
@@ -441,8 +443,15 @@ async def test_session_backed_client_tracks_resources_prompts_and_subscriptions(
     assert unsubscription['status'] == 'inactive'
     assert resource_snapshot is not None
     assert resource_snapshot['entries'][0]['uri'] == 'file:///notes.txt'
+    assert resource_snapshot['metadata']['last_refresh_reason'] == 'list_resources'
+    assert resource_snapshot['metadata']['dirty'] is False
+    assert template_snapshot is not None
+    assert template_snapshot['entries'][0]['uriTemplate'] == 'file:///notes/{name}.txt'
     assert prompt_snapshot is not None
     assert prompt_snapshot['entries'][0]['name'] == 'summarize'
+    assert prompt_detail_snapshot is not None
+    assert prompt_detail_snapshot['entries'][0]['name'] == 'summarize'
+    assert prompt_detail_snapshot['entries'][0]['stale'] is False
     assert saved_subscription is not None
     assert saved_subscription['status'] == 'inactive'
 
@@ -465,6 +474,7 @@ async def test_message_handler_persists_catalog_change_and_resource_update(tmp_p
     )
     client._session = cast(Any, _RecordingSession())
     await client.subscribe_resource('file:///notes.txt')
+    await client.get_prompt('summarize', {'topic': 'notes'})
 
     await client._message_handler(
         mcp_types.ServerNotification(root=mcp_types.ResourceListChangedNotification())
@@ -484,16 +494,24 @@ async def test_message_handler_persists_catalog_change_and_resource_update(tmp_p
     )
 
     resource_snapshot = store.load_mcp_catalog_snapshot('remote', 'resources')
+    template_snapshot = store.load_mcp_catalog_snapshot('remote', 'resource_templates')
     tool_snapshot = store.load_mcp_catalog_snapshot('remote', 'tools')
     prompt_snapshot = store.load_mcp_catalog_snapshot('remote', 'prompts')
+    prompt_detail_snapshot = store.load_mcp_catalog_snapshot('remote', 'prompt_details')
     saved_subscription = store.load_mcp_resource_subscription('remote', 'file:///notes.txt')
 
     assert resource_snapshot is not None
     assert resource_snapshot['last_notified_at'] is not None
+    assert resource_snapshot['metadata']['last_refresh_reason'] == 'notifications/resources/list_changed'
+    assert template_snapshot is not None
+    assert template_snapshot['last_notified_at'] is not None
     assert tool_snapshot is not None
     assert tool_snapshot['entries'][0]['name'] == 'echo'
     assert prompt_snapshot is not None
     assert prompt_snapshot['entries'][0]['name'] == 'summarize'
+    assert prompt_detail_snapshot is not None
+    assert prompt_detail_snapshot['entries'][0]['stale'] is True
+    assert prompt_detail_snapshot['metadata']['dirty'] is True
     assert saved_subscription is not None
     assert saved_subscription['subscription']['last_update']['uri'] == 'file:///notes.txt'
 

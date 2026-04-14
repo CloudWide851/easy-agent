@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-_TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / '.tmp_pytest'
+_TEST_TEMP_ROOT = Path(tempfile.gettempdir()) / 'easy-agent-pytest' / 'repo-tests'
 
 
 @pytest.fixture(scope='session', autouse=True)

@@ -4,6 +4,7 @@
 
 - Release `0.3.4` keeps the retained benchmark snapshot from April 9, 2026.
 - Public eval, Python verification, and the real-network snapshot are published from the April 13, 2026 refresh for this release.
+- The unreleased April 14, 2026 reinforcement reran the Python verification suites after adding OpenAI Responses API parity, raw official BFCL manifest normalization, and deeper MCP template-refresh coordination, without changing the README score baseline.
 - Public docs in this repository intentionally expose methodology and scores only; local collaboration logs are not part of the repository-facing surface.
 
 ## Benchmark Snapshot
@@ -46,7 +47,9 @@ Scoring notes:
 - `public_eval.bfcl_case_pass_rate` remains available as a diagnostic metric for individual-case success.
 - `public_eval.bfcl_web_search` is tracked as normalized final-answer accuracy, with tool-call match rates kept as diagnostic signals.
 - The repo-pinned `full_v4` BFCL slice is fully green in this snapshot, including the core multi-tool cases plus the added search-plus-contents and memory-backed cases.
-- Bounded `official_full_v4` manifest slices are now supported for wider coverage without switching the README headline score away from the repo-pinned baseline.
+- Raw `official_full_v4` manifests are now normalized from JSON or JSONL inputs before filtering and execution, without switching the README headline score away from the repo-pinned baseline.
+- The provider compatibility matrix now covers OpenAI-compatible chat-completions and Responses API payload or parsing parity on top of the strict function-calling baseline.
+- MCP catalog durability now includes `resource_templates`, prompt-detail cache entries, and notification-driven stale marking.
 
 ## Real-Network Snapshot
 
@@ -91,9 +94,9 @@ The README keeps the comparison high level. This page keeps the public evidence 
 This round uses Python-based verification only.
 
 - Static checks: `ruff` and `mypy`
-- Targeted regressions around provider adapters, BFCL retry routing, official-manifest filtering, MCP catalog durability, and README snapshots
-- Full unit coverage: `182 passed`
+- Targeted regressions around provider adapters, BFCL retry routing, raw official-manifest normalization, MCP catalog durability, and README snapshots
+- Full unit coverage: `185 passed`
 - Full real integration coverage: `6 passed`, `3 warnings`
-- Fresh live public-eval refresh with a temporary checkpoint and usage ledger after the final BFCL single-call retry adjustment
+- Real integration rerun completed outside the sandbox so live model/network and MCP-backed paths could be revalidated after the temp-root fix
 
 Exact machine-local execution logs stay outside the repository-facing documentation surface.

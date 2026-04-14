@@ -90,6 +90,7 @@ class ModelConfig(BaseModel):
     model: str = 'deepseek-chat'
     base_url: str = 'https://api.deepseek.com'
     api_key_env: str = 'DEEPSEEK_API_KEY'
+    openai_api_style: Literal['chat_completions', 'responses'] = 'chat_completions'
     timeout_seconds: float = 60.0
     max_tokens: int = 2048
     temperature: float = 0.1
@@ -542,9 +543,12 @@ class PublicEvalOfficialDatasetConfig(BaseModel):
     source_url: str | None = None
     checkpoint_path: str = '.easy-agent/public-eval-progress.json'
     resume: bool = True
+    category_allowlist: list[str] = Field(default_factory=list)
     suite_allowlist: list[str] = Field(default_factory=list)
     case_allowlist: list[str] = Field(default_factory=list)
+    selection_mode: Literal['manifest_order', 'balanced_per_suite'] = 'manifest_order'
     max_cases: int | None = None
+    max_cases_per_suite: int | None = None
 
 
 class PublicEvalConfig(BaseModel):

@@ -47,6 +47,115 @@ def _openai_safe_schema(schema: dict[str, Any], *, strict: bool = False) -> dict
     return normalize_json_schema(schema, strict=strict)
 
 
+def _openai_tool_choice(config: ModelConfig) -> str | dict[str, Any]:
+    function_calling = config.function_calling
+    if function_calling.mode == 'none':
+        return 'none'
+    if function_calling.mode == 'required':
+        return 'required'
+    if function_calling.mode == 'force' and function_calling.forced_tool_name:
+        return {
+            'type': 'function',
+            'function': {'name': function_calling.forced_tool_name},
+        }
+    return 'auto'
+
+
+def _responses_message_item(role: str, content: str, *, name: str | None = None) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        'type': 'message',
+        'role': role,
+        'content': content,
+    }
+    if name:
+        item['name'] = name
+    return item
+
+
+def _responses_function_call_item(tool_call: ToolCall) -> dict[str, Any]:
+    return {
+        'type': 'function_call',
+        'call_id': tool_call.id,
+        'name': tool_call.name,
+        'arguments': json.dumps(tool_call.arguments, ensure_ascii=False),
+    }
+
+
+def _responses_function_output_item(message: ChatMessage) -> dict[str, Any]:
+    return {
+        'type': 'function_call_output',
+        'call_id': message.tool_call_id or message.name or 'tool_call',
+        'output': message.content,
+    }
+
+
+def _openai_responses_input(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    payload_items: list[dict[str, Any]] = []
+    for message in messages:
+        if message.role == 'tool':
+            payload_items.append(_responses_function_output_item(message))
+            continue
+        if message.content:
+            payload_items.append(_responses_message_item(message.role, message.content, name=message.name))
+        for tool_call in message.tool_calls:
+            payload_items.append(_responses_function_call_item(tool_call))
+    return payload_items
+
+
+def _parse_responses_text(payload: dict[str, Any]) -> str:
+    output_text = payload.get('output_text')
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+    text_parts: list[str] = []
+    for item in payload.get('output', []):
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get('type') or '')
+        if item_type == 'message':
+            content = item.get('content')
+            if isinstance(content, str):
+                if content.strip():
+                    text_parts.append(content.strip())
+                continue
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = str(part.get('type') or '')
+                text = part.get('text')
+                if part_type in {'output_text', 'input_text', 'text'} and isinstance(text, str) and text.strip():
+                    text_parts.append(text.strip())
+    return '\n'.join(text_parts).strip()
+
+
+def _parse_responses_tool_calls(payload: dict[str, Any]) -> list[ToolCall]:
+    tool_calls: list[ToolCall] = []
+    for item in payload.get('output', []):
+        if not isinstance(item, dict) or str(item.get('type') or '') != 'function_call':
+            continue
+        raw_arguments = item.get('arguments', {})
+        arguments: dict[str, Any]
+        if isinstance(raw_arguments, str):
+            try:
+                parsed = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                parsed = {}
+            arguments = parsed if isinstance(parsed, dict) else {}
+        elif isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        else:
+            arguments = {}
+        tool_calls.append(
+            ToolCall(
+                id=str(item.get('call_id') or item.get('id') or item.get('name') or 'tool_call'),
+                name=str(item.get('name') or ''),
+                arguments=arguments,
+            )
+        )
+    return tool_calls
+
+
 def _selected_tools(config: ModelConfig, tools: list[ToolSpec]) -> list[ToolSpec]:
     function_calling = config.function_calling
     selected = list(tools)
@@ -72,6 +181,8 @@ class OpenAIAdapter:
         return any(token in provider for token in ('openai', 'deepseek', 'compatible'))
 
     def endpoint(self, config: ModelConfig) -> str:
+        if config.openai_api_style == 'responses':
+            return f"{config.base_url.rstrip('/')}/responses"
         return f"{config.base_url.rstrip('/')}/chat/completions"
 
     def headers(self, config: ModelConfig, api_key: str) -> dict[str, str]:
@@ -82,6 +193,16 @@ class OpenAIAdapter:
         }
 
     def build_payload(
+        self,
+        config: ModelConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec],
+    ) -> dict[str, Any]:
+        if config.openai_api_style == 'responses':
+            return self._build_responses_payload(config, messages, tools)
+        return self._build_chat_completions_payload(config, messages, tools)
+
+    def _build_chat_completions_payload(
         self,
         config: ModelConfig,
         messages: list[ChatMessage],
@@ -130,20 +251,46 @@ class OpenAIAdapter:
                 for tool in selected_tools
             ]
             payload['parallel_tool_calls'] = function_calling.parallel_tool_calls
-            if function_calling.mode == 'none':
-                payload['tool_choice'] = 'none'
-            elif function_calling.mode == 'required':
-                payload['tool_choice'] = 'required'
-            elif function_calling.mode == 'force' and function_calling.forced_tool_name:
-                payload['tool_choice'] = {
+            payload['tool_choice'] = _openai_tool_choice(config)
+        return payload
+
+    def _build_responses_payload(
+        self,
+        config: ModelConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec],
+    ) -> dict[str, Any]:
+        selected_tools = _selected_tools(config, tools)
+        payload: dict[str, Any] = {
+            'model': config.model,
+            'input': _openai_responses_input(messages),
+            'temperature': config.temperature,
+            'max_output_tokens': config.max_tokens,
+        }
+        if selected_tools:
+            function_calling = config.function_calling
+            payload['tools'] = [
+                {
                     'type': 'function',
-                    'function': {'name': function_calling.forced_tool_name},
+                    'name': tool.name,
+                    'description': tool.description,
+                    'parameters': _openai_safe_schema(tool.input_schema, strict=function_calling.strict),
+                    **({'strict': True} if function_calling.strict else {}),
                 }
-            else:
-                payload['tool_choice'] = 'auto'
+                for tool in selected_tools
+            ]
+            payload['parallel_tool_calls'] = function_calling.parallel_tool_calls
+            payload['tool_choice'] = _openai_tool_choice(config)
         return payload
 
     def parse_response(self, payload: dict[str, Any]) -> AssistantResponse:
+        if 'choices' not in payload:
+            return AssistantResponse(
+                text=_parse_responses_text(payload),
+                tool_calls=_parse_responses_tool_calls(payload),
+                protocol=self.protocol,
+                raw=payload,
+            )
         message = payload['choices'][0]['message']
         tool_calls: list[ToolCall] = []
         for item in message.get('tool_calls', []):

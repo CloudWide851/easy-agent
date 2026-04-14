@@ -156,6 +156,7 @@ class SQLiteRunStore:
                     server_name TEXT NOT NULL,
                     catalog_kind TEXT NOT NULL,
                     entries_payload TEXT NOT NULL,
+                    metadata_payload TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL,
                     last_notified_at TEXT,
                     PRIMARY KEY(server_name, catalog_kind)
@@ -256,6 +257,7 @@ class SQLiteRunStore:
             self._ensure_runs_column(connection, 'source_checkpoint_id', 'INTEGER')
             self._ensure_runs_column(connection, 'resume_strategy', 'TEXT')
             self._ensure_table_column(connection, 'workbench_sessions', 'runtime_state_payload', "TEXT NOT NULL DEFAULT '{}'" )
+            self._ensure_table_column(connection, 'mcp_catalog_snapshots', 'metadata_payload', "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_table_column(connection, 'federated_tasks', 'tenant_id', 'TEXT')
             self._ensure_table_column(connection, 'federated_tasks', 'subject_id', 'TEXT')
             self._ensure_table_column(connection, 'federated_tasks', 'task_scope_payload', 'TEXT')
@@ -834,22 +836,25 @@ class SQLiteRunStore:
         catalog_kind: str,
         entries: list[dict[str, Any]],
         *,
+        metadata: dict[str, Any] | None = None,
         last_notified_at: str | None = None,
     ) -> dict[str, Any]:
         updated_at = self._now()
         current = self.load_mcp_catalog_snapshot(server_name, catalog_kind)
         with closing(self._connect()) as connection:
             connection.execute(
-                'INSERT INTO mcp_catalog_snapshots(server_name, catalog_kind, entries_payload, updated_at, last_notified_at) '
-                'VALUES (?, ?, ?, ?, ?) '
+                'INSERT INTO mcp_catalog_snapshots(server_name, catalog_kind, entries_payload, metadata_payload, updated_at, last_notified_at) '
+                'VALUES (?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(server_name, catalog_kind) DO UPDATE SET '
                 'entries_payload = excluded.entries_payload, '
+                'metadata_payload = excluded.metadata_payload, '
                 'updated_at = excluded.updated_at, '
                 'last_notified_at = excluded.last_notified_at',
                 (
                     server_name,
                     catalog_kind,
                     self._encode(entries),
+                    self._encode(metadata if metadata is not None else cast(dict[str, Any], current.get('metadata', {})) if current else {}),
                     updated_at,
                     last_notified_at if last_notified_at is not None else cast(str | None, current.get('last_notified_at') if current else None),
                 ),
@@ -860,7 +865,7 @@ class SQLiteRunStore:
     def load_mcp_catalog_snapshot(self, server_name: str, catalog_kind: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
-                'SELECT entries_payload, updated_at, last_notified_at '
+                'SELECT entries_payload, metadata_payload, updated_at, last_notified_at '
                 'FROM mcp_catalog_snapshots WHERE server_name = ? AND catalog_kind = ?',
                 (server_name, catalog_kind),
             ).fetchone()
@@ -870,8 +875,9 @@ class SQLiteRunStore:
             'server_name': server_name,
             'catalog_kind': catalog_kind,
             'entries': cast(list[dict[str, Any]], self._decode(row[0]) or []),
-            'updated_at': row[1],
-            'last_notified_at': row[2],
+            'metadata': cast(dict[str, Any], self._decode(row[1]) or {}),
+            'updated_at': row[2],
+            'last_notified_at': row[3],
         }
 
     def save_mcp_resource_subscription(

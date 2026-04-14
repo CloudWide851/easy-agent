@@ -103,6 +103,9 @@ def test_load_config_reads_evaluation_defaults() -> None:
                     },
                     'official_dataset': {
                         'manifest_path': '.easy-agent/public-eval-cache/bfcl_v4_manifest.json',
+                        'category_allowlist': ['agentic'],
+                        'selection_mode': 'balanced_per_suite',
+                        'max_cases_per_suite': 2,
                     },
                 },
                 'real_network': {
@@ -119,6 +122,9 @@ def test_load_config_reads_evaluation_defaults() -> None:
     assert config.evaluation.public_eval.profile == 'full_v4'
     assert config.evaluation.public_eval.web_search.api_key_env == 'SERPAPI_API_KEY'
     assert config.evaluation.public_eval.official_dataset.manifest_path.endswith('bfcl_v4_manifest.json')
+    assert config.evaluation.public_eval.official_dataset.category_allowlist == ['agentic']
+    assert config.evaluation.public_eval.official_dataset.selection_mode == 'balanced_per_suite'
+    assert config.evaluation.public_eval.official_dataset.max_cases_per_suite == 2
     assert config.evaluation.real_network.history_path.endswith('real-network-history.jsonl')
     assert config.evaluation.real_network.latency_budgets.container_warm_start_seconds == 40
 

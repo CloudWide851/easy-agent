@@ -9,6 +9,16 @@ uv venv --python 3.12
 uv sync --dev
 ```
 
+## Model Surface
+
+- `model.openai_api_style` defaults to `chat_completions`.
+- Set `model.openai_api_style: responses` only for OpenAI-compatible endpoints that explicitly support `/responses`.
+- The provider-neutral function-calling controls stay the same across both OpenAI-compatible styles:
+  - `strict`
+  - `parallel_tool_calls`
+  - `mode`
+  - `forced_tool_name`
+
 ## Core CLI
 
 ```bash
@@ -58,15 +68,32 @@ Harness runs persist durable artifacts under the configured artifact directory a
 
 ## Public Eval Profiles
 
-`full_v4` remains the public score baseline in the README. `official_full_v4` is now available as a bounded manifest slice before widening to larger official coverage.
+`full_v4` remains the public score baseline in the README. `official_full_v4` now accepts raw official-style manifests in JSON or JSONL form, while the README headline score still stays on the repo-pinned baseline.
 
 Useful config fields under `evaluation.public_eval.official_dataset`:
 
+- `category_allowlist`
 - `suite_allowlist`
 - `case_allowlist`
+- `selection_mode`
 - `max_cases`
+- `max_cases_per_suite`
 - `resume`
 - `checkpoint_path`
+
+Selection notes:
+
+- `selection_mode: manifest_order` preserves the manifest order and then applies `max_cases`.
+- `selection_mode: balanced_per_suite` interleaves cases across normalized suites before applying `max_cases`.
+- `category_allowlist` filters on normalized public categories such as `agentic`, `multihop`, `memory`, and `web_search`.
+- `max_cases_per_suite` caps one normalized suite before the final `max_cases` limit is applied.
+
+## MCP Catalog Notes
+
+- `mcp resources templates <server>` now persists durable `resource_templates` snapshots.
+- `mcp prompts get <server> <prompt-name>` now persists durable prompt-detail cache entries keyed by prompt name plus arguments.
+- `notifications/resources/list_changed` refreshes both resource entries and resource templates.
+- `notifications/prompts/list_changed` refreshes prompt summaries and marks cached prompt-detail entries as stale until they are fetched again.
 
 ## Operational Notes
 

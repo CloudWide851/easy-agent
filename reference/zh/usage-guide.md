@@ -9,6 +9,16 @@ uv venv --python 3.12
 uv sync --dev
 ```
 
+## Model Surface
+
+- `model.openai_api_style` 默认是 `chat_completions`。
+- 只有在 OpenAI-compatible endpoint 明确支持 `/responses` 时，才把它切到 `responses`。
+- 两条 OpenAI-compatible 路径共用同一套 provider-neutral function-calling 控制面：
+  - `strict`
+  - `parallel_tool_calls`
+  - `mode`
+  - `forced_tool_name`
+
 ## 核心 CLI
 
 ```bash
@@ -58,15 +68,32 @@ Harness 运行会把工件持久化到配置的 artifact 目录与 durable sessi
 
 ## Public Eval Profiles
 
-README 里的公开分数继续以 `full_v4` 为基线。`official_full_v4` 现在支持先跑受控 manifest slice，再逐步扩大官方覆盖面。
+README 里的公开分数继续以 `full_v4` 为基线。`official_full_v4` 现在已经可以直接读取 raw official 风格的 JSON / JSONL manifest，但 README headline score 仍然保持 repo-pinned 基线。
 
 `evaluation.public_eval.official_dataset` 下常用字段：
 
+- `category_allowlist`
 - `suite_allowlist`
 - `case_allowlist`
+- `selection_mode`
 - `max_cases`
+- `max_cases_per_suite`
 - `resume`
 - `checkpoint_path`
+
+选择说明：
+
+- `selection_mode: manifest_order` 会先保留 manifest 顺序，再应用 `max_cases`。
+- `selection_mode: balanced_per_suite` 会先按归一化 suite 交错取样，再应用 `max_cases`。
+- `category_allowlist` 面向归一化后的公开类别，例如 `agentic`、`multihop`、`memory`、`web_search`。
+- `max_cases_per_suite` 会在最终 `max_cases` 生效前，先限制每个归一化 suite 的样本数量。
+
+## MCP Catalog 说明
+
+- `mcp resources templates <server>` 现在会持久化 `resource_templates` 快照。
+- `mcp prompts get <server> <prompt-name>` 现在会按 prompt name + arguments 持久化 prompt detail cache。
+- `notifications/resources/list_changed` 会同时刷新 resource entries 和 resource templates。
+- `notifications/prompts/list_changed` 会刷新 prompt summaries，并把已有的 prompt detail cache 标记成 stale，直到下一次重新获取。
 
 ## 操作说明
 

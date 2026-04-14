@@ -4,9 +4,9 @@ This roadmap starts from the published `0.3.4` baseline.
 
 ## Immediate Focus
 
-- Add OpenAI Responses API parity coverage on top of the shipped chat-completions strict-function baseline.
-- Extend the new official BFCL manifest slice support from bounded regressions into wider agentic and multihop official v4 coverage.
-- Keep deepening MCP catalog coordination around prompt or resource templates and richer notification-driven refresh flows without widening the model-facing runtime surface.
+- Turn the shipped OpenAI-compatible chat-completions and Responses API parity into live provider-specific compatibility evidence.
+- Extend the raw official BFCL v4 normalization path into wider agentic and multihop coverage with clearer official-category diagnostics.
+- Deepen MCP notification parity around resource updates, prompt-detail refresh, and template diff telemetry without widening the model-facing runtime surface.
 
 ## Web Search Reinforcement
 
@@ -61,11 +61,16 @@ The shipped regression floor now covers:
 - explicit failure when `required` or `force` mode ends up with no selected tool after filtering
 - OpenAI-compatible parity on the current chat-completions style tool surface before claiming broader compatibility
 
+The shipped regression floor now also covers:
+
+- OpenAI-compatible Responses API payload parity
+- OpenAI-compatible Responses API response parsing parity
+
 Better next directions after the current baseline:
 
-- add OpenAI Responses API payload and response parsing parity tests instead of assuming chat-completions parity is enough forever
 - add live provider-specific compatibility runs for the current strict function-calling matrix instead of relying only on static payload inspection
 - keep the provider capability matrix explicit about what is normalized, what is enforced, and what still depends on provider-specific best effort
+- extend the same explicit matrix discipline into future non-OpenAI-compatible realtime or streaming tool surfaces only after the current live matrix is stable
 
 Reference:
 
@@ -87,6 +92,7 @@ The current durable MCP baseline now includes:
 - `prompts/list`
 - `prompts/get`
 - durable catalog snapshots for tools, resources, and prompts
+- durable catalog snapshots for resource templates and prompt-detail cache entries
 - durable resource-subscription state
 
 Next reinforcement should continue around the official MCP surface:
@@ -96,6 +102,7 @@ Next reinforcement should continue around the official MCP surface:
 - `notifications/prompts/list_changed`
 - `notifications/resources/updated`
 - prompt or resource template refresh coordination and richer cached metadata
+- prompt-detail refresh telemetry and diff-aware invalidation
 
 Reference:
 

@@ -58,7 +58,27 @@ def test_public_eval_suite_supports_official_profile_slice_with_live_model(tmp_p
     hidden_root = tmp_path / '.easy-agent'
     manifest_path = hidden_root / 'public-eval-cache' / 'bfcl_v4_manifest.json'
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps({'bfcl_cases': [official_case]}, ensure_ascii=False), encoding='utf-8')
+    raw_official_case = {
+        'id': official_case['id'],
+        'suite': official_case['suite'],
+        'question': official_case['messages'][0]['content'],
+        'tools': [
+            {
+                'name': item['name'],
+                'description': item.get('description', ''),
+                'inputSchema': item['parameters'],
+            }
+            for item in official_case['functions']
+        ],
+        'expected_tool_calls': [
+            {
+                'name': next(iter(item.keys())),
+                'arguments': {key: values[0] for key, values in next(iter(item.values())).items()},
+            }
+            for item in official_case['ground_truth']
+        ],
+    }
+    manifest_path.write_text(json.dumps({'bfcl_cases': [raw_official_case]}, ensure_ascii=False), encoding='utf-8')
     official_dataset['checkpoint_path'] = str(hidden_root / 'public-eval-progress.json')
     official_dataset['manifest_path'] = str(manifest_path)
     official_dataset['cache_dir'] = str(hidden_root / 'public-eval-cache')

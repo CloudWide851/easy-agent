@@ -3,7 +3,7 @@ from typing import cast
 import httpx
 import pytest
 
-from agent_common.models import ChatMessage, Protocol, ToolSpec
+from agent_common.models import ChatMessage, Protocol, ToolCall, ToolSpec
 from agent_config.app import ModelConfig
 from agent_protocols.client import AnthropicAdapter, GeminiAdapter, OpenAIAdapter, resolve_protocol
 
@@ -209,6 +209,70 @@ def test_openai_adapter_can_disable_strict_and_parallel_tool_calls() -> None:
     assert payload['parallel_tool_calls'] is False
     assert function['parameters']['properties']['value']['type'] == 'string'
     assert function['parameters'].get('additionalProperties') is None
+
+
+def test_openai_adapter_can_build_responses_payload() -> None:
+    adapter = OpenAIAdapter()
+    payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'openai',
+                'protocol': Protocol.OPENAI,
+                'openai_api_style': 'responses',
+                'function_calling': {'mode': 'force', 'forced_tool_name': 'simple_tool', 'parallel_tool_calls': False},
+            }
+        ),
+        [
+            ChatMessage(role='system', content='You are helpful.'),
+            ChatMessage(
+                role='assistant',
+                content='Calling the tool now.',
+                tool_calls=[ToolCall(id='call_1', name='simple_tool', arguments={'value': 'alpha'})],
+            ),
+            ChatMessage(role='tool', content='{"value":"alpha"}', tool_call_id='call_1', name='simple_tool'),
+            ChatMessage(role='user', content='Continue.'),
+        ],
+        [ToolSpec(name='simple_tool', description='Simple', input_schema={'type': 'object'})],
+    )
+
+    assert payload['model']
+    assert payload['max_output_tokens'] == 2048
+    assert payload['parallel_tool_calls'] is False
+    assert payload['tool_choice']['function']['name'] == 'simple_tool'
+    assert payload['tools'][0]['type'] == 'function'
+    assert payload['tools'][0]['strict'] is True
+    assert payload['input'][0] == {'type': 'message', 'role': 'system', 'content': 'You are helpful.'}
+    assert payload['input'][1] == {'type': 'message', 'role': 'assistant', 'content': 'Calling the tool now.'}
+    assert payload['input'][2]['type'] == 'function_call'
+    assert payload['input'][2]['call_id'] == 'call_1'
+    assert payload['input'][3] == {'type': 'function_call_output', 'call_id': 'call_1', 'output': '{"value":"alpha"}'}
+    assert payload['input'][4] == {'type': 'message', 'role': 'user', 'content': 'Continue.'}
+
+
+def test_openai_adapter_parses_responses_output() -> None:
+    adapter = OpenAIAdapter()
+    response = adapter.parse_response(
+        {
+            'output': [
+                {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': 'Done.'}],
+                },
+                {
+                    'type': 'function_call',
+                    'call_id': 'call_1',
+                    'name': 'simple_tool',
+                    'arguments': '{"value":"alpha"}',
+                },
+            ]
+        }
+    )
+
+    assert response.text == 'Done.'
+    assert response.tool_calls[0].id == 'call_1'
+    assert response.tool_calls[0].name == 'simple_tool'
+    assert response.tool_calls[0].arguments == {'value': 'alpha'}
 
 
 def test_openai_adapter_supports_required_and_forced_tool_choice() -> None:
