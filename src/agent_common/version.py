@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 PACKAGE_NAME = 'easy-agent'
-DEFAULT_VERSION = '0.3.4'
+DEFAULT_VERSION = '0.3.5'
 
 
 def runtime_version() -> str:

@@ -13,6 +13,7 @@ from agent_runtime.public_eval import (
     _aggregate_failure_buckets,
     _aggregate_stage_summary,
     _aggregate_summary,
+    _aggregate_web_search_diagnostics,
     _BfclAttemptResult,
     _build_bfcl_initial_messages,
     _build_eval_tool_handler,
@@ -1059,6 +1060,73 @@ def test_fetch_web_contents_rejects_ungrounded_urls(tmp_path: Path) -> None:
         )
 
 
+def test_fetch_web_contents_prefers_grounded_cache_before_network(tmp_path: Path) -> None:
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+        }
+    ).evaluation.public_eval.web_search
+
+    result = _fetch_web_contents(
+        {'urls': ['https://example.com/doc']},
+        {'replay_contents': []},
+        config,
+        grounded_urls={'https://example.com/doc'},
+        contents_by_url={
+            'https://example.com/doc': {
+                'title': 'Cached doc',
+                'link': 'https://example.com/doc',
+                'text': 'cached text',
+            }
+        },
+    )
+
+    assert result['backend'] == 'cache'
+    assert result['results'][0]['title'] == 'Cached doc'
+    assert result['diagnostics']['content_sources'] == {'cache': 1, 'network': 0, 'replay': 0}
+
+
+@respx.mock
+def test_fetch_web_contents_retries_within_grounded_set_before_replay(tmp_path: Path) -> None:
+    respx.get('https://example.com/bad').mock(return_value=httpx.Response(503, text='down'))
+    respx.get('https://example.com/good').mock(
+        return_value=httpx.Response(
+            200,
+            text='<html><body><main>Recovered</main></body></html>',
+            headers={'content-type': 'text/html; charset=utf-8'},
+        )
+    )
+    config = AppConfig.model_validate(
+        {
+            'graph': {'entrypoint': 'coordinator', 'agents': [{'name': 'coordinator'}], 'nodes': []},
+            'evaluation': {'public_eval': {'web_search': {'usage_path': str(tmp_path / 'usage.json')}}},
+        }
+    ).evaluation.public_eval.web_search
+
+    result = _fetch_web_contents(
+        {'urls': ['https://example.com/bad']},
+        {'replay_contents': [{'title': 'Replay', 'link': 'https://example.com/replay', 'text': 'fallback'}]},
+        config,
+        latest_results=[{'position': 1, 'title': 'Function calling', 'link': 'https://example.com/bad'}],
+        grounded_urls={'https://example.com/bad', 'https://example.com/good'},
+        search_history=[
+            {
+                'results': [
+                    {'position': 1, 'title': 'Function calling', 'link': 'https://example.com/bad'},
+                    {'position': 2, 'title': 'Function calling', 'link': 'https://example.com/good'},
+                ]
+            }
+        ],
+    )
+
+    assert result['backend'] == 'http_fetch'
+    assert result['results'][0]['link'] == 'https://example.com/good'
+    assert result['results'][0]['title'] == 'Function calling'
+    assert result['diagnostics']['grounded_retry_count'] == 1
+    assert result['diagnostics']['content_sources'] == {'cache': 0, 'network': 1, 'replay': 0}
+
+
 @respx.mock
 def test_fetch_web_contents_resolves_latest_search_result_ids(tmp_path: Path) -> None:
     respx.get('https://example.com/latest').mock(return_value=httpx.Response(503, text='down'))
@@ -1151,6 +1219,62 @@ def test_score_bfcl_answer_accepts_structured_answer_payload() -> None:
 
     assert success is True
     assert answer_match == 1.0
+
+
+def test_score_bfcl_answer_uses_source_ledger_titles() -> None:
+    success, answer_match = _score_bfcl_answer(
+        {
+            'expected_answer': 'Structured Outputs',
+            'expected_answer_aliases': ['structured outputs'],
+        },
+        'The grounded source confirms the title.',
+        'The grounded source confirms the title.',
+        tool_success=True,
+        latest_results=[],
+        latest_contents=[],
+        source_ledger=[
+            {
+                'kind': 'search_result',
+                'title': 'Structured Outputs',
+                'link': 'https://platform.openai.com/docs/guides/structured-outputs',
+            }
+        ],
+    )
+
+    assert success is True
+    assert answer_match == 1.0
+
+
+def test_aggregate_web_search_diagnostics_combines_record_metadata() -> None:
+    diagnostics = _aggregate_web_search_diagnostics(
+        [
+            PublicEvalRecord(
+                'bfcl_web_search',
+                'case_1',
+                True,
+                1.0,
+                1.0,
+                1.0,
+                2,
+                2,
+                'ok',
+                metadata={
+                    'web_search': {
+                        'content_sources': {'cache': 1, 'network': 1, 'replay': 0},
+                        'grounded_retry_count': 1,
+                        'grounded_sources': 3,
+                        'search_backends': ['serpapi'],
+                        'contents_backends': ['cache_plus_network'],
+                    }
+                },
+            )
+        ]
+    )
+
+    assert diagnostics['content_sources'] == {'cache': 1, 'network': 1, 'replay': 0}
+    assert diagnostics['grounded_retry_count'] == 1
+    assert diagnostics['grounded_sources_average'] == 3.0
+    assert diagnostics['search_backends']['serpapi'] == 1
 
 
 def test_build_bfcl_initial_messages_restores_tool_history() -> None:

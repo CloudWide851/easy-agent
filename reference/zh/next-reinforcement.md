@@ -1,25 +1,32 @@
 # 下一步补强
 
-本路线图以已发布的 `0.3.4` 基线为起点。
+本路线图以已发布的 `0.3.5` 基线为起点。
 
 ## 当前重点
 
 - 把已交付的 OpenAI-compatible chat-completions / Responses API 双路径对齐，继续推进成 live provider-specific 兼容证据。
 - 把 raw official BFCL v4 归一化路径继续推进到更广的 agentic 与 multihop 覆盖，并补齐更清晰的官方分类诊断。
-- 在不随意扩大 model-facing runtime surface 的前提下，继续深化 MCP 通知对齐，包括 resources updated、prompt detail refresh 与 template diff telemetry。
+- 在不随意扩大 model-facing runtime surface 的前提下，继续深化 MCP 通知对齐，包括 resource updates、prompt-detail refresh 与 template diff telemetry。
 
 ## Web Search 补强
 
 - 继续以 SerpApi `/search.json` 作为 repo-pinned BFCL 评测的显式搜索链路。
 - 保留 quota ledger 与 replay fallback。
-- 继续收紧 result-id grounding，让 `web.contents` 只消费由最近一次 search 或 replay 证据支撑的 URL。
+- 继续收紧 result-id grounding，让 `web.contents` 只消费由最近一次 grounded search 或 replay 证据支撑的 URL。
 - 把当前已经交付的 exact-title、search-plus-contents 与 memory-backed agentic case 作为回归基线。
-- 在此基础上继续把 repo-pinned green path 与新的 official manifest slice path 扩展到更广的官方 BFCL v4 风格 search-plus-contents、multihop 与剩余 agentic case，并保持最终答案对检索证据可回溯。
-- 为每个 case 保留 durable search history，让后续 hop 可以复用 grounded result id、grounded URL 和已抓取页面证据，而不是放宽到未 grounding 的链接。
-- 继续把 `web.contents` 推进到更接近 BFCL v4 的 `truncate` / `markdown` / `raw` 内容模式，让答案抽取可以在简洁文本、可读文档文本与 markup-sensitive 载荷之间切换。
+- 在此基础上继续把 repo-pinned green path 与 official manifest slice path 扩展到更广的官方 BFCL v4 风格 search-plus-contents、multihop 与剩余 agentic case，并保持最终答案对检索证据可回溯。
+- 为每个 case 保留 durable search history 与 source ledger，让后续 hop 可以复用 grounded result id、grounded URL、缓存过的 contents 和已经成立的证据来源，而不是放宽到未 grounding 的链接。
+- 继续把 `web.contents` 对齐到更接近 BFCL v4 的 `truncate` / `markdown` / `raw` 内容模式，让答案抽取可以在简洁文本、可读文档文本与 markup-sensitive 载荷之间切换。
 - 当 grounded page fetch 失败时，先在 grounded search set 内重试，再退回 replay-backed contents；不要静默扩大 URL 边界。
-- 让最终答案同时兼容简洁纯文本或 `{\"answer\": ..., \"context\": ...}` 这样的结构化载荷，这样可以增强 answer scoring，而不是放松 evaluator。
+- 持续暴露每个 case 到底用了 cache、network 还是 replay-backed contents，这样长期跟踪 BFCL web-search 质量时，就能把 headline pass/fail 和来源质量拆开看。
+- 让最终答案同时兼容简洁纯文本或 `{"answer": ..., "context": ...}` 这样的结构化载荷，这样 answer scoring 可以继续严格，而不是靠放松 evaluator 来提分。
 - 对 memory read/delete 这类 case，继续保持 tool-result truth 校验，而不是只看 arguments 命中。
+
+在当前基线之上的更好发展方向：
+
+- 把 grounded-source visibility 继续推进到更接近 OpenAI web-search 响应里 source-oriented evidence 的形态
+- 为“官方文档优先”这类 case 增加 domain-aware / source-aware query constraints，而不是只追求泛化搜索召回
+- 在更广的 official BFCL web-search multihop 切片里，把 query planning miss 与 fetch grounding miss 分开统计
 
 ## Provider 兼容性
 
@@ -39,6 +46,7 @@
   - 保持 strict structured outputs 作为默认路径
   - 按官方 JSON Schema 约束继续保留 nullable-as-required 建模
   - 让 `parallel_tool_calls` 与 forced function selection 保持可观测
+  - 让 `chat_completions` 与 `responses` 两条路径都落在同一套回归矩阵里
 - Anthropic：
   - 把 provider-neutral tool-choice controls 映射到 `tool_choice`
   - 在串行工具调用场景使用 `disable_parallel_tool_use`
@@ -47,7 +55,7 @@
 - Gemini：
   - 把 provider-neutral tool-choice controls 映射到 `functionCallingConfig.mode`
   - 对 forced-tool / required-tool 场景使用 `allowedFunctionNames`
-  - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集，并覆盖当前 strict nullable/optional 参数建模路径
+  - 在发请求前继续把 schema 收敛到 provider 支持的 OpenAPI-style 子集，并覆盖当前 strict nullable / optional 参数建模路径
   - 不要把 provider 只有 mode-level 控制的能力误写成显式 single-call enforcement
 
 当前已经交付的回归基线包括：
@@ -59,12 +67,8 @@
 - 单调用与并行调用控制
 - `auto` / `none` / `required` / forced tool-choice 行为
 - 当 `required` 或 `force` 模式在过滤后没有可用工具时，显式失败而不是静默降级
-- 在声称更广兼容性之前，先确保 OpenAI-compatible chat-completions 风格工具面保持可验证对齐
-
-当前已经交付的回归基线也已经包括：
-
-- OpenAI-compatible Responses API payload 对齐
-- OpenAI-compatible Responses API response parsing 对齐
+- OpenAI-compatible Responses payload 对齐
+- OpenAI-compatible Responses response parsing 对齐
 
 在当前基线之上的更好发展方向：
 
@@ -76,9 +80,11 @@
 
 - <https://developers.openai.com/api/docs/guides/function-calling>
 - <https://developers.openai.com/api/docs/guides/structured-outputs>
+- <https://platform.openai.com/docs/guides/tools-web-search>
 - <https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools>
 - <https://ai.google.dev/gemini-api/docs/function-calling>
 - <https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html>
+- <https://serpapi.com/search-api>
 
 ## MCP 与 Federation
 
@@ -92,7 +98,7 @@
 - `prompts/list`
 - `prompts/get`
 - tools/resources/prompts 的 durable catalog snapshots
-- resource templates 与 prompt detail cache entries 的 durable catalog snapshots
+- resource templates 与 prompt-detail cache entries 的 durable catalog snapshots
 - resource subscription 的 durable state
 
 下一步继续围绕官方 MCP surface 推进：
@@ -101,8 +107,8 @@
 - `notifications/tools/list_changed`
 - `notifications/prompts/list_changed`
 - `notifications/resources/updated`
-- prompt/resource template refresh coordination 与更丰富的缓存元数据
-- prompt detail refresh telemetry 与 diff-aware invalidation
+- prompt 或 resource template refresh coordination 与更丰富的缓存元数据
+- prompt-detail refresh telemetry 与 diff-aware invalidation
 
 参考：
 

@@ -180,6 +180,61 @@ def _normalize_title_key(value: str) -> str:
     return re.sub(r'\s+', ' ', lowered).strip()
 
 
+def _result_title_for_url(
+    url: str,
+    *,
+    latest_results: list[dict[str, Any]] | None = None,
+    search_history: list[dict[str, Any]] | None = None,
+) -> str:
+    candidates: list[dict[str, Any]] = []
+    if latest_results:
+        candidates.extend(latest_results)
+    if search_history:
+        for entry in search_history:
+            results = entry.get('results', [])
+            if isinstance(results, list):
+                candidates.extend(item for item in results if isinstance(item, dict))
+    cleaned = str(url).strip()
+    for item in candidates:
+        if str(item.get('link') or '').strip() == cleaned:
+            return str(item.get('title') or '').strip()
+    return ''
+
+
+def _grounded_retry_urls(
+    url: str,
+    *,
+    latest_results: list[dict[str, Any]] | None = None,
+    search_history: list[dict[str, Any]] | None = None,
+    grounded_urls: set[str] | None = None,
+) -> list[str]:
+    if grounded_urls is None:
+        return []
+    title_key = _normalize_title_key(
+        _result_title_for_url(url, latest_results=latest_results, search_history=search_history)
+    )
+    if not title_key:
+        return []
+    candidates: list[dict[str, Any]] = []
+    if latest_results:
+        candidates.extend(latest_results)
+    if search_history:
+        for entry in search_history:
+            results = entry.get('results', [])
+            if isinstance(results, list):
+                candidates.extend(item for item in results if isinstance(item, dict))
+    retry_urls: list[str] = []
+    for item in candidates:
+        candidate_url = str(item.get('link') or '').strip()
+        if not candidate_url or candidate_url == url or candidate_url not in grounded_urls:
+            continue
+        candidate_title = _normalize_title_key(str(item.get('title') or ''))
+        if candidate_title != title_key or candidate_url in retry_urls:
+            continue
+        retry_urls.append(candidate_url)
+    return retry_urls
+
+
 def _strip_html_text(value: str) -> str:
     collapsed = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', value, flags=re.IGNORECASE | re.DOTALL)
     collapsed = re.sub(r'<[^>]+>', ' ', collapsed)
@@ -348,36 +403,104 @@ def _fetch_web_contents(
     *,
     latest_results: list[dict[str, Any]] | None = None,
     grounded_urls: set[str] | None = None,
+    contents_by_url: dict[str, dict[str, Any]] | None = None,
+    search_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     replay_contents = cast(list[dict[str, Any]], case.get('replay_contents', []))
     mode = _normalize_contents_mode(arguments.get('mode'))
     urls = _resolve_content_urls(arguments, case, latest_results=latest_results, grounded_urls=grounded_urls)
     if not urls:
         if replay_contents:
-            return {'results': replay_contents, 'backend': 'replay', 'source': 'replay', 'mode': mode}
+            return {
+                'results': replay_contents,
+                'backend': 'replay',
+                'source': 'replay',
+                'mode': mode,
+                'diagnostics': {
+                    'content_sources': {'cache': 0, 'network': 0, 'replay': len(replay_contents)},
+                    'grounded_retry_count': 0,
+                    'requested_urls': [],
+                },
+            }
         raise RuntimeError('web.contents requires urls/links grounded in search results or replay_contents')
+    diagnostics: dict[str, Any] = {
+        'content_sources': {'cache': 0, 'network': 0, 'replay': 0},
+        'grounded_retry_count': 0,
+        'requested_urls': list(urls),
+        'attempted_urls': [],
+    }
+    cached_results: list[dict[str, Any]] = []
+    pending_urls: list[str] = []
+    cache = contents_by_url or {}
+    for url in urls:
+        cached = cache.get(url)
+        if cached is not None:
+            cached_results.append(dict(cached))
+            diagnostics['content_sources']['cache'] += 1
+            continue
+        pending_urls.append(url)
     try:
         _record_web_search_usage(web_search, kind='contents')
     except WebSearchQuotaExceeded:
         if web_search.quota_policy == 'replay' and replay_contents:
-            return {'results': replay_contents, 'backend': 'quota_replay', 'source': 'replay', 'mode': mode}
+            diagnostics['content_sources']['replay'] = len(replay_contents)
+            return {
+                'results': replay_contents,
+                'backend': 'quota_replay',
+                'source': 'replay',
+                'mode': mode,
+                'diagnostics': diagnostics,
+            }
         raise
-    results: list[dict[str, Any]] = []
-    for url in urls:
-        try:
-            response = httpx.get(url, timeout=web_search.timeout_seconds, follow_redirects=True)
-            response.raise_for_status()
-        except httpx.HTTPError:
-            continue
-        content_type = response.headers.get('content-type', '').lower()
-        body = response.text
-        text = _render_contents_text(body, content_type, mode=mode)
-        results.append({'title': url, 'link': url, 'text': text[:4000]})
-    if not results and replay_contents:
-        return {'results': replay_contents, 'backend': 'service_unavailable_replay', 'source': 'replay', 'mode': mode}
+    results = list(cached_results)
+    network_results = 0
+    for url in pending_urls:
+        candidate_urls = [url, *_grounded_retry_urls(url, latest_results=latest_results, search_history=search_history, grounded_urls=grounded_urls)]
+        for index, candidate_url in enumerate(candidate_urls):
+            diagnostics['attempted_urls'].append(candidate_url)
+            cached = cache.get(candidate_url)
+            if cached is not None:
+                results.append(dict(cached))
+                diagnostics['content_sources']['cache'] += 1
+                if index > 0:
+                    diagnostics['grounded_retry_count'] += 1
+                break
+            try:
+                response = httpx.get(candidate_url, timeout=web_search.timeout_seconds, follow_redirects=True)
+                response.raise_for_status()
+            except httpx.HTTPError:
+                continue
+            content_type = response.headers.get('content-type', '').lower()
+            body = response.text
+            text = _render_contents_text(body, content_type, mode=mode)
+            title = _result_title_for_url(candidate_url, latest_results=latest_results, search_history=search_history) or candidate_url
+            results.append({'title': title, 'link': candidate_url, 'text': text[:4000]})
+            diagnostics['content_sources']['network'] += 1
+            if index > 0:
+                diagnostics['grounded_retry_count'] += 1
+            network_results += 1
+            break
+    if len(results) == len(cached_results) and replay_contents:
+        diagnostics['content_sources']['replay'] = len(replay_contents)
+        return {
+            'results': replay_contents,
+            'backend': 'service_unavailable_replay',
+            'source': 'replay',
+            'mode': mode,
+            'diagnostics': diagnostics,
+        }
+    backend = 'cache'
+    source = 'cache'
+    if diagnostics['content_sources']['network'] and diagnostics['content_sources']['cache']:
+        backend = 'cache_plus_network'
+        source = 'mixed'
+    elif diagnostics['content_sources']['network']:
+        backend = 'http_fetch'
+        source = 'network'
     return {
         'results': _normalize_web_contents_results({'results': results}),
-        'backend': 'http_fetch',
-        'source': 'network',
+        'backend': backend,
+        'source': source,
         'mode': mode,
+        'diagnostics': diagnostics,
     }

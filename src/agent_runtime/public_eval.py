@@ -158,6 +158,7 @@ class PublicEvalRecord:
     fallback_stage: str = 'base'
     fallback_attempts: list[str] = field(default_factory=list)
     failure_bucket: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -1013,7 +1014,14 @@ def _normalize_answer_text(value: str) -> str:
     return re.sub(r'\s+', ' ', lowered).strip()
 
 
-def _extract_bfcl_answer_candidates(result: Any, result_summary: str, *, latest_results: list[dict[str, Any]]) -> list[str]:
+def _extract_bfcl_answer_candidates(
+    result: Any,
+    result_summary: str,
+    *,
+    latest_results: list[dict[str, Any]],
+    latest_contents: list[dict[str, Any]] | None = None,
+    source_ledger: list[dict[str, Any]] | None = None,
+) -> list[str]:
     candidates: list[str] = []
 
     def add(value: Any) -> None:
@@ -1047,6 +1055,18 @@ def _extract_bfcl_answer_candidates(result: Any, result_summary: str, *, latest_
         title = str(item.get('title') or '').strip()
         if title and _normalize_answer_text(title) in normalized_result:
             add(title)
+    for item in latest_contents or []:
+        title = str(item.get('title') or '').strip()
+        if title and _normalize_answer_text(title) in normalized_result:
+            add(title)
+    for item in source_ledger or []:
+        if not isinstance(item, dict):
+            continue
+        add(item.get('title'))
+        if str(item.get('kind') or '') == 'search_result':
+            snippet = str(item.get('snippet') or '').strip()
+            if snippet and _normalize_answer_text(snippet) in normalized_result:
+                add(snippet)
     return candidates
 
 
@@ -1094,6 +1114,8 @@ def _score_bfcl_answer(
     tool_success: bool,
     actual_calls: list[dict[str, Any]] | None = None,
     latest_results: list[dict[str, Any]] | None = None,
+    latest_contents: list[dict[str, Any]] | None = None,
+    source_ledger: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, float]:
     if actual_calls is not None and not _score_expected_tool_result(case, actual_calls):
         return False, 0.0
@@ -1103,11 +1125,70 @@ def _score_bfcl_answer(
         aliases = [expected_answer, *aliases]
     normalized_aliases = [_normalize_answer_text(item) for item in aliases if str(item).strip()]
     if normalized_aliases:
-        candidates = _extract_bfcl_answer_candidates(result, result_summary, latest_results=latest_results or [])
+        candidates = _extract_bfcl_answer_candidates(
+            result,
+            result_summary,
+            latest_results=latest_results or [],
+            latest_contents=latest_contents or [],
+            source_ledger=source_ledger or [],
+        )
         normalized_candidates = [_normalize_answer_text(item) for item in candidates if str(item).strip()]
         success = any(item in normalized_aliases for item in normalized_candidates)
         return success, 1.0 if success else 0.0
     return tool_success, 1.0 if tool_success else 0.0
+
+
+def _record_source_ledger_entries(
+    search_state: dict[str, Any],
+    *,
+    kind: str,
+    entries: list[dict[str, Any]],
+    query: str | None = None,
+    mode: str | None = None,
+    backend: str | None = None,
+) -> None:
+    ledger = cast(list[dict[str, Any]], search_state.setdefault('source_ledger', []))
+    for item in entries:
+        link = str(item.get('link') or '').strip()
+        title = str(item.get('title') or '').strip()
+        payload: dict[str, Any] = {
+            'kind': kind,
+            'title': title,
+            'link': link,
+        }
+        if query:
+            payload['query'] = query
+        if mode:
+            payload['mode'] = mode
+        if backend:
+            payload['backend'] = backend
+        if kind == 'search_result':
+            payload['snippet'] = str(item.get('snippet') or '').strip()
+        else:
+            payload['text_preview'] = str(item.get('text') or '').strip()[:240]
+        if payload not in ledger:
+            ledger.append(payload)
+
+
+def _record_web_search_diagnostics(search_state: dict[str, Any], diagnostics: dict[str, Any]) -> None:
+    aggregate = cast(
+        dict[str, Any],
+        search_state.setdefault(
+            'diagnostics',
+            {
+                'content_sources': {'cache': 0, 'network': 0, 'replay': 0},
+                'grounded_retry_count': 0,
+                'search_backends': [],
+                'contents_backends': [],
+            },
+        ),
+    )
+    content_sources = cast(dict[str, int], aggregate.setdefault('content_sources', {}))
+    for key, value in cast(dict[str, Any], diagnostics.get('content_sources', {})).items():
+        content_sources[str(key)] = int(content_sources.get(str(key), 0)) + int(value)
+    aggregate['grounded_retry_count'] = int(aggregate.get('grounded_retry_count', 0)) + int(
+        diagnostics.get('grounded_retry_count', 0)
+    )
 
 
 def _extract_tau_tasks_from_history(message_history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1483,8 +1564,18 @@ def _fetch_web_contents(
     *,
     latest_results: list[dict[str, Any]] | None = None,
     grounded_urls: set[str] | None = None,
+    contents_by_url: dict[str, dict[str, Any]] | None = None,
+    search_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return _web_fetch_contents(arguments, case, web_search, latest_results=latest_results, grounded_urls=grounded_urls)
+    return _web_fetch_contents(
+        arguments,
+        case,
+        web_search,
+        latest_results=latest_results,
+        grounded_urls=grounded_urls,
+        contents_by_url=contents_by_url,
+        search_history=search_history,
+    )
 
 
 def _build_eval_tool_handler(
@@ -1511,17 +1602,40 @@ def _build_eval_tool_handler(
             result = _web_serpapi_search(arguments, case, web_search)
             latest_results = list(result.get('results', []))
             search_state['latest_results'] = latest_results
-            search_state.setdefault('history', []).append(
-                {
-                    'tool': tool_name,
-                    'query': result.get('query'),
-                    'results': latest_results,
-                    'grounded_urls': [
-                        str(item.get('link') or '').strip()
-                        for item in latest_results
-                        if str(item.get('link') or '').strip()
-                    ],
-                }
+            history_entry = {
+                'tool': tool_name,
+                'query': result.get('query'),
+                'results': latest_results,
+                'grounded_urls': [
+                    str(item.get('link') or '').strip()
+                    for item in latest_results
+                    if str(item.get('link') or '').strip()
+                ],
+                'backend': result.get('backend'),
+            }
+            search_state.setdefault('history', []).append(history_entry)
+            diagnostics = cast(
+                dict[str, Any],
+                search_state.setdefault(
+                    'diagnostics',
+                    {
+                        'content_sources': {'cache': 0, 'network': 0, 'replay': 0},
+                        'grounded_retry_count': 0,
+                        'search_backends': [],
+                        'contents_backends': [],
+                    },
+                ),
+            )
+            search_backends = cast(list[str], diagnostics.setdefault('search_backends', []))
+            backend = str(result.get('backend') or '')
+            if backend:
+                search_backends.append(backend)
+            _record_source_ledger_entries(
+                search_state,
+                kind='search_result',
+                entries=latest_results,
+                query=str(result.get('query') or ''),
+                backend=backend or None,
             )
             budget_state['successful_calls'] += 1
             result['tool'] = tool_name
@@ -1543,6 +1657,8 @@ def _build_eval_tool_handler(
                 web_search,
                 latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
                 grounded_urls=grounded_urls,
+                contents_by_url=cast(dict[str, dict[str, Any]], search_state.get('contents_by_url', {})),
+                search_history=cast(list[dict[str, Any]], search_state.get('history', [])),
             )
             latest_contents = list(result.get('results', []))
             search_state['latest_contents'] = latest_contents
@@ -1551,6 +1667,33 @@ def _build_eval_tool_handler(
                 link = str(item.get('link') or '').strip()
                 if link:
                     contents_by_url[link] = dict(item)
+            diagnostics = cast(
+                dict[str, Any],
+                search_state.setdefault(
+                    'diagnostics',
+                    {
+                        'content_sources': {'cache': 0, 'network': 0, 'replay': 0},
+                        'grounded_retry_count': 0,
+                        'search_backends': [],
+                        'contents_backends': [],
+                    },
+                ),
+            )
+            contents_backends = cast(list[str], diagnostics.setdefault('contents_backends', []))
+            backend = str(result.get('backend') or '')
+            if backend:
+                contents_backends.append(backend)
+            _record_web_search_diagnostics(
+                search_state,
+                cast(dict[str, Any], result.get('diagnostics') or {}),
+            )
+            _record_source_ledger_entries(
+                search_state,
+                kind='content_result',
+                entries=latest_contents,
+                mode=str(result.get('mode') or ''),
+                backend=backend or None,
+            )
             budget_state['successful_calls'] += 1
             result['tool'] = tool_name
             result['run_id'] = context.run_id
@@ -1675,6 +1818,13 @@ async def _run_bfcl_case_attempt(
             'latest_contents': [],
             'history': [],
             'contents_by_url': {},
+            'source_ledger': [],
+            'diagnostics': {
+                'content_sources': {'cache': 0, 'network': 0, 'replay': 0},
+                'grounded_retry_count': 0,
+                'search_backends': [],
+                'contents_backends': [],
+            },
         }
         for function in functions:
             original_name = str(function['name'])
@@ -1723,6 +1873,8 @@ async def _run_bfcl_case_attempt(
                 tool_success=tool_success,
                 actual_calls=actual_calls,
                 latest_results=cast(list[dict[str, Any]], search_state.get('latest_results', [])),
+                latest_contents=cast(list[dict[str, Any]], search_state.get('latest_contents', [])),
+                source_ledger=cast(list[dict[str, Any]], search_state.get('source_ledger', [])),
             )
             return _BfclAttemptResult(
                 record=PublicEvalRecord(
@@ -1746,6 +1898,15 @@ async def _run_bfcl_case_attempt(
                     ),
                     fallback_stage=fallback_stage,
                     fallback_attempts=list(fallback_attempts),
+                    metadata={
+                        'web_search': {
+                            'history_length': len(cast(list[dict[str, Any]], search_state.get('history', []))),
+                            'grounded_sources': len(cast(list[dict[str, Any]], search_state.get('source_ledger', []))),
+                            **cast(dict[str, Any], search_state.get('diagnostics', {})),
+                        }
+                    }
+                    if str(case.get('suite') or '') == 'web_search'
+                    else {},
                 ),
                 duration_seconds=round(duration, 4),
             )
@@ -2086,6 +2247,36 @@ def _aggregate_agentic_summary(records: list[PublicEvalRecord]) -> dict[str, Any
     return summary
 
 
+def _aggregate_web_search_diagnostics(records: list[PublicEvalRecord]) -> dict[str, Any]:
+    selected = [record for record in records if record.suite == 'bfcl_web_search']
+    if not selected:
+        return {}
+    diagnostics: dict[str, Any] = {
+        'content_sources': {'cache': 0, 'network': 0, 'replay': 0},
+        'grounded_retry_count': 0,
+        'grounded_sources_average': 0.0,
+        'search_backends': {},
+        'contents_backends': {},
+    }
+    grounded_sources: list[int] = []
+    for record in selected:
+        payload = cast(dict[str, Any], record.metadata.get('web_search', {}))
+        source_counts = cast(dict[str, Any], payload.get('content_sources', {}))
+        content_sources = cast(dict[str, int], diagnostics['content_sources'])
+        search_backends = cast(dict[str, int], diagnostics['search_backends'])
+        contents_backends = cast(dict[str, int], diagnostics['contents_backends'])
+        for key in ('cache', 'network', 'replay'):
+            content_sources[key] = int(content_sources.get(key, 0)) + int(source_counts.get(key, 0))
+        diagnostics['grounded_retry_count'] += int(payload.get('grounded_retry_count', 0))
+        grounded_sources.append(int(payload.get('grounded_sources', 0)))
+        for key in cast(list[str], payload.get('search_backends', [])):
+            search_backends[key] = int(search_backends.get(key, 0)) + 1
+        for key in cast(list[str], payload.get('contents_backends', [])):
+            contents_backends[key] = int(contents_backends.get(key, 0)) + 1
+    diagnostics['grounded_sources_average'] = round(mean(grounded_sources), 4) if grounded_sources else 0.0
+    return diagnostics
+
+
 def _remaining_blockers(records: list[PublicEvalRecord]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     for record in records:
@@ -2329,6 +2520,7 @@ def run_public_eval_suite(
         'suite_summary': _aggregate_summary(records),
         'category_summary': _aggregate_category_summary(records),
         'agentic_summary': _aggregate_agentic_summary(records),
+        'web_search_diagnostics': _aggregate_web_search_diagnostics(records),
         'stage_summary': _aggregate_stage_summary(records),
         'failure_buckets': _aggregate_failure_buckets(records),
         'remaining_blockers': _remaining_blockers(records),

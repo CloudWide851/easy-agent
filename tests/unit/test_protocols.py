@@ -275,6 +275,34 @@ def test_openai_adapter_parses_responses_output() -> None:
     assert response.tool_calls[0].arguments == {'value': 'alpha'}
 
 
+def test_openai_adapter_responses_payload_preserves_required_mode_and_strict_schema() -> None:
+    adapter = OpenAIAdapter()
+    payload = adapter.build_payload(
+        ModelConfig.model_validate(
+            {
+                'provider': 'openai',
+                'protocol': Protocol.OPENAI,
+                'openai_api_style': 'responses',
+                'function_calling': {'mode': 'required', 'parallel_tool_calls': False},
+            }
+        ),
+        [ChatMessage(role='user', content='hello')],
+        [
+            ToolSpec(
+                name='simple_tool',
+                description='Simple',
+                input_schema={'type': 'object', 'properties': {'value': {'type': 'string', 'optional': True}}},
+            )
+        ],
+    )
+
+    assert payload['tool_choice'] == 'required'
+    assert payload['parallel_tool_calls'] is False
+    assert payload['tools'][0]['strict'] is True
+    assert payload['tools'][0]['parameters']['additionalProperties'] is False
+    assert payload['tools'][0]['parameters']['properties']['value']['type'] == ['string', 'null']
+
+
 def test_openai_adapter_supports_required_and_forced_tool_choice() -> None:
     adapter = OpenAIAdapter()
     required_payload = adapter.build_payload(

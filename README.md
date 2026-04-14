@@ -22,7 +22,7 @@
 
 `easy-agent` is the runtime layer underneath an agent product, not the product itself. It keeps orchestration, tool calling, persistence, approvals, federation, and evaluation explicit so teams can evolve their systems without hiding critical behavior behind opaque framework abstractions.
 
-The latest published patch is `0.3.4`.
+The latest published patch is `0.3.5`.
 
 ## What This Project Is
 
@@ -131,7 +131,7 @@ The worker loop persists artifacts and checkpoints so long-running tasks can con
 
 - Model protocols: OpenAI-compatible chat-completions or Responses API payload normalization, Anthropic-style payloads, and Gemini-style payload normalization.
 - Tool calling: strict schema transport, nullable/optional modeling, validation-repair loops, provider-neutral tool-choice controls, and provider-schema compatibility telemetry.
-- Web-search eval hardening: SerpApi `/search.json`, replay-backed contents, quota ledger, result grounding, raw official BFCL manifest normalization, and single-call regression guards.
+- Web-search eval hardening: SerpApi `/search.json`, grounded source ledgers, cache-first contents reuse, replay-backed contents fallback, raw official BFCL manifest normalization, and single-call regression guards.
 
 Provider behavior details and structured-output notes live in [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md).
 
@@ -179,7 +179,7 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-The latest published patch remains `0.3.4`. The current unreleased reinforcement keeps the retained benchmark snapshot from April 9, 2026 and the published score baseline from the April 13, 2026 refresh, while extending the runtime with OpenAI Responses API parity, raw `official_full_v4` manifest normalization, and deeper MCP template-refresh coordination. The Python verification suite was rerun on April 14, 2026 without changing the public score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+The latest published patch is `0.3.5`. This release refreshes the benchmark, public-eval, and real-network snapshots on April 14, 2026, while extending the runtime with grounded web-search source ledgers, cache-first grounded contents recovery, and stricter Responses or structured-output regression coverage. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
@@ -202,13 +202,14 @@ The real-network matrix is reported as score-only in this README. Durations, tel
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
 - turning the shipped chat-completions and Responses API parity into live provider-specific compatibility evidence
-- expanding raw official BFCL v4 coverage into wider agentic and multihop regressions with clearer official-category diagnostics
+- extending BFCL web-search from grounded replay safety toward richer source-ledger, source-aware, and multihop official coverage
 - deepening MCP notification parity around resource updates, prompt-detail refresh, and template diff telemetry
 
 ## Design References
 
 - OpenAI function calling: <https://developers.openai.com/api/docs/guides/function-calling>
 - OpenAI structured outputs: <https://developers.openai.com/api/docs/guides/structured-outputs>
+- OpenAI web search tool: <https://platform.openai.com/docs/guides/tools-web-search>
 - Anthropic tool use: <https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools>
 - Gemini function calling: <https://ai.google.dev/gemini-api/docs/function-calling>
 - BFCL v4 web search: <https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html>

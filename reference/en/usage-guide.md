@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide matches the published `0.3.4` documentation set.
+This guide matches the published `0.3.5` documentation set.
 
 ## Environment
 
@@ -13,11 +13,15 @@ uv sync --dev
 
 - `model.openai_api_style` defaults to `chat_completions`.
 - Set `model.openai_api_style: responses` only for OpenAI-compatible endpoints that explicitly support `/responses`.
-- The provider-neutral function-calling controls stay the same across both OpenAI-compatible styles:
+- The provider-neutral function-calling controls stay aligned across both OpenAI-compatible styles:
   - `strict`
   - `parallel_tool_calls`
   - `mode`
   - `forced_tool_name`
+- The strict baseline in this repository follows the current OpenAI guidance:
+  - `strict: true`
+  - `additionalProperties: false`
+  - optional fields modeled as required plus nullable when strict structured outputs are needed
 
 ## Core CLI
 
@@ -68,7 +72,7 @@ Harness runs persist durable artifacts under the configured artifact directory a
 
 ## Public Eval Profiles
 
-`full_v4` remains the public score baseline in the README. `official_full_v4` now accepts raw official-style manifests in JSON or JSONL form, while the README headline score still stays on the repo-pinned baseline.
+`full_v4` remains the public score baseline in the README. `official_full_v4` accepts raw official-style manifests in JSON or JSONL form, while the README headline score stays on the repo-pinned baseline.
 
 Useful config fields under `evaluation.public_eval.official_dataset`:
 
@@ -88,10 +92,25 @@ Selection notes:
 - `category_allowlist` filters on normalized public categories such as `agentic`, `multihop`, `memory`, and `web_search`.
 - `max_cases_per_suite` caps one normalized suite before the final `max_cases` limit is applied.
 
+## Web Search Eval Notes
+
+- Repo-pinned BFCL web-search keeps SerpApi `/search.json` as the explicit search transport.
+- `web.contents` now follows a stricter grounded path:
+  - resolve result ids or URLs only from grounded search results
+  - prefer grounded cached contents before network fetch
+  - retry alternative grounded URLs with the same grounded title before replay fallback
+  - fall back to replay-backed contents only after grounded fetch attempts fail
+- Per-case diagnostics now track:
+  - grounded source counts
+  - cache or network or replay content-source usage
+  - grounded retry counts
+  - search and contents backend mix
+- This keeps the repo-pinned BFCL web-search slice green while exposing when a local refresh relied on replay instead of live search.
+
 ## MCP Catalog Notes
 
-- `mcp resources templates <server>` now persists durable `resource_templates` snapshots.
-- `mcp prompts get <server> <prompt-name>` now persists durable prompt-detail cache entries keyed by prompt name plus arguments.
+- `mcp resources templates <server>` persists durable `resource_templates` snapshots.
+- `mcp prompts get <server> <prompt-name>` persists durable prompt-detail cache entries keyed by prompt name plus arguments.
 - `notifications/resources/list_changed` refreshes both resource entries and resource templates.
 - `notifications/prompts/list_changed` refreshes prompt summaries and marks cached prompt-detail entries as stale until they are fetched again.
 

@@ -11,6 +11,55 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 No unreleased changes yet.
 
+## [0.3.5] - 2026-04-14
+
+### Added
+
+- Added grounded web-search source-ledger tracking for BFCL web-search cases so repo-pinned public eval now records:
+  - grounded search history
+  - per-case content-source usage
+  - grounded retry counts
+  - cache/network/replay mix diagnostics
+- Added grounded cache-first and grounded retry-before-replay handling for `web.contents` in:
+  - `src/agent_runtime/public_eval_web_search.py`
+  - `src/agent_runtime/public_eval.py`
+- Added focused regression coverage for:
+  - grounded cache hits before network fetch
+  - grounded retry within the search set before replay fallback
+  - source-ledger-assisted BFCL answer extraction
+  - aggregated web-search diagnostics
+  - OpenAI-compatible Responses required-tool strict-schema payload parity
+
+### Changed
+
+- Tightened BFCL web-search evaluation so `web.contents` now:
+  - prefers grounded cached contents first
+  - retries alternative grounded URLs with the same grounded title before replay fallback
+  - records backend diagnostics without widening to ungrounded URLs
+- Extended BFCL answer scoring so grounded titles from the per-case source ledger can still recover exact-title answers when the model wraps them in prose.
+- Refreshed the bilingual README pair and all published `reference/` pages for the `0.3.5` release, including:
+  - the latest release version text
+  - refreshed public-eval and real-network wording
+  - web-search reinforcement notes aligned to current OpenAI, BFCL v4, and SerpApi public references
+- Published patch release `0.3.5`.
+
+### Verified
+
+- `.\.venv\Scripts\python.exe -m ruff check src tests scripts`
+- `.\.venv\Scripts\python.exe -m mypy src tests scripts`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_public_eval.py tests/unit/test_protocols.py -q --basetemp=%TEMP%\easy-agent-pytest\targeted-<timestamp>` with `74 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `190 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `6 passed`, `3 warnings`
+- Refreshed public artifacts:
+  - `.easy-agent/benchmark-report.json`
+  - `.easy-agent/public-eval-report.json`
+  - `.easy-agent/real-network-report.json`
+- Refreshed release snapshots include:
+  - `public_eval.bfcl_overall = 100.0`
+  - `public_eval.tau2_mock = 100.0`
+  - `real_network.overall = 100.0`
+  - `real_network.generated_at = 2026-04-14T05:58:34Z`
+
 ## [0.3.4] - 2026-04-11
 
 ### Added

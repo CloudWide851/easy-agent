@@ -2,34 +2,32 @@
 
 ## 快照策略
 
-- `0.3.4` 版本保留 2026 年 4 月 9 日的 benchmark 快照。
-- 本次发布采用 2026 年 4 月 13 日刷新后的 public-eval、Python verification 与 real-network 快照。
-- 2026 年 4 月 14 日这轮未发布补强在加入 OpenAI Responses API 对齐、raw official BFCL manifest 归一化，以及更深入的 MCP template refresh 协调之后，重新跑了 Python 验证套件，但没有改动 README 分数基线。
+- `0.3.5` 版本发布的是 2026 年 4 月 14 日刷新后的 benchmark、public-eval、Python verification 与 real-network 快照。
 - 仓库公开文档只保留方法说明与分数，不暴露机器本地协作日志。
 
 ## Benchmark 快照
 
 | 测试集 | 分数 | 平均耗时（秒） |
 | --- | ---: | ---: |
-| benchmark.single_agent | 100.0 | 4.2843 |
-| benchmark.sub_agent | 100.0 | 20.7399 |
-| benchmark.multi_agent_graph | 100.0 | 9.8910 |
-| benchmark.team_round_robin | 100.0 | 7.7402 |
-| benchmark.team_selector | 100.0 | 9.7480 |
-| benchmark.team_swarm | 100.0 | 8.2819 |
+| benchmark.single_agent | 100.0 | 5.0674 |
+| benchmark.sub_agent | 100.0 | 59.2087 |
+| benchmark.multi_agent_graph | 100.0 | 12.6349 |
+| benchmark.team_round_robin | 100.0 | 9.9354 |
+| benchmark.team_selector | 100.0 | 13.9754 |
+| benchmark.team_swarm | 100.0 | 11.7101 |
 
 ## Public Eval 快照
 
 | 测试集 | 分数 | 平均耗时（秒） |
 | --- | ---: | ---: |
-| public_eval.bfcl_simple | 100.0 | 8.7802 |
-| public_eval.bfcl_multiple | 100.0 | 10.3507 |
-| public_eval.bfcl_parallel_multiple | 100.0 | 13.2126 |
-| public_eval.bfcl_irrelevance | 100.0 | 6.5760 |
-| public_eval.bfcl_web_search | 100.0 | 9.8743 |
-| public_eval.bfcl_memory | 100.0 | 6.7686 |
-| public_eval.bfcl_format_sensitivity | 100.0 | 6.4398 |
-| public_eval.tau2_mock | 100.0 | 7.7507 |
+| public_eval.bfcl_simple | 100.0 | 5.0554 |
+| public_eval.bfcl_multiple | 100.0 | 6.3535 |
+| public_eval.bfcl_parallel_multiple | 100.0 | 8.7009 |
+| public_eval.bfcl_irrelevance | 100.0 | 4.3747 |
+| public_eval.bfcl_web_search | 100.0 | 6.9273 |
+| public_eval.bfcl_memory | 100.0 | 3.9823 |
+| public_eval.bfcl_format_sensitivity | 100.0 | 4.1343 |
+| public_eval.tau2_mock | 100.0 | 4.9205 |
 
 当前 headline 分数：
 
@@ -47,36 +45,51 @@
 - `public_eval.bfcl_case_pass_rate` 保留为诊断指标，用来观察单 case 成功率。
 - `public_eval.bfcl_web_search` 以规范化最终答案准确率为主，tool-call 命中率继续保留为诊断信号。
 - 这次 repo-pinned `full_v4` BFCL 子集已经全绿，既包括 core multi-tool cases，也包括新增的 search-plus-contents 与 memory-backed cases。
-- `official_full_v4` 现在已经可以先把 JSON / JSONL 的 raw official manifest 做归一化，再进入过滤和执行流程，而不直接切换 README headline score 的基线。
+- `official_full_v4` 现在会先把 JSON / JSONL 的 raw official manifest 做归一化，再进入过滤和执行流程，而不直接切换 README headline score 的基线。
 - provider compatibility matrix 现在同时覆盖 OpenAI-compatible 的 chat-completions 与 Responses API payload / parsing 对齐，建立在 strict function-calling 基线之上。
 - MCP catalog durability 现在也覆盖 `resource_templates`、prompt detail cache entries 与通知驱动的 stale 标记。
 
+2026 年 4 月 14 日 release refresh 的 web-search diagnostics：
+
+| 指标 | 数值 |
+| --- | ---: |
+| web_search.content_sources.cache | 0 |
+| web_search.content_sources.network | 0 |
+| web_search.content_sources.replay | 2 |
+| web_search.grounded_retry_count | 0 |
+| web_search.grounded_sources_average | 1.4 |
+
+解释说明：
+
+- 这次发布保持了 repo-pinned BFCL web-search 子集全绿，同时把 search/contents 的来源类型从 headline 分数里独立暴露出来。
+- 在这台机器上的 release refresh 中，BFCL web-search 刷新是通过 replay-backed evidence 完成的，而不是 live SerpApi 结果；这个事实已经写进诊断字段，而不是被简单的 pass 掩盖掉。
+
 ## Real-Network 快照
 
-最新快照时间：`2026-04-13T11:49:06Z`
+最新快照时间：`2026-04-14T05:58:34Z`
 
 | 测试集 | 分数 | 耗时（秒） | 说明 |
 | --- | ---: | ---: | --- |
-| real_network.cross_process_federation | 100.0 | 0.9074 | well-known discovery 与 send/poll federation |
-| real_network.live_model_federation_roundtrip | 100.0 | 7.4315 | 通过本地 A2A surface 的 loopback federation |
-| real_network.disconnect_retry_chaos | 100.0 | 3.8996 | callback retry 与 signed webhook delivery |
-| real_network.duplicate_delivery_replay_resilience | 100.0 | 3.9662 | replay-safe callback 与 durable task events |
-| real_network.workbench_reuse_process | 100.0 | 1.9268 | process workbench reuse |
-| real_network.workbench_reuse_container | 100.0 | 32.2239 | container warm-start 与 snapshot restore |
-| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 50.8435 | incremental container snapshot reuse |
-| real_network.workbench_reuse_microvm | 100.0 | 20.5576 | SSH-backed microVM reuse |
-| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 28.9500 | incremental microVM snapshot reuse |
-| real_network.replay_resume_failure_injection | 100.0 | 6.5188 | replay/resume failure injection |
+| real_network.cross_process_federation | 100.0 | 1.6871 | well-known discovery 与 send/poll federation |
+| real_network.live_model_federation_roundtrip | 100.0 | 11.7853 | 通过本地 A2A surface 的 loopback federation |
+| real_network.disconnect_retry_chaos | 100.0 | 10.4526 | callback retry 与 signed webhook delivery |
+| real_network.duplicate_delivery_replay_resilience | 100.0 | 6.3195 | replay-safe callback 与 durable task events |
+| real_network.workbench_reuse_process | 100.0 | 3.1016 | process workbench reuse |
+| real_network.workbench_reuse_container | 100.0 | 34.8270 | container warm-start 与 snapshot restore |
+| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 51.1865 | incremental container snapshot reuse |
+| real_network.workbench_reuse_microvm | 100.0 | 20.9947 | SSH-backed microVM reuse |
+| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 29.3842 | incremental microVM snapshot reuse |
+| real_network.replay_resume_failure_injection | 100.0 | 7.1407 | replay/resume failure injection |
 
 Warm-start telemetry summary：
 
 | 指标 | 数值 |
 | --- | ---: |
 | telemetry.cache_hit_rate | 100.0 |
-| telemetry.container_warm_start_average_seconds | 5.7206 |
-| telemetry.microvm_warm_start_average_seconds | 8.4611 |
-| telemetry.snapshot_drift_ratio_average | 0.4033 |
-| telemetry.snapshot_drift_ratio_max | 0.6701 |
+| telemetry.container_warm_start_average_seconds | 5.7820 |
+| telemetry.microvm_warm_start_average_seconds | 9.1022 |
+| telemetry.snapshot_drift_ratio_average | 0.5162 |
+| telemetry.snapshot_drift_ratio_max | 0.6795 |
 
 ## 同类 Agent 项目对比
 
@@ -94,9 +107,10 @@ README 只保留高层摘要，本页保留公开证据映射。
 本轮只使用 Python-based verification。
 
 - 静态检查：`ruff` 与 `mypy`
-- 定向回归：provider adapters、BFCL retry routing、raw official-manifest normalization、MCP catalog durability、README snapshots
-- 全量 unit tests：`185 passed`
+- 定向回归：provider adapters 与 web-search / BFCL evaluation，结果 `74 passed`
+- 全量 unit tests：`190 passed`
 - 全量 real integration：`6 passed`、`3 warnings`
-- 这轮 real integration 在沙箱外重跑，用来重新验证 live model/network 与 MCP-backed 路径，同时确认 temp-root 修复生效
+- 本次 release 同步刷新了 benchmark、public-eval 与 real-network 三类 artifact
+- 这轮 real integration 在沙箱外重跑，用来重新验证 live model/network 与 MCP-backed 路径
 
 机器本地的完整执行日志不进入仓库公开文档。
