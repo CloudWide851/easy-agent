@@ -3,7 +3,7 @@
 ## 快照策略
 
 - `0.3.5` 版本发布的是 2026 年 4 月 14 日刷新后的 benchmark、public-eval、Python verification 与 real-network 快照。
-- 最新一轮未发布验证发生在 2026 年 4 月 27 日：保留 4 月 14 日的 benchmark 与 public-eval headline 分数快照，同时刷新 Python verification 与 real-network 套件；live provider compatibility matrix 仍保留 4 月 20 日验证快照。
+- 最新一轮未发布验证发生在 2026 年 4 月 29 日：保留 4 月 14 日的 benchmark 与 public-eval headline 分数快照，同时刷新 Python verification 与 real-network 套件；live provider compatibility matrix 仍保留 4 月 20 日验证快照。
 - 仓库公开文档只保留方法说明与分数，不暴露机器本地协作日志。
 
 ## Benchmark 快照
@@ -83,30 +83,30 @@
 
 ## Real-Network 快照
 
-最新快照时间：`2026-04-27T23:23:38Z`
+最新快照时间：`2026-04-29T03:26:51Z`
 
 | 测试集 | 分数 | 耗时（秒） | 说明 |
 | --- | ---: | ---: | --- |
-| real_network.cross_process_federation | 100.0 | 1.3183 | well-known discovery 与 send/poll federation |
-| real_network.live_model_federation_roundtrip | 100.0 | 9.2074 | 通过本地 A2A surface 的 loopback federation |
-| real_network.disconnect_retry_chaos | 100.0 | 5.1170 | callback retry、push notifications 与 signed webhook delivery |
-| real_network.duplicate_delivery_replay_resilience | 100.0 | 4.4736 | replay-safe callback 与 durable task events |
-| real_network.workbench_reuse_process | 100.0 | 2.2115 | process workbench reuse |
-| real_network.workbench_reuse_container | 100.0 | 29.0679 | container warm-start 与 snapshot restore |
-| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 46.8856 | incremental container snapshot reuse |
-| real_network.workbench_reuse_microvm | 100.0 | 17.0704 | SSH-backed microVM reuse |
-| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 24.0597 | incremental microVM snapshot reuse |
-| real_network.replay_resume_failure_injection | 100.0 | 6.9708 | replay/resume failure injection |
+| real_network.cross_process_federation | 100.0 | 1.3225 | well-known discovery 与 send/poll federation |
+| real_network.live_model_federation_roundtrip | 100.0 | 9.8811 | 通过本地 A2A surface 的 loopback federation |
+| real_network.disconnect_retry_chaos | 100.0 | 5.6471 | callback retry、push notifications 与 signed webhook delivery |
+| real_network.duplicate_delivery_replay_resilience | 100.0 | 4.6576 | replay-safe callback 与 durable task events |
+| real_network.workbench_reuse_process | 100.0 | 1.9972 | process workbench reuse |
+| real_network.workbench_reuse_container | 100.0 | 31.6165 | container warm-start 与 snapshot restore |
+| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 50.0752 | incremental container snapshot reuse |
+| real_network.workbench_reuse_microvm | 100.0 | 17.6801 | SSH-backed microVM reuse |
+| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 24.3929 | incremental microVM snapshot reuse |
+| real_network.replay_resume_failure_injection | 100.0 | 7.2119 | replay/resume failure injection |
 
 Warm-start telemetry summary：
 
 | 指标 | 数值 |
 | --- | ---: |
 | telemetry.cache_hit_rate | 100.0 |
-| telemetry.container_warm_start_average_seconds | 4.6273 |
-| telemetry.microvm_warm_start_average_seconds | 6.8138 |
-| telemetry.snapshot_drift_ratio_average | 0.3795 |
-| telemetry.snapshot_drift_ratio_max | 0.6571 |
+| telemetry.container_warm_start_average_seconds | 5.1875 |
+| telemetry.microvm_warm_start_average_seconds | 7.0377 |
+| telemetry.snapshot_drift_ratio_average | 0.4702 |
+| telemetry.snapshot_drift_ratio_max | 0.8982 |
 
 每条 real-network record 现在都会带场景证明字段，让分数行可以追溯到可执行的场景契约：
 
@@ -137,12 +137,12 @@ README 只保留高层摘要，本页保留公开证据映射。
 本轮只使用 Python-based verification。
 
 - 静态检查：`ruff` 与 `mypy`
-- 定向回归：mock provider、onboarding CLI、run explanation、provider compatibility、config validation、guardrails、BFCL evaluation、official-source search 与 simple-evals profile support，结果 `36 passed`、`89 passed` 加 `4 passed`
-- 全量 unit tests：`211 passed`
+- 定向回归：setup、config explanation、HTML trace export、mock provider、onboarding CLI、run explanation、provider compatibility、config validation、guardrails、BFCL evaluation、official-source search 与 simple-evals profile support，结果 `15 passed`、`36 passed`、`89 passed` 加 `4 passed`
+- 全量 unit tests：`214 passed`
 - 定向 live provider compatibility 回归：`1 passed`
 - 全量 real integration：`7 passed`、`2 warnings`
-- 保留的 benchmark 与 public-eval headline 分数仍指向 4 月 14 日发布快照，live provider compatibility 证据保留 4 月 20 日快照，而 real-network artifact 在 4 月 27 日重新刷新
+- 保留的 benchmark 与 public-eval headline 分数仍指向 4 月 14 日发布快照，live provider compatibility 证据保留 4 月 20 日快照，而 real-network artifact 在 4 月 29 日重新刷新
 - 剩余 warning 仍然是 Windows asyncio subprocess cleanup 的已知问题，不属于功能失败
-- 新增 focused regressions 覆盖 offline mock runs、starter templates、quickstart、run explanation、run listing、run summary、structured trace tree export、executor capability reports、storage contracts 与 real-network scenario proof metadata。
+- 新增 focused regressions 覆盖 setup、config explanation、HTML trace export、offline mock runs、starter templates、quickstart、run explanation、run listing、run summary、structured trace tree export、executor capability reports、storage contracts 与 real-network scenario proof metadata。
 
 机器本地的完整执行日志不进入仓库公开文档。

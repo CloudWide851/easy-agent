@@ -6,6 +6,7 @@ from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
 from agent_cli.app import app
+from agent_config.app import load_config
 
 
 def test_init_creates_mock_config_and_protects_existing_file(tmp_path: Path) -> None:
@@ -40,6 +41,30 @@ def test_template_commands_list_and_create(tmp_path: Path) -> None:
     )
 
 
+def test_all_templates_create_valid_configs(tmp_path: Path) -> None:
+    runner = CliRunner()
+    templates = [
+        'basic-agent',
+        'tool-agent',
+        'human-approval-agent',
+        'longrun-harness',
+        'mcp-filesystem-agent',
+        'eval-smoke',
+        'federation-loopback',
+        'workbench-coding-agent',
+    ]
+
+    listed = runner.invoke(app, ['template', 'list'])
+
+    assert listed.exit_code == 0
+    for template in templates:
+        assert template in listed.output
+        destination = tmp_path / template
+        result = runner.invoke(app, ['template', 'create', template, str(destination)])
+        assert result.exit_code == 0
+        load_config(destination / 'easy-agent.yml')
+
+
 def test_quickstart_runs_offline_mock_provider(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
@@ -49,3 +74,31 @@ def test_quickstart_runs_offline_mock_provider(tmp_path: Path, monkeypatch: Monk
     assert result.exit_code == 0
     assert 'Mock final answer based on tool result' in result.output
     assert 'easy-agent runs explain' in result.output
+
+
+def test_setup_creates_config_and_runs_mock_smoke(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ['setup', '--provider', 'mock'])
+
+    assert result.exit_code == 0
+    assert (tmp_path / 'easy-agent.yml').exists()
+    assert 'succeeded' in result.output
+    assert 'easy-agent traces export' in result.output
+
+
+def test_config_validate_and_explain(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    setup_result = runner.invoke(app, ['setup', '--provider', 'mock', '--skip-smoke'])
+
+    validate_result = runner.invoke(app, ['config', 'validate', '-c', 'easy-agent.yml'])
+    explain_result = runner.invoke(app, ['config', 'explain', '-c', 'easy-agent.yml', '--format', 'json'])
+
+    assert setup_result.exit_code == 0
+    assert validate_result.exit_code == 0
+    assert '"valid": true' in validate_result.output
+    assert explain_result.exit_code == 0
+    assert '"entrypoint_type": "agent"' in explain_result.output
+    assert '"required_env"' in explain_result.output

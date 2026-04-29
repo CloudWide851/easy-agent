@@ -27,10 +27,13 @@ uv sync --dev
 
 ```bash
 uv run easy-agent --help
+uv run easy-agent setup --provider mock
 uv run easy-agent init --provider mock
 uv run easy-agent quickstart --provider mock
 uv run easy-agent template list
 uv run easy-agent template create basic-agent <target-dir>
+uv run easy-agent config validate -c easy-agent.yml
+uv run easy-agent config explain -c easy-agent.yml
 uv run easy-agent doctor -c easy-agent.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent harness list -c configs/harness.example.yml
@@ -39,6 +42,7 @@ uv run easy-agent runs list -c easy-agent.yml
 uv run easy-agent runs show <run_id> -c easy-agent.yml
 uv run easy-agent runs explain <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml
+uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent mcp resources list <server> -c easy-agent.yml
 uv run easy-agent mcp resources read <server> <uri> -c easy-agent.yml
 uv run easy-agent mcp resources templates <server> -c easy-agent.yml
@@ -52,12 +56,18 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 
 Use the `mock` provider when you want to verify the runtime, tools, storage, and trace surfaces without any model credentials.
 
+- `setup --provider mock` creates or reuses a local config, validates it, runs a deterministic smoke test, and prints the next run-inspection commands.
 - `init --provider mock` writes a starter config that uses `protocol: mock`.
 - `quickstart --provider mock` creates a temporary local config, runs one deterministic tool-using agent turn, and prints the follow-up `runs show`, `runs explain`, and `traces export` commands for the new run id.
 - `template list` shows starter project shapes.
 - `template create basic-agent <target-dir>` creates a minimal single-agent project.
 - `template create human-approval-agent <target-dir>` creates the same local starter with `python_echo` marked as a sensitive tool.
 - `template create longrun-harness <target-dir>` creates a minimal initializer / worker / evaluator harness.
+- `template create mcp-filesystem-agent <target-dir>` creates a filesystem-MCP starter.
+- `template create eval-smoke <target-dir>` creates a public-eval smoke starter.
+- `template create federation-loopback <target-dir>` creates a local federation export starter.
+- `template create workbench-coding-agent <target-dir>` creates a process-workbench starter.
+- `config explain` summarizes model/provider choices, entrypoint type, agents, tools, teams, harnesses, MCP, storage, executors, federation, eval settings, and required environment variables without printing secret values.
 
 Use `--provider deepseek` only after `DEEPSEEK_API_KEY` is present in the environment.
 
@@ -70,6 +80,7 @@ Durable run inspection now has two layers:
 - `runs explain <run_id>` classifies common failure causes such as missing provider credentials, schema validation failures, guardrail blocks, MCP failures, iteration loops, and known Windows cleanup warnings.
 - `traces export <run_id>` returns a structured trace tree by default.
 - `traces export <run_id> --raw` returns the historical raw trace payload.
+- `traces export <run_id> --html --output trace.html` writes a standalone HTML trace viewer for the structured tree.
 
 Trace-tree spans are derived from the existing runtime event envelope and include stable `span_id`, `parent_span_id`, `kind`, `status`, duration, input/output hashes, retry count, checkpoint id, and child spans. This keeps the current JSON trace path lightweight while leaving a future OpenTelemetry export path open.
 

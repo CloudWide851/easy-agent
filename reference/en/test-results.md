@@ -3,7 +3,7 @@
 ## Snapshot Policy
 
 - Release `0.3.5` publishes benchmark, public-eval, Python verification, and real-network snapshots refreshed on April 14, 2026.
-- The latest unreleased verification refresh on April 27, 2026 keeps the April 14 benchmark and headline public-eval score snapshot, while refreshing Python verification and the real-network suite. The live provider compatibility matrix remains the April 20 verification snapshot.
+- The latest unreleased verification refresh on April 29, 2026 keeps the April 14 benchmark and headline public-eval score snapshot, while refreshing Python verification and the real-network suite. The live provider compatibility matrix remains the April 20 verification snapshot.
 - Public docs in this repository intentionally expose methodology and scores only; local collaboration logs are not part of the repository-facing surface.
 
 ## Benchmark Snapshot
@@ -83,30 +83,30 @@ Compatibility notes:
 
 ## Real-Network Snapshot
 
-Latest generated snapshot timestamp: `2026-04-27T23:23:38Z`
+Latest generated snapshot timestamp: `2026-04-29T03:26:51Z`
 
 | Test Set | Score | Duration (s) | Notes |
 | --- | ---: | ---: | --- |
-| real_network.cross_process_federation | 100.0 | 1.3183 | well-known discovery and send/poll federation |
-| real_network.live_model_federation_roundtrip | 100.0 | 9.2074 | loopback federation through the local A2A surface |
-| real_network.disconnect_retry_chaos | 100.0 | 5.1170 | callback retry, push notifications, and signed webhook delivery |
-| real_network.duplicate_delivery_replay_resilience | 100.0 | 4.4736 | replay-safe callback and durable task events |
-| real_network.workbench_reuse_process | 100.0 | 2.2115 | process workbench reuse |
-| real_network.workbench_reuse_container | 100.0 | 29.0679 | container warm-start and snapshot restore |
-| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 46.8856 | incremental container snapshot reuse |
-| real_network.workbench_reuse_microvm | 100.0 | 17.0704 | SSH-backed microVM reuse |
-| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 24.0597 | incremental microVM snapshot reuse |
-| real_network.replay_resume_failure_injection | 100.0 | 6.9708 | replay/resume failure injection |
+| real_network.cross_process_federation | 100.0 | 1.3225 | well-known discovery and send/poll federation |
+| real_network.live_model_federation_roundtrip | 100.0 | 9.8811 | loopback federation through the local A2A surface |
+| real_network.disconnect_retry_chaos | 100.0 | 5.6471 | callback retry, push notifications, and signed webhook delivery |
+| real_network.duplicate_delivery_replay_resilience | 100.0 | 4.6576 | replay-safe callback and durable task events |
+| real_network.workbench_reuse_process | 100.0 | 1.9972 | process workbench reuse |
+| real_network.workbench_reuse_container | 100.0 | 31.6165 | container warm-start and snapshot restore |
+| real_network.workbench_incremental_snapshot_reuse_container | 100.0 | 50.0752 | incremental container snapshot reuse |
+| real_network.workbench_reuse_microvm | 100.0 | 17.6801 | SSH-backed microVM reuse |
+| real_network.workbench_incremental_snapshot_reuse_microvm | 100.0 | 24.3929 | incremental microVM snapshot reuse |
+| real_network.replay_resume_failure_injection | 100.0 | 7.2119 | replay/resume failure injection |
 
 Warm-start telemetry summary:
 
 | Metric | Value |
 | --- | ---: |
 | telemetry.cache_hit_rate | 100.0 |
-| telemetry.container_warm_start_average_seconds | 4.6273 |
-| telemetry.microvm_warm_start_average_seconds | 6.8138 |
-| telemetry.snapshot_drift_ratio_average | 0.3795 |
-| telemetry.snapshot_drift_ratio_max | 0.6571 |
+| telemetry.container_warm_start_average_seconds | 5.1875 |
+| telemetry.microvm_warm_start_average_seconds | 7.0377 |
+| telemetry.snapshot_drift_ratio_average | 0.4702 |
+| telemetry.snapshot_drift_ratio_max | 0.8982 |
 
 Scenario proof fields are now emitted with each real-network record so score rows can be traced back to an executable scenario contract:
 
@@ -137,12 +137,12 @@ The README keeps the comparison high level. This page keeps the public evidence 
 This round uses Python-based verification only.
 
 - Static checks: `ruff` and `mypy`
-- Targeted regressions around mock provider, onboarding CLI, run explanation, provider compatibility, config validation, guardrails, BFCL evaluation, official-source search, and simple-evals profile support: `36 passed`, `89 passed`, and `4 passed`
-- Full unit coverage: `211 passed`
+- Targeted regressions around setup, config explanation, HTML trace export, mock provider, onboarding CLI, run explanation, provider compatibility, config validation, guardrails, BFCL evaluation, official-source search, and simple-evals profile support: `15 passed`, `36 passed`, `89 passed`, and `4 passed`
+- Full unit coverage: `214 passed`
 - Targeted live provider-compatibility regression: `1 passed`
 - Full real integration coverage: `7 passed`, `2 warnings`
-- The retained benchmark and headline public-eval scores still point at the April 14 release snapshot, the live provider-compatibility evidence remains the April 20 snapshot, and the real-network artifact was refreshed on April 27
+- The retained benchmark and headline public-eval scores still point at the April 14 release snapshot, the live provider-compatibility evidence remains the April 20 snapshot, and the real-network artifact was refreshed on April 29
 - The remaining warnings are known Windows asyncio subprocess cleanup warnings after successful completion
-- New focused regressions cover offline mock runs, starter templates, quickstart, run explanation, run listing, run summary, structured trace tree export, executor capability reports, storage contracts, and real-network scenario proof metadata.
+- New focused regressions cover setup, config explanation, HTML trace export, offline mock runs, starter templates, quickstart, run explanation, run listing, run summary, structured trace tree export, executor capability reports, storage contracts, and real-network scenario proof metadata.
 
 Exact machine-local execution logs stay outside the repository-facing documentation surface.

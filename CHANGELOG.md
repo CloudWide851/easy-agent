@@ -15,10 +15,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `easy-agent traces export`
 - Added zero-credential onboarding and diagnostics surfaces:
   - `mock` provider and protocol path
+  - `easy-agent setup`
   - `easy-agent init`
   - `easy-agent quickstart`
   - `easy-agent template list|create`
+  - `easy-agent config validate|explain`
   - `easy-agent runs explain`
+- Added standalone HTML trace export through `easy-agent traces export <run_id> --html --output <path>`.
+- Added scenario starter templates for MCP filesystem, public-eval smoke, federation loopback, and workbench-backed coding tasks.
 - Added trace-tree generation from existing runtime event envelopes with span status, duration, input/output hashes, retry count, checkpoint id, and parent/child structure.
 - Added explicit storage contract protocols for run, session, checkpoint, human-request, trace, workbench, and federation persistence surfaces.
 - Added executor capability reports for process, container, and microVM backends.
@@ -44,7 +48,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Extended real-network reporting so scenario proof and safety assertions sit beside performance telemetry instead of relying only on headline score rows.
 - Hardened the real-network disconnect/retry scenario against transient Windows socket-buffer exhaustion while avoiding unawaited coroutine cleanup warnings on retry setup.
-- Updated onboarding docs so the first smoke path uses the offline `mock` provider before live-provider validation.
+- Updated onboarding docs so the first smoke path uses `setup --provider mock`, config explanation, and HTML trace export before live-provider validation.
 - Updated the bilingual README pair and reference docs to keep scores while adding scenario-proof framing for resume, approvals, MCP restart, provider schema repair, federation retry, and workbench snapshot restore.
 - Extended the CLI integration surface with `easy-agent integration real-network`.
 - Split the oversized public-eval runtime surface so:
@@ -70,7 +74,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_official_source_search.py tests/unit/test_public_eval_simple_evals.py -q` with `4 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_public_eval.py tests/unit/test_config.py tests/unit/test_cli_general.py tests/unit/test_public_eval_simple_evals.py tests/unit/test_official_source_search.py -q` with `89 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_mock_provider.py tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_config.py -q` with `36 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `211 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_readme_snapshot.py -q` with `15 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `214 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\real-network-<timestamp>` with `1 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `7 passed`, `2 warnings`
 

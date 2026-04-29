@@ -169,6 +169,9 @@ storage:
     list_result = runner.invoke(app, ['runs', 'list', '-c', str(config_path)])
     show_result = runner.invoke(app, ['runs', 'show', 'run_cli', '-c', str(config_path)])
     trace_result = runner.invoke(app, ['traces', 'export', 'run_cli', '-c', str(config_path)])
+    html_path = tmp_path / 'trace.html'
+    html_result = runner.invoke(app, ['traces', 'export', 'run_cli', '-c', str(config_path), '--html', '--output', str(html_path)])
+    invalid_html_result = runner.invoke(app, ['traces', 'export', 'run_cli', '-c', str(config_path), '--raw', '--html', '--output', str(html_path)])
 
     assert list_result.exit_code == 0
     assert 'run_cli' in list_result.output
@@ -176,6 +179,12 @@ storage:
     assert '"run_id": "run_cli"' in show_result.output
     assert trace_result.exit_code == 0
     assert '"tree"' in trace_result.output
+    assert html_result.exit_code == 0
+    assert html_path.exists()
+    html = html_path.read_text(encoding='utf-8')
+    assert '<!doctype html>' in html
+    assert 'run_cli' in html
+    assert invalid_html_result.exit_code != 0
 
 
 def test_runs_explain_reports_success(tmp_path: Path) -> None:

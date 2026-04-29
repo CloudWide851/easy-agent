@@ -4,6 +4,7 @@ import asyncio
 import json
 import platform
 import sys
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -187,10 +188,22 @@ def export_trace(
     run_id: str = typer.Argument(..., help='Existing run id.'),
     config: str = typer.Option('easy-agent.yml', '-c', '--config'),
     tree: bool = typer.Option(True, '--tree/--raw', help='Export structured trace tree by default, or raw trace with --raw.'),
+    html: bool = typer.Option(False, '--html', help='Export the structured trace tree as a standalone HTML file.'),
+    output: str | None = typer.Option(None, '-o', '--output', help='Output file for --html exports.'),
 ) -> None:
+    if html and not tree:
+        raise typer.BadParameter('--html requires the structured tree export; remove --raw.')
+    if html and output is None:
+        raise typer.BadParameter('--html requires --output <path>.')
     runtime = build_runtime(config)
     try:
         payload = runtime.store.load_trace_tree(run_id) if tree else runtime.store.load_trace(run_id)
+        if html:
+            output_path = Path(str(output))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(_trace_tree_html(payload), encoding='utf-8')
+            console.print_json(json.dumps({'run_id': run_id, 'output': str(output_path)}, ensure_ascii=False))
+            return
         console.print_json(json.dumps(payload, ensure_ascii=False))
     finally:
         asyncio.run(runtime.aclose())
@@ -321,4 +334,79 @@ def register(app: typer.Typer) -> None:
             console.print_json(json.dumps(payload, ensure_ascii=False))
         finally:
             asyncio.run(runtime.aclose())
+
+
+def _trace_tree_html(payload: dict[str, Any]) -> str:
+    run = dict(payload.get('run') or {})
+    title = f"easy-agent trace {run.get('run_id', '')}".strip()
+    raw_tree = payload.get('tree')
+    tree: list[Any] = raw_tree if isinstance(raw_tree, list) else []
+    spans = '\n'.join(_span_html(span, depth=0) for span in tree if isinstance(span, dict))
+    raw_json = escape(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    :root {{ color-scheme: light dark; font-family: Inter, Segoe UI, sans-serif; }}
+    body {{ margin: 0; background: #0f172a; color: #e2e8f0; }}
+    header {{ padding: 24px 32px; border-bottom: 1px solid #334155; background: #111827; }}
+    main {{ padding: 24px 32px 40px; max-width: 1200px; margin: 0 auto; }}
+    h1 {{ margin: 0 0 8px; font-size: 24px; }}
+    .meta {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
+    .pill {{ border: 1px solid #475569; border-radius: 999px; padding: 4px 10px; background: #1e293b; }}
+    .span {{ margin: 10px 0; padding: 12px 14px; border: 1px solid #334155; border-radius: 8px; background: #111827; }}
+    .span h2 {{ margin: 0 0 8px; font-size: 16px; }}
+    .span-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; font-size: 13px; }}
+    details {{ margin-top: 10px; }}
+    pre {{ overflow: auto; padding: 12px; border-radius: 8px; background: #020617; color: #cbd5e1; }}
+    .children {{ margin-left: 22px; border-left: 1px solid #334155; padding-left: 14px; }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{escape(title)}</h1>
+    <div class="meta">
+      <span class="pill">status: {escape(str(run.get('status', '-')))}</span>
+      <span class="pill">kind: {escape(str(run.get('run_kind', '-')))}</span>
+      <span class="pill">events: {escape(str(run.get('event_count', '-')))}</span>
+      <span class="pill">checkpoints: {escape(str(run.get('checkpoint_count', '-')))}</span>
+    </div>
+  </header>
+  <main>
+    <section>{spans or '<p>No spans recorded.</p>'}</section>
+    <details>
+      <summary>Raw trace JSON</summary>
+      <pre>{raw_json}</pre>
+    </details>
+  </main>
+</body>
+</html>
+"""
+
+
+def _span_html(span: dict[str, Any], depth: int) -> str:
+    raw_children = span.get('children')
+    children: list[Any] = raw_children if isinstance(raw_children, list) else []
+    events = dict(span.get('attributes') or {}).get('events', [])
+    event_count = len(events) if isinstance(events, list) else 0
+    child_html = '\n'.join(_span_html(child, depth + 1) for child in children if isinstance(child, dict))
+    return f"""<article class="span" style="margin-left:{depth * 4}px">
+  <h2>{escape(str(span.get('name') or span.get('span_id') or 'span'))}</h2>
+  <div class="span-grid">
+    <div>kind: {escape(str(span.get('kind', '-')))}</div>
+    <div>status: {escape(str(span.get('status', '-')))}</div>
+    <div>duration: {escape(str(span.get('duration_seconds', '-')))}</div>
+    <div>retry_count: {escape(str(span.get('retry_count', 0)))}</div>
+    <div>checkpoint_id: {escape(str(span.get('checkpoint_id') or '-'))}</div>
+    <div>events: {event_count}</div>
+  </div>
+  <details>
+    <summary>Span JSON</summary>
+    <pre>{escape(json.dumps({key: value for key, value in span.items() if key != 'children'}, ensure_ascii=False, indent=2, default=str))}</pre>
+  </details>
+  <div class="children">{child_html}</div>
+</article>"""
 

@@ -5,7 +5,7 @@
 ## 当前重点
 
 - 继续降低 runtime 复杂度，把大型兼容模块拆成更小但 import-compatible 的 surface，并把 storage contracts 与 trace helpers 从 SQLite 细节里分离出来。
-- 把零凭据上手固定为长期兼容门禁：`mock` quickstart、starter templates 与 run explanation 测试要先于 live-provider 套件执行。
+- 把已经交付的零凭据上手层固定为长期兼容门禁：`setup`、`mock` quickstart、config explanation、starter templates、HTML traces 与 run explanation 测试要先于 live-provider 套件执行。
 - 把新的 run summary 与 trace-tree export 推进成主要排障入口；等本地 JSON trace 形态稳定后，再对齐 OpenTelemetry GenAI semantic conventions。
 - 把已经交付的 live provider-specific 兼容证据继续扩展到必跑的 DeepSeek/OpenAI-compatible 基线之外，在有凭据时补齐 Anthropic 与 Gemini 覆盖。
 - 把 raw official BFCL v4 归一化路径继续推进到更广的 agentic 与 multihop 覆盖，并补齐更清晰的官方分类诊断。
@@ -18,10 +18,10 @@
 
 下一步可落地的易用性补强：
 
-- 把 `quickstart --provider mock` 保持为文档和 CI smoke 的第一条命令，因为它可以在无 secret 的情况下验证 config loading、skills、storage、tool calls 与 trace persistence
-- 只有当模板能映射到已交付 runtime contract 时才增加模板，例如 approval flow、harness flow、MCP resource catalog flow 与 federation loopback flow
+- 把 `setup --provider mock` 与 `quickstart --provider mock` 保持为文档和 CI smoke 的第一组命令，因为它们可以在无 secret 的情况下验证 config loading、skills、storage、tool calls 与 trace persistence
+- 模板继续只围绕已交付 runtime contract 扩展，并为 approval flow、harness flow、MCP resource catalog flow、federation loopback flow 与 workbench-backed coding tasks 增加 focused smoke tests
 - 把 `runs explain` 做成失败 run 后默认的下一步，并继续扩展 provider schema error、HTTP status bucket、approval state、MCP startup failure 与 duplicated tool loop 分类
-- 让 trace 先作为排障事实来源，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
+- 让 trace 先作为排障事实来源，用 HTML export 改善本地检查体验，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
 - 每个新的高层能力都配套 mock-backed smoke path 和可选 live-provider path，让首次运行不再依赖本地凭据是否齐全
 
 参考：

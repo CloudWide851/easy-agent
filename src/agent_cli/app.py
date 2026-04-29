@@ -15,8 +15,13 @@ from agent_cli.commands.general import register as register_general
 from agent_cli.commands.general import runs_app, traces_app
 from agent_cli.commands.harness import harness_app
 from agent_cli.commands.integration import integration_app
-from agent_cli.commands.onboarding import register as register_onboarding
-from agent_cli.commands.onboarding import template_app
+from agent_cli.commands.onboarding import (
+    config_app,
+    template_app,
+)
+from agent_cli.commands.onboarding import (
+    register as register_onboarding,
+)
 
 app = typer.Typer(help='Engineered CLI for the easy-agent foundation.')
 app.add_typer(skills_app, name='skills')
@@ -31,5 +36,6 @@ app.add_typer(integration_app, name='integration')
 app.add_typer(runs_app, name='runs')
 app.add_typer(traces_app, name='traces')
 app.add_typer(template_app, name='template')
+app.add_typer(config_app, name='config')
 register_general(app)
 register_onboarding(app)
