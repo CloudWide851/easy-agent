@@ -341,6 +341,15 @@ def _trace_tree_html(payload: dict[str, Any]) -> str:
     title = f"easy-agent trace {run.get('run_id', '')}".strip()
     raw_tree = payload.get('tree')
     tree: list[Any] = raw_tree if isinstance(raw_tree, list) else []
+    summary = _trace_summary(payload, tree)
+    filter_buttons = ''.join(
+        f'<button type="button" data-filter="{escape(item)}">{escape(item)}</button>'
+        for item in ['all', 'error', 'model', 'tool', 'mcp', 'guardrail']
+    )
+    summary_cards = ''.join(
+        f'<div class="summary-card"><strong>{escape(key)}</strong><span>{escape(str(value))}</span></div>'
+        for key, value in summary.items()
+    )
     spans = '\n'.join(_span_html(span, depth=0) for span in tree if isinstance(span, dict))
     raw_json = escape(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
     return f"""<!doctype html>
@@ -357,12 +366,24 @@ def _trace_tree_html(payload: dict[str, Any]) -> str:
     h1 {{ margin: 0 0 8px; font-size: 24px; }}
     .meta {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
     .pill {{ border: 1px solid #475569; border-radius: 999px; padding: 4px 10px; background: #1e293b; }}
+    .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 18px; }}
+    .summary-card {{ border: 1px solid #334155; border-radius: 8px; padding: 12px; background: #111827; }}
+    .summary-card strong {{ display: block; color: #93c5fd; font-size: 12px; text-transform: uppercase; }}
+    .summary-card span {{ display: block; margin-top: 6px; font-size: 18px; }}
+    .toolbar {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 18px; }}
+    .toolbar input {{ min-width: 240px; flex: 1; border: 1px solid #475569; border-radius: 8px; padding: 9px 10px; background: #020617; color: #e2e8f0; }}
+    .toolbar button {{ border: 1px solid #475569; border-radius: 8px; padding: 8px 10px; background: #1e293b; color: #e2e8f0; cursor: pointer; }}
+    .toolbar button.active {{ border-color: #38bdf8; color: #bae6fd; }}
     .span {{ margin: 10px 0; padding: 12px 14px; border: 1px solid #334155; border-radius: 8px; background: #111827; }}
+    .span.status-failed, .span.status-error {{ border-color: #f87171; box-shadow: inset 4px 0 0 #ef4444; }}
+    .span.status-succeeded {{ box-shadow: inset 4px 0 0 #22c55e; }}
     .span h2 {{ margin: 0 0 8px; font-size: 16px; }}
     .span-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; font-size: 13px; }}
+    .badge {{ display: inline-block; margin-right: 6px; border: 1px solid #475569; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #cbd5e1; }}
     details {{ margin-top: 10px; }}
     pre {{ overflow: auto; padding: 12px; border-radius: 8px; background: #020617; color: #cbd5e1; }}
     .children {{ margin-left: 22px; border-left: 1px solid #334155; padding-left: 14px; }}
+    .hidden {{ display: none; }}
   </style>
 </head>
 <body>
@@ -376,12 +397,44 @@ def _trace_tree_html(payload: dict[str, Any]) -> str:
     </div>
   </header>
   <main>
-    <section>{spans or '<p>No spans recorded.</p>'}</section>
+    <section class="summary">{summary_cards}</section>
+    <section class="toolbar">
+      <input id="trace-search" type="search" placeholder="Search span JSON, names, and event kinds">
+      {filter_buttons}
+    </section>
+    <section id="trace-tree">{spans or '<p>No spans recorded.</p>'}</section>
     <details>
       <summary>Raw trace JSON</summary>
       <pre>{raw_json}</pre>
     </details>
   </main>
+  <script>
+    const searchInput = document.getElementById('trace-search');
+    const buttons = Array.from(document.querySelectorAll('[data-filter]'));
+    const spansList = Array.from(document.querySelectorAll('.span'));
+    let activeFilter = 'all';
+    function matchesFilter(span) {{
+      if (activeFilter === 'all') return true;
+      if (activeFilter === 'error') return span.dataset.status.includes('fail') || span.dataset.status.includes('error');
+      return span.dataset.kind.includes(activeFilter) || span.dataset.search.includes(activeFilter);
+    }}
+    function applyFilters() {{
+      const query = (searchInput.value || '').toLowerCase();
+      for (const span of spansList) {{
+        const textMatch = !query || span.dataset.search.includes(query);
+        span.classList.toggle('hidden', !(textMatch && matchesFilter(span)));
+      }}
+    }}
+    for (const button of buttons) {{
+      button.addEventListener('click', () => {{
+        activeFilter = button.dataset.filter || 'all';
+        buttons.forEach((item) => item.classList.toggle('active', item === button));
+        applyFilters();
+      }});
+    }}
+    if (buttons[0]) buttons[0].classList.add('active');
+    searchInput.addEventListener('input', applyFilters);
+  </script>
 </body>
 </html>
 """
@@ -392,12 +445,18 @@ def _span_html(span: dict[str, Any], depth: int) -> str:
     children: list[Any] = raw_children if isinstance(raw_children, list) else []
     events = dict(span.get('attributes') or {}).get('events', [])
     event_count = len(events) if isinstance(events, list) else 0
+    kind = str(span.get('kind') or '-')
+    status = str(span.get('status') or '-')
+    span_id = str(span.get('span_id') or '')
+    status_token = _html_token(status)
+    kind_token = _html_token(kind)
+    search_payload = json.dumps({key: value for key, value in span.items() if key != 'children'}, ensure_ascii=False, default=str).lower()
     child_html = '\n'.join(_span_html(child, depth + 1) for child in children if isinstance(child, dict))
-    return f"""<article class="span" style="margin-left:{depth * 4}px">
+    return f"""<article class="span status-{status_token} kind-{kind_token}" data-kind="{escape(kind.lower(), quote=True)}" data-status="{escape(status.lower(), quote=True)}" data-search="{escape(search_payload, quote=True)}" style="margin-left:{depth * 4}px">
   <h2>{escape(str(span.get('name') or span.get('span_id') or 'span'))}</h2>
+  <div><span class="badge">{escape(kind)}</span><span class="badge">{escape(status)}</span></div>
   <div class="span-grid">
-    <div>kind: {escape(str(span.get('kind', '-')))}</div>
-    <div>status: {escape(str(span.get('status', '-')))}</div>
+    <div>span_id: {escape(span_id or '-')}</div>
     <div>duration: {escape(str(span.get('duration_seconds', '-')))}</div>
     <div>retry_count: {escape(str(span.get('retry_count', 0)))}</div>
     <div>checkpoint_id: {escape(str(span.get('checkpoint_id') or '-'))}</div>
@@ -409,4 +468,53 @@ def _span_html(span: dict[str, Any], depth: int) -> str:
   </details>
   <div class="children">{child_html}</div>
 </article>"""
+
+
+def _trace_summary(payload: dict[str, Any], tree: list[Any]) -> dict[str, Any]:
+    raw_spans = payload.get('spans')
+    spans = raw_spans if isinstance(raw_spans, list) else _flatten_spans(tree)
+    raw_events = payload.get('events')
+    events = raw_events if isinstance(raw_events, list) else []
+    retry_count = sum(int(span.get('retry_count') or 0) for span in spans if isinstance(span, dict))
+    error_count = sum(1 for span in spans if isinstance(span, dict) and _is_error_span(span))
+    tool_count = sum(1 for span in spans if isinstance(span, dict) and _is_kind(span, 'tool'))
+    mcp_count = sum(1 for span in spans if isinstance(span, dict) and _is_kind(span, 'mcp'))
+    guardrail_count = sum(1 for span in spans if isinstance(span, dict) and _is_kind(span, 'guardrail'))
+    return {
+        'spans': len(spans),
+        'events': len(events),
+        'errors': error_count,
+        'retries': retry_count,
+        'tools': tool_count,
+        'mcp': mcp_count,
+        'guardrails': guardrail_count,
+        'checkpoints': dict(payload.get('run') or {}).get('checkpoint_count', 0),
+    }
+
+
+def _flatten_spans(items: list[Any]) -> list[dict[str, Any]]:
+    spans: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        spans.append(item)
+        raw_children = item.get('children')
+        children = raw_children if isinstance(raw_children, list) else []
+        spans.extend(_flatten_spans(children))
+    return spans
+
+
+def _is_error_span(span: dict[str, Any]) -> bool:
+    status = str(span.get('status') or '').lower()
+    return 'fail' in status or 'error' in status
+
+
+def _is_kind(span: dict[str, Any], token: str) -> bool:
+    haystack = f"{span.get('kind') or ''} {span.get('span_id') or ''} {span.get('name') or ''}".lower()
+    return token in haystack
+
+
+def _html_token(value: str) -> str:
+    token = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '-' for ch in value.lower())
+    return token or 'unknown'
 

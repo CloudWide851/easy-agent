@@ -56,7 +56,7 @@ Most agent projects move quickly from "call a model" to "ship an application". T
 - Session memory, checkpoints, replay, branchable resume, and approval-aware recovery.
 - Guardrails, schema-aware tool validation, runtime event streaming, and persistent traces.
 - Durable run inspection with structured trace-tree export for debugging complex agent flows.
-- Offline `mock` provider plus `setup`, `init`, `quickstart`, `template create`, `config explain`, `runs explain`, and HTML trace export for zero-credential onboarding and faster failure triage.
+- Offline `mock` provider plus `setup`, `init`, `quickstart`, `template create`, `config explain`, `config doctor`, `runs explain`, and searchable HTML trace export for zero-credential onboarding and faster failure triage.
 - A2A-style remote federation with durable task state and signed callback verification.
 - Practical `official_source_search` skill support for source-prioritized search and fetched-page extraction.
 - Public evaluation helpers for benchmark, BFCL, tau2 mock, BrowseComp/SimpleQA-style slices, live provider-compatibility matrices, and real-network regression tracking.
@@ -165,6 +165,7 @@ uv venv --python 3.12
 uv sync --dev
 uv run easy-agent setup --provider mock
 uv run easy-agent config explain -c easy-agent.yml
+uv run easy-agent config doctor -c easy-agent.yml
 uv run easy-agent quickstart --provider mock
 uv run easy-agent init --provider mock
 uv run easy-agent --help
@@ -218,8 +219,8 @@ The real-network matrix is still summarized by score here, but the report now al
 
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
-- turning raw event streams into structured trace trees with run listing, run summary, and trace export surfaces
-- extending the new zero-credential onboarding layer into richer guided setup, config explanation, scenario templates, and HTML trace inspection
+- using the shipped structured trace tree as the main debugging surface, then stabilizing it for future OpenTelemetry-style export
+- keeping zero-credential onboarding strict through guided setup preflight checks, config explanation, config risk checks, scenario templates, and searchable HTML trace inspection
 - widening the shipped live provider-compatibility matrix beyond the required DeepSeek/OpenAI-compatible baseline, including optional Anthropic and Gemini evidence when credentials are present
 - promoting the new official-source search plus BrowseComp or SimpleQA path into refreshed scored slices once official dataset exports and grader credentials are available
 - expanding live `/responses` compatibility coverage where OpenAI-compatible providers actually expose it, while keeping single-tool enforcement explicitly labeled as best effort when providers do not honor it strictly

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -37,13 +39,15 @@ def register(app: typer.Typer) -> None:
         target = Path(path)
         created = False
         if target.exists() and not force:
-            load_config(target)
+            loaded = load_config(target)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(yaml.safe_dump(_setup_config(provider), sort_keys=False), encoding='utf-8')
             created = True
+            loaded = load_config(target)
+        checks = _diagnostic_checks(loaded, target)
         if skip_smoke:
-            payload = {'config': str(target), 'created': created, 'smoke': 'skipped'}
+            payload = {'config': str(target), 'created': created, 'smoke': 'skipped', 'checks': checks}
             _print_setup_payload(payload, output_format)
             return
 
@@ -57,6 +61,7 @@ def register(app: typer.Typer) -> None:
                         'config': str(target),
                         'created': created,
                         'smoke': result,
+                        'checks': checks,
                         'next_commands': _run_debug_commands(run_id, target) if run_id else [],
                     }
                     _print_setup_payload(payload, output_format)
@@ -67,6 +72,7 @@ def register(app: typer.Typer) -> None:
                         'config': str(target),
                         'created': created,
                         'smoke': 'failed',
+                        'checks': checks,
                         'diagnostic': explain_run(runtime.store, run_id) if run_id else None,
                     }
                     _print_setup_payload(payload, output_format)
@@ -173,6 +179,34 @@ def explain_config(
     for key, value in payload.items():
         table.add_row(key, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value))
     console.print(table)
+
+
+@config_app.command('doctor')
+def doctor_config(
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty or json.'),
+) -> None:
+    loaded = load_config(config)
+    checks = _diagnostic_checks(loaded, Path(config))
+    payload = {'config': config, 'status': _overall_status(checks), 'summary': _check_summary(checks), 'checks': checks}
+    if output_format == 'json':
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+    else:
+        table = Table(title=f'easy-agent config doctor: {config}')
+        table.add_column('Status', style='cyan')
+        table.add_column('Check', style='green')
+        table.add_column('Message')
+        table.add_column('Action')
+        for check in checks:
+            table.add_row(
+                str(check['status']),
+                str(check['check']),
+                str(check['message']),
+                str(check['action']),
+            )
+        console.print(table)
+    if payload['status'] == 'error':
+        raise typer.Exit(1)
 
 
 def _starter_config(provider: str, sensitive_tools: list[str] | None = None) -> str:
@@ -337,6 +371,7 @@ def _templates() -> dict[str, dict[str, Any]]:
 
 
 def _template_files(name: str, description: str, config: str) -> dict[str, str]:
+    env_example = _template_env_example(name)
     return {
         'easy-agent.yml': config,
         'README.md': dedent(
@@ -350,12 +385,35 @@ def _template_files(name: str, description: str, config: str) -> dict[str, str]:
             ```bash
             easy-agent doctor -c easy-agent.yml
             easy-agent config explain -c easy-agent.yml
+            easy-agent config doctor -c easy-agent.yml
             easy-agent run "Hello from the template" -c easy-agent.yml
+            easy-agent runs list -c easy-agent.yml
+            ```
+
+            ## Smoke
+
+            ```bash
+            easy-agent config doctor -c easy-agent.yml
+            easy-agent run "Run the template smoke path once." -c easy-agent.yml
+            easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
             ```
             """
         ).lstrip(),
-        '.env.local.example': 'DEEPSEEK_API_KEY=<SECRET>\nSERPAPI_API_KEY=<SECRET>\n',
+        '.env.local.example': env_example,
     }
+
+
+def _template_env_example(name: str) -> str:
+    lines = ['# Optional live-provider credentials. Keep real values in your shell or .env.local only.']
+    if name == 'eval-smoke':
+        lines.append('SERPAPI_API_KEY=<SECRET>')
+    elif name == 'federation-loopback':
+        lines.append('EASY_AGENT_FEDERATION_TOKEN=<SECRET>')
+    elif name in {'mcp-filesystem-agent', 'workbench-coding-agent'}:
+        lines.append('# No credentials are required for the mock-backed smoke path.')
+    else:
+        lines.append('DEEPSEEK_API_KEY=<SECRET>')
+    return '\n'.join(lines) + '\n'
 
 
 def _harness_template_config() -> str:
@@ -457,6 +515,10 @@ def _print_setup_payload(payload: dict[str, Any], output_format: str) -> None:
     table.add_row('Config', str(payload['config']))
     table.add_row('Created', str(payload['created']))
     table.add_row('Smoke', str(payload['smoke'] if isinstance(payload['smoke'], str) else payload['smoke'].get('status')))
+    raw_checks = payload.get('checks')
+    if isinstance(raw_checks, list):
+        checks = [item for item in raw_checks if isinstance(item, dict)]
+        table.add_row('Checks', json.dumps(_check_summary(checks), ensure_ascii=False))
     console.print(table)
     if payload.get('next_commands'):
         console.print('\nNext debugging commands:')
@@ -532,6 +594,155 @@ def _config_explanation(config: AppConfig, config_path: Path) -> dict[str, Any]:
     }
 
 
+def _diagnostic_checks(config: AppConfig, config_path: Path) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+    checks.append(_check_python_version())
+    checks.append(_check_path('config_file', config_path, required=True))
+    checks.append(_check_storage(config))
+    checks.extend(_env_checks(config))
+    checks.extend(_tool_checks(config))
+    checks.extend(_mcp_checks(config))
+    checks.extend(_federation_checks(config))
+    checks.extend(_workbench_checks(config))
+    checks.extend(_human_loop_checks(config))
+    checks.extend(_evaluation_checks(config))
+    return checks
+
+
+def _check_python_version() -> dict[str, str]:
+    version = f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'
+    if sys.version_info[:2] == (3, 12):
+        return _check('ok', 'python.version', f'Python {version} matches the project baseline.', 'No action needed.')
+    return _check('warn', 'python.version', f'Python {version} differs from the 3.12 baseline.', 'Use uv venv --python 3.12.')
+
+
+def _check_path(name: str, path: Path, *, required: bool) -> dict[str, str]:
+    if path.exists():
+        return _check('ok', name, f'{path} exists.', 'No action needed.')
+    status = 'error' if required else 'warn'
+    return _check(status, name, f'{path} does not exist.', f'Create {path} or update the config.')
+
+
+def _check_storage(config: AppConfig) -> dict[str, str]:
+    storage_path = Path(config.storage.path)
+    if storage_path.is_absolute():
+        return _check('warn', 'storage.path', 'Storage uses an absolute path.', 'Prefer a project-relative storage path for portable configs.')
+    parent = storage_path.parent if storage_path.parent != Path('.') else Path.cwd()
+    if parent.exists():
+        return _check('ok', 'storage.path', f'Storage parent {parent} is available.', 'No action needed.')
+    return _check('warn', 'storage.path', f'Storage parent {parent} does not exist yet.', 'It will be created when the runtime opens storage.')
+
+
+def _env_checks(config: AppConfig) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+    for name in _required_env_vars(config):
+        if os.environ.get(name):
+            checks.append(_check('ok', f'env.{name}', f'{name} is present.', 'No action needed.'))
+        else:
+            checks.append(_check('warn', f'env.{name}', f'{name} is not set.', f'Set {name} before using the related live feature.'))
+    return checks
+
+
+def _tool_checks(config: AppConfig) -> list[dict[str, str]]:
+    commands = {'uv'}
+    if any(server.transport == 'stdio' and server.command for server in config.mcp):
+        commands.update(str(server.command[0]) for server in config.mcp if server.transport == 'stdio' and server.command)
+    for executor in config.executors:
+        if executor.kind == 'container' and executor.container:
+            commands.add(executor.container.executable)
+        if executor.kind == 'microvm' and executor.microvm:
+            commands.add(executor.microvm.executable)
+            commands.update({'ssh', 'scp'})
+    return [
+        _check(
+            'ok' if shutil.which(command) else 'warn',
+            f'tool.{command}',
+            f'{command} is {"available" if shutil.which(command) else "not available on PATH"}.',
+            'No action needed.' if shutil.which(command) else f'Install {command} or adjust the related config before using that feature.',
+        )
+        for command in sorted(commands)
+        if command
+    ]
+
+
+def _mcp_checks(config: AppConfig) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+    for server in config.mcp:
+        if server.transport == 'stdio' and not server.roots:
+            checks.append(_check('warn', f'mcp.{server.name}.roots', 'stdio MCP server has no explicit roots.', 'Declare mcp.roots to make filesystem boundaries clear.'))
+        if server.transport == 'streamable_http' and server.auth.type.value == 'none':
+            checks.append(_check('warn', f'mcp.{server.name}.auth', 'streamable_http MCP server has no configured auth.', 'Use bearer_env, header_env, or an approved OAuth flow for remote servers.'))
+        if server.transport in {'http_sse', 'streamable_http'} and not (server.url or server.rpc_url or server.sse_url):
+            checks.append(_check('error', f'mcp.{server.name}.url', 'Remote MCP transport is missing a URL.', 'Set url, rpc_url, or sse_url.'))
+    if not checks:
+        checks.append(_check('ok', 'mcp', 'No MCP risks detected from static config.', 'No action needed.'))
+    return checks
+
+
+def _federation_checks(config: AppConfig) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+    for remote in config.federation.remotes:
+        if remote.auth.type.value == 'none':
+            checks.append(_check('warn', f'federation.remote.{remote.name}.auth', 'Federation remote has no auth configured.', 'Use bearer_env, header_env, OAuth/OIDC, or mTLS for non-local remotes.'))
+    if config.federation.server.enabled and not config.federation.server.security_schemes:
+        checks.append(_check('warn', 'federation.server.security', 'Federation server is enabled without security schemes.', 'Add security_schemes before exposing the server outside localhost.'))
+    if not checks:
+        checks.append(_check('ok', 'federation', 'No federation risks detected from static config.', 'No action needed.'))
+    return checks
+
+
+def _workbench_checks(config: AppConfig) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+    if not config.workbench.enabled:
+        return [_check('warn', 'workbench.enabled', 'Workbench is disabled.', 'Enable it when commands, MCP, or skills need isolated per-run roots.')]
+    for executor in config.executors:
+        if executor.kind == 'process':
+            checks.append(_check('ok', f'executor.{executor.name}', 'Process executor is available for trusted local work.', 'Use container or microVM for stronger isolation.'))
+        elif executor.kind == 'container' and executor.container:
+            checks.append(_check('ok' if shutil.which(executor.container.executable) else 'warn', f'executor.{executor.name}', f'Container executor uses {executor.container.executable}.', 'Ensure the executable and image are available before live runs.'))
+        elif executor.kind == 'microvm' and executor.microvm:
+            checks.append(_check('ok' if shutil.which(executor.microvm.executable) else 'warn', f'executor.{executor.name}', f'MicroVM executor uses {executor.microvm.executable}.', 'Ensure the executable, image, ssh, and scp are available before live runs.'))
+    return checks
+
+
+def _human_loop_checks(config: AppConfig) -> list[dict[str, str]]:
+    human_loop = config.security.human_loop
+    if human_loop.mode.value == 'deferred' and not human_loop.sensitive_tools:
+        return [_check('warn', 'human_loop.sensitive_tools', 'Deferred human loop has no sensitive tools configured.', 'Add sensitive_tools when approvals should gate risky actions.')]
+    if human_loop.sensitive_tools:
+        return [_check('ok', 'human_loop.sensitive_tools', 'Sensitive tools are configured for approval-aware runs.', 'No action needed.')]
+    return [_check('ok', 'human_loop', 'Human loop config is present.', 'No action needed.')]
+
+
+def _evaluation_checks(config: AppConfig) -> list[dict[str, str]]:
+    public_eval = config.evaluation.public_eval
+    search_profiles = {'browsecomp_subset', 'simpleqa_subset', 'simple_evals_subset'}
+    if public_eval.web_search.provider == 'serpapi' and public_eval.profile in search_profiles and not os.environ.get(public_eval.web_search.api_key_env):
+        return [_check('warn', 'evaluation.web_search', f'{public_eval.web_search.api_key_env} is not set.', 'Set it before live web-search evals, or use replay-only eval data.')]
+    return [_check('ok', 'evaluation', 'No evaluation credential risks detected from static config.', 'No action needed.')]
+
+
+def _check(status: str, name: str, message: str, action: str) -> dict[str, str]:
+    return {'status': status, 'check': name, 'message': message, 'action': action}
+
+
+def _check_summary(checks: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        'ok': sum(1 for check in checks if check['status'] == 'ok'),
+        'warn': sum(1 for check in checks if check['status'] == 'warn'),
+        'error': sum(1 for check in checks if check['status'] == 'error'),
+    }
+
+
+def _overall_status(checks: list[dict[str, str]]) -> str:
+    summary = _check_summary(checks)
+    if summary['error']:
+        return 'error'
+    if summary['warn']:
+        return 'warn'
+    return 'ok'
+
+
 def _entrypoint_type(config: AppConfig) -> str:
     if config.graph.nodes:
         return 'graph'
@@ -543,9 +754,13 @@ def _entrypoint_type(config: AppConfig) -> str:
 
 
 def _required_env_vars(config: AppConfig) -> list[str]:
-    names = {config.model.api_key_env}
+    names: set[str | None] = set()
+    if config.model.provider != 'mock':
+        names.add(config.model.api_key_env)
     public_eval = config.evaluation.public_eval
-    names.add(public_eval.web_search.api_key_env)
+    search_profiles = {'browsecomp_subset', 'simpleqa_subset', 'simple_evals_subset'}
+    if public_eval.web_search.provider == 'serpapi' and public_eval.profile in search_profiles:
+        names.add(public_eval.web_search.api_key_env)
     if public_eval.grader.enabled:
         names.add(public_eval.grader.api_key_env)
     for target in public_eval.provider_compatibility.targets:

@@ -5,8 +5,8 @@
 ## 当前重点
 
 - 继续降低 runtime 复杂度，把大型兼容模块拆成更小但 import-compatible 的 surface，并把 storage contracts 与 trace helpers 从 SQLite 细节里分离出来。
-- 把已经交付的零凭据上手层固定为长期兼容门禁：`setup`、`mock` quickstart、config explanation、starter templates、HTML traces 与 run explanation 测试要先于 live-provider 套件执行。
-- 把新的 run summary 与 trace-tree export 推进成主要排障入口；等本地 JSON trace 形态稳定后，再对齐 OpenTelemetry GenAI semantic conventions。
+- 把已经交付的零凭据上手层固定为长期兼容门禁：`setup` preflight checks、`mock` quickstart、config explanation、config doctor、starter templates、可搜索 HTML traces 与 run explanation 测试要先于 live-provider 套件执行。
+- 把新的 run summary、可搜索 HTML trace viewer 与 trace-tree export 推进成主要排障入口；等本地 JSON trace 形态稳定后，再对齐 OpenTelemetry GenAI semantic conventions。
 - 把已经交付的 live provider-specific 兼容证据继续扩展到必跑的 DeepSeek/OpenAI-compatible 基线之外，在有凭据时补齐 Anthropic 与 Gemini 覆盖。
 - 把 raw official BFCL v4 归一化路径继续推进到更广的 agentic 与 multihop 覆盖，并补齐更清晰的官方分类诊断。
 - 在拿到本地数据导出与 grader 凭据后，把新交付的 `official_source_search` 与 `browsecomp_subset` / `simpleqa_subset` 支持推进成可刷新分数的评测切片。
@@ -18,10 +18,11 @@
 
 下一步可落地的易用性补强：
 
-- 把 `setup --provider mock` 与 `quickstart --provider mock` 保持为文档和 CI smoke 的第一组命令，因为它们可以在无 secret 的情况下验证 config loading、skills、storage、tool calls 与 trace persistence
+- 把 `setup --provider mock` 与 `quickstart --provider mock` 保持为文档和 CI smoke 的第一组命令，因为它们可以在无 secret 的情况下验证 config loading、skills、storage、tool calls、trace persistence 与 preflight diagnostics
+- 把 `config doctor` 保持为 live-provider 运行前的静态风险门禁，覆盖 env readiness、MCP roots/auth、federation auth、executor readiness、storage portability 与 human-loop coverage
 - 模板继续只围绕已交付 runtime contract 扩展，并为 approval flow、harness flow、MCP resource catalog flow、federation loopback flow 与 workbench-backed coding tasks 增加 focused smoke tests
 - 把 `runs explain` 做成失败 run 后默认的下一步，并继续扩展 provider schema error、HTTP status bucket、approval state、MCP startup failure 与 duplicated tool loop 分类
-- 让 trace 先作为排障事实来源，用 HTML export 改善本地检查体验，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
+- 让 trace 先作为排障事实来源，用可搜索 HTML export 改善本地检查体验，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
 - 每个新的高层能力都配套 mock-backed smoke path 和可选 live-provider path，让首次运行不再依赖本地凭据是否齐全
 
 参考：
@@ -134,6 +135,7 @@
 
 下一步继续围绕官方 MCP surface 推进：
 
+- 在 runtime connection 前提供 stdio、HTTP SSE 与 streamable HTTP transport 的静态 auth / roots 诊断
 - `notifications/resources/list_changed`
 - `notifications/tools/list_changed`
 - `notifications/prompts/list_changed`
@@ -143,6 +145,7 @@
 
 Federation 继续对齐公开 A2A surface，而不是走私有传输：
 
+- 让 agent-card metadata、push notification config、streaming 与 resubscribe 检查同时出现在 config diagnostics 和 real-network scenarios 中
 - 让 well-known agent-card discovery、send、sendSubscribe、resubscribe、task events 与 push notification config 继续出现在 real-network matrix 里
 - 把 signed callback 与 task authorization 证据保留在 report 中，而不是只看 headline pass/fail
 - host-gated 的 container / microVM 行如果缺少依赖，继续显示为 skipped coverage gap，不要静默删除
@@ -155,7 +158,7 @@ Federation 继续对齐公开 A2A surface，而不是走私有传输：
 - run、graph node、agent turn、model call、tool call、MCP call、approval、harness 与 federation 边界都要保留稳定 span id
 - 每个 span 记录 duration、status、input/output hash、retry count 与 checkpoint id
 - storage repository contracts 要保持显式，这样未来 PostgreSQL 可以实现同一套 run、session、checkpoint、human-request、MCP、federation、workbench 与 trace 接口
-- 等本地 JSON trace 语义稳定后，再映射到 OpenTelemetry GenAI spans
+- 等本地 JSON trace 语义稳定后，再映射到 OpenTelemetry GenAI spans，尤其是 agent/model/tool spans、error types 与 operation attributes
 
 ## Executor Trust Boundary
 

@@ -34,6 +34,7 @@ uv run easy-agent template list
 uv run easy-agent template create basic-agent <target-dir>
 uv run easy-agent config validate -c easy-agent.yml
 uv run easy-agent config explain -c easy-agent.yml
+uv run easy-agent config doctor -c easy-agent.yml
 uv run easy-agent doctor -c easy-agent.yml
 uv run easy-agent teams list -c configs/teams.example.yml
 uv run easy-agent harness list -c configs/harness.example.yml
@@ -56,7 +57,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 
 如果只是想先验证 runtime、tools、storage 和 trace surface，不需要任何模型凭据，可以使用 `mock` provider。
 
-- `setup --provider mock` 会创建或复用本地配置，完成配置验证，运行一次确定性 smoke test，并输出后续 run inspection 命令。
+- `setup --provider mock` 会创建或复用本地配置，运行静态 preflight checks，完成配置验证，运行一次确定性 smoke test，并输出后续 run inspection 命令。
 - `init --provider mock` 会写出使用 `protocol: mock` 的 starter config。
 - `quickstart --provider mock` 会创建一个临时本地配置，运行一次确定性的工具调用 agent，并输出新 run id 对应的 `runs show`、`runs explain` 与 `traces export` 后续命令。
 - `template list` 展示可用 starter 项目形态。
@@ -68,6 +69,8 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 - `template create federation-loopback <target-dir>` 创建本地 federation export starter。
 - `template create workbench-coding-agent <target-dir>` 创建 process-workbench starter。
 - `config explain` 会汇总 model/provider、entrypoint type、agents、tools、teams、harnesses、MCP、storage、executors、federation、eval settings 与 required environment variables，但不会打印 secret 值。
+- `config doctor` 做静态风险检查，不启动 model client，也不启动 MCP server。它会报告 Python baseline drift、缺失的 live env、缺失的本地工具、MCP roots/auth 缺口、federation auth 缺口、workbench executor readiness、human-loop 覆盖、storage 可移植性与 eval 凭据状态。
+- 生成的模板会带本地 README、最小 `.env.local.example` 与 mock-first smoke 命令路径。模板 smoke 从 `config doctor` 开始，再运行一个短任务，并为新 run id 导出 HTML trace。
 
 只有在环境变量里已经有 `DEEPSEEK_API_KEY` 时，才使用 `--provider deepseek`。
 
@@ -80,7 +83,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 - `runs explain <run_id>` 会归类常见失败原因，包括 provider 凭据缺失、schema validation failure、guardrail block、MCP failure、iteration loop，以及 Windows cleanup warning。
 - `traces export <run_id>` 默认返回结构化 trace tree。
 - `traces export <run_id> --raw` 返回历史 raw trace payload。
-- `traces export <run_id> --html --output trace.html` 会为 structured tree 写出单文件 HTML trace viewer。
+- `traces export <run_id> --html --output trace.html` 会为 structured tree 写出单文件 HTML trace viewer，包含 summary cards、status/error highlighting、span-kind filters、文本搜索与 raw JSON payload。
 
 Trace-tree span 从现有 runtime event envelope 派生，包含稳定的 `span_id`、`parent_span_id`、`kind`、`status`、duration、input/output hash、retry count、checkpoint id 与 child spans。这样当前 JSON trace 仍然轻量，同时为后续 OpenTelemetry export 留出路径。
 

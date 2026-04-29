@@ -19,9 +19,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `easy-agent init`
   - `easy-agent quickstart`
   - `easy-agent template list|create`
-  - `easy-agent config validate|explain`
+  - `easy-agent config validate|explain|doctor`
   - `easy-agent runs explain`
 - Added standalone HTML trace export through `easy-agent traces export <run_id> --html --output <path>`.
+- Added setup preflight and config-doctor risk checks for Python baseline drift, local tool availability, required environment variables, MCP roots/auth, federation auth, workbench executors, storage portability, human-loop coverage, and eval readiness.
 - Added scenario starter templates for MCP filesystem, public-eval smoke, federation loopback, and workbench-backed coding tasks.
 - Added trace-tree generation from existing runtime event envelopes with span status, duration, input/output hashes, retry count, checkpoint id, and parent/child structure.
 - Added explicit storage contract protocols for run, session, checkpoint, human-request, trace, workbench, and federation persistence surfaces.
@@ -48,7 +49,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Extended real-network reporting so scenario proof and safety assertions sit beside performance telemetry instead of relying only on headline score rows.
 - Hardened the real-network disconnect/retry scenario against transient Windows socket-buffer exhaustion while avoiding unawaited coroutine cleanup warnings on retry setup.
-- Updated onboarding docs so the first smoke path uses `setup --provider mock`, config explanation, and HTML trace export before live-provider validation.
+- Updated onboarding docs so the first smoke path uses `setup --provider mock`, config explanation, config risk checks, and searchable HTML trace export before live-provider validation.
+- Extended generated starter templates with focused smoke instructions and template-specific `.env.local.example` contents.
+- Enhanced HTML trace export with summary cards, span-kind filters, text search, and status/error highlighting.
 - Updated the bilingual README pair and reference docs to keep scores while adding scenario-proof framing for resume, approvals, MCP restart, provider schema repair, federation retry, and workbench snapshot restore.
 - Extended the CLI integration surface with `easy-agent integration real-network`.
 - Split the oversized public-eval runtime surface so:

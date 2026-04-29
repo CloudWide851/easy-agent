@@ -36,9 +36,8 @@ def test_template_commands_list_and_create(tmp_path: Path) -> None:
     assert 'longrun-harness' in listed.output
     assert created.exit_code == 0
     assert (destination / 'easy-agent.yml').exists()
-    assert (destination / '.env.local.example').read_text(encoding='utf-8') == (
-        'DEEPSEEK_API_KEY=<SECRET>\nSERPAPI_API_KEY=<SECRET>\n'
-    )
+    assert 'easy-agent config doctor' in (destination / 'README.md').read_text(encoding='utf-8')
+    assert 'DEEPSEEK_API_KEY=<SECRET>' in (destination / '.env.local.example').read_text(encoding='utf-8')
 
 
 def test_all_templates_create_valid_configs(tmp_path: Path) -> None:
@@ -63,6 +62,8 @@ def test_all_templates_create_valid_configs(tmp_path: Path) -> None:
         result = runner.invoke(app, ['template', 'create', template, str(destination)])
         assert result.exit_code == 0
         load_config(destination / 'easy-agent.yml')
+        assert (destination / 'README.md').exists()
+        assert (destination / '.env.local.example').exists()
 
 
 def test_quickstart_runs_offline_mock_provider(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -85,16 +86,18 @@ def test_setup_creates_config_and_runs_mock_smoke(tmp_path: Path, monkeypatch: M
     assert result.exit_code == 0
     assert (tmp_path / 'easy-agent.yml').exists()
     assert 'succeeded' in result.output
+    assert 'Checks' in result.output
     assert 'easy-agent traces export' in result.output
 
 
-def test_config_validate_and_explain(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_config_validate_explain_and_doctor(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
     setup_result = runner.invoke(app, ['setup', '--provider', 'mock', '--skip-smoke'])
 
     validate_result = runner.invoke(app, ['config', 'validate', '-c', 'easy-agent.yml'])
     explain_result = runner.invoke(app, ['config', 'explain', '-c', 'easy-agent.yml', '--format', 'json'])
+    doctor_result = runner.invoke(app, ['config', 'doctor', '-c', 'easy-agent.yml', '--format', 'json'])
 
     assert setup_result.exit_code == 0
     assert validate_result.exit_code == 0
@@ -102,3 +105,6 @@ def test_config_validate_and_explain(tmp_path: Path, monkeypatch: MonkeyPatch) -
     assert explain_result.exit_code == 0
     assert '"entrypoint_type": "agent"' in explain_result.output
     assert '"required_env"' in explain_result.output
+    assert doctor_result.exit_code == 0
+    assert '"checks"' in doctor_result.output
+    assert '"python.version"' in doctor_result.output

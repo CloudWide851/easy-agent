@@ -5,8 +5,8 @@ This roadmap starts from the published `0.3.5` baseline.
 ## Immediate Focus
 
 - Keep reducing runtime complexity by turning large compatibility modules into smaller import-compatible surfaces, with storage contracts and trace helpers split away from SQLite details.
-- Make the now-shipped zero-credential onboarding layer a permanent compatibility gate: keep `setup`, `mock` quickstart, config explanation, starter templates, HTML traces, and run explanation tests as the first smoke layer before live-provider suites.
-- Promote the new run summary and trace-tree export into the main debugging workflow, then align the JSON trace shape with OpenTelemetry GenAI semantic conventions when the local shape stabilizes.
+- Make the now-shipped zero-credential onboarding layer a permanent compatibility gate: keep `setup` preflight checks, `mock` quickstart, config explanation, config doctor, starter templates, searchable HTML traces, and run explanation tests as the first smoke layer before live-provider suites.
+- Promote the new run summary, searchable HTML trace viewer, and trace-tree export into the main debugging workflow, then align the JSON trace shape with OpenTelemetry GenAI semantic conventions when the local shape stabilizes.
 - Widen the shipped live provider-specific compatibility evidence beyond the required DeepSeek/OpenAI-compatible baseline, including optional Anthropic and Gemini coverage when credentials are present.
 - Extend the raw official BFCL v4 normalization path into wider agentic and multihop coverage with clearer official-category diagnostics.
 - Turn the newly shipped `official_source_search` plus `browsecomp_subset` / `simpleqa_subset` support into refreshable scored slices once local dataset exports and grader credentials are available.
@@ -18,10 +18,11 @@ Current public agent-building guidance puts the shortest path first: create one 
 
 Next reinforcement for usability:
 
-- keep `setup --provider mock` and `quickstart --provider mock` as the first commands in docs and CI smoke, because they prove config loading, skills, storage, tool calls, and trace persistence without requiring secrets
+- keep `setup --provider mock` and `quickstart --provider mock` as the first commands in docs and CI smoke, because they prove config loading, skills, storage, tool calls, trace persistence, and preflight diagnostics without requiring secrets
+- keep `config doctor` as the static risk gate before live-provider runs, with checks for env readiness, MCP roots/auth, federation auth, executor readiness, storage portability, and human-loop coverage
 - keep template variants mapped to shipped runtime contracts, then deepen them with focused smoke tests for approval flow, harness flow, MCP resource catalog flow, federation loopback flow, and workbench-backed coding tasks
 - make `runs explain` the default next step after failed runs, and extend classifiers for provider schema errors, HTTP status buckets, approval states, MCP startup failures, and duplicated tool loops
-- keep traces as the debugging source of truth first, use HTML export for local inspection, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
+- keep traces as the debugging source of truth first, use the searchable HTML export for local inspection, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
 - make every new high-level feature ship with a mock-backed smoke path plus an optional live-provider path, so first-run experience stays reliable even when credentials are missing
 
 Reference:
@@ -134,6 +135,7 @@ The current durable MCP baseline includes:
 
 Next reinforcement should continue around the official MCP surface:
 
+- static auth and roots diagnostics for stdio, HTTP SSE, and streamable HTTP transports before runtime connection
 - `notifications/resources/list_changed`
 - `notifications/tools/list_changed`
 - `notifications/prompts/list_changed`
@@ -143,6 +145,7 @@ Next reinforcement should continue around the official MCP surface:
 
 Federation should continue to track the public A2A surface rather than inventing a private transport:
 
+- keep agent-card metadata, push notification config, streaming, and resubscribe checks visible in config diagnostics and real-network scenarios
 - keep well-known agent-card discovery, send, sendSubscribe, resubscribe, task events, and push notification config flows visible in the real-network matrix
 - keep signed callback and task authorization evidence in the report instead of relying on headline pass/fail
 - keep skipped host-gated rows visible so missing container or microVM dependencies are reported as coverage gaps, not silent omissions
@@ -155,7 +158,7 @@ The next runtime-hardening layer should move from raw event logs toward trace co
 - keep span ids stable across run, graph node, agent turn, model call, tool call, MCP call, approval, harness, and federation boundaries
 - record duration, status, input/output hashes, retry count, and checkpoint id on each span
 - keep storage repository contracts explicit so future PostgreSQL support can implement the same run, session, checkpoint, human-request, MCP, federation, workbench, and trace interfaces
-- map the stable JSON trace shape to OpenTelemetry GenAI spans only after local semantics stop moving
+- map the stable JSON trace shape to OpenTelemetry GenAI spans only after local semantics stop moving, especially around agent/model/tool spans, error types, and operation attributes
 
 ## Executor Trust Boundary
 

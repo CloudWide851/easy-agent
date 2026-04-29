@@ -184,6 +184,9 @@ storage:
     html = html_path.read_text(encoding='utf-8')
     assert '<!doctype html>' in html
     assert 'run_cli' in html
+    assert 'trace-search' in html
+    assert 'data-filter="error"' in html
+    assert 'summary-card' in html
     assert invalid_html_result.exit_code != 0
 
 
