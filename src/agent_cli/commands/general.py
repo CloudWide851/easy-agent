@@ -240,6 +240,8 @@ def latest_report(
     public_eval_report: str = typer.Option('.easy-agent/public-eval-report.json', '--public-eval-report'),
     real_network_report: str = typer.Option('.easy-agent/real-network-report.json', '--real-network-report'),
     run_limit: int = typer.Option(50, '--run-limit', min=1, max=500),
+    html: bool = typer.Option(False, '--html', help='Write the latest report as a standalone HTML file.'),
+    output: str | None = typer.Option(None, '-o', '--output', help='Output file for --html exports.'),
 ) -> None:
     payload = {
         'reports': {
@@ -249,6 +251,14 @@ def latest_report(
         },
         'runs': _summarize_recent_runs(Path(config), run_limit),
     }
+    if html:
+        if output is None:
+            raise typer.BadParameter('--html requires --output <path>.')
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(_latest_report_html(payload), encoding='utf-8')
+        console.print_json(json.dumps({'output': str(output_path), 'reports': payload['reports'], 'runs': payload['runs']}, ensure_ascii=False))
+        return
     if output_format == 'json':
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
@@ -372,6 +382,77 @@ def _summarize_recent_runs(config: Path, limit: int) -> dict[str, Any]:
         }
     finally:
         asyncio.run(runtime.aclose())
+
+
+def _latest_report_html(payload: dict[str, Any]) -> str:
+    reports_raw = payload.get('reports')
+    reports = cast(dict[str, Any], reports_raw) if isinstance(reports_raw, dict) else {}
+    runs_raw = payload.get('runs')
+    runs = cast(dict[str, Any], runs_raw) if isinstance(runs_raw, dict) else {}
+    cards: list[str] = []
+    for name, item_raw in reports.items():
+        item = cast(dict[str, Any], item_raw) if isinstance(item_raw, dict) else {}
+        cards.append(
+            '<section class="card">'
+            f'<h2>{escape(str(name))}</h2>'
+            f'<div class="status">{escape(str(item.get("status", "unknown")))}</div>'
+            f'<p class="score">{escape(str(item.get("score") if item.get("score") is not None else "-"))}</p>'
+            f'<p>{escape(str(item.get("summary") or "-"))}</p>'
+            f'<pre>{escape(json.dumps(item, ensure_ascii=False, indent=2, default=str))}</pre>'
+            '</section>'
+        )
+    cards.append(
+        '<section class="card">'
+        '<h2>runs</h2>'
+        f'<div class="status">{escape(str(runs.get("status", "unknown")))}</div>'
+        f'<p>{escape(json.dumps(runs.get("summary", {}), ensure_ascii=False, default=str))}</p>'
+        f'<pre>{escape(json.dumps(runs, ensure_ascii=False, indent=2, default=str))}</pre>'
+        '</section>'
+    )
+    raw_json = escape(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>easy-agent latest report</title>
+  <style>
+    :root {{ color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    body {{ margin: 0; background: #f6f7f9; color: #1d2430; }}
+    main {{ width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }}
+    h1 {{ margin: 0 0 6px; font-size: 28px; line-height: 1.2; }}
+    .lead {{ margin: 0 0 24px; color: #526070; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }}
+    .card {{ background: #ffffff; border: 1px solid #d8dee7; border-radius: 8px; padding: 16px; box-shadow: 0 1px 2px rgba(20, 30, 45, 0.06); }}
+    .card h2 {{ margin: 0 0 10px; font-size: 16px; }}
+    .status {{ display: inline-flex; padding: 3px 8px; border-radius: 999px; background: #e7f0ff; color: #164f9f; font-size: 12px; font-weight: 700; }}
+    .score {{ margin: 14px 0 8px; font-size: 28px; font-weight: 750; }}
+    pre {{ overflow: auto; max-height: 280px; margin: 12px 0 0; padding: 12px; border-radius: 6px; background: #101827; color: #d8e3f8; font-size: 12px; }}
+    details {{ margin-top: 18px; }}
+    summary {{ cursor: pointer; font-weight: 700; }}
+    @media (prefers-color-scheme: dark) {{
+      body {{ background: #101419; color: #e7ecf3; }}
+      .lead {{ color: #a7b3c4; }}
+      .card {{ background: #171d25; border-color: #2a3340; box-shadow: none; }}
+      .status {{ background: #17345c; color: #9fc6ff; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>easy-agent latest report</h1>
+    <p class="lead">Local benchmark, public-eval, real-network, and recent-run evidence.</p>
+    <div class="grid">
+      {''.join(cards)}
+    </div>
+    <details>
+      <summary>Raw JSON</summary>
+      <pre>{raw_json}</pre>
+    </details>
+  </main>
+</body>
+</html>
+"""
 
 
 

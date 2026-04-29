@@ -6,7 +6,7 @@ This roadmap starts from the published `0.3.5` baseline.
 
 - Keep reducing runtime complexity by turning large compatibility modules into smaller import-compatible surfaces, with storage contracts and trace helpers split away from SQLite details.
 - Make the now-shipped zero-credential onboarding layer a permanent compatibility gate: keep `setup` preflight checks, `mock` quickstart, config explanation, config doctor, starter templates, searchable HTML traces, and run explanation tests as the first smoke layer before live-provider suites.
-- Promote the new run summary, searchable HTML trace viewer, and trace-tree export into the main debugging workflow, then align the JSON trace shape with OpenTelemetry GenAI semantic conventions when the local shape stabilizes.
+- Promote the new run summary, searchable HTML trace viewer, standalone latest-report HTML, and trace-tree export into the main debugging workflow, then align the JSON trace shape with OpenTelemetry GenAI semantic conventions when the local shape stabilizes.
 - Widen the shipped live provider-specific compatibility evidence beyond the required DeepSeek/OpenAI-compatible baseline, including optional Anthropic and Gemini coverage when credentials are present.
 - Extend the raw official BFCL v4 normalization path into wider agentic and multihop coverage with clearer official-category diagnostics.
 - Turn the newly shipped `official_source_search` plus `browsecomp_subset` / `simpleqa_subset` support into refreshable scored slices once local dataset exports and grader credentials are available.
@@ -19,12 +19,13 @@ Current public agent-building guidance puts the shortest path first: create one 
 Next reinforcement for usability:
 
 - keep `setup --provider mock` and `quickstart --provider mock` as the first commands in docs and CI smoke, because they prove config loading, skills, storage, tool calls, trace persistence, and preflight diagnostics without requiring secrets
-- keep `new <scenario>` as the shortest path from intent to a runnable project, with business starters such as `coding-agent` and `research-agent` proving common workflows before users write YAML by hand
+- keep `new <scenario>` as the shortest path from intent to a runnable project, with business starters such as `coding-agent`, `research-agent`, `data-agent`, `ops-agent`, and `browser-agent` proving common workflows before users write YAML by hand
 - keep `config doctor` as the static risk gate before live-provider runs, with checks for env readiness, MCP roots/auth, federation auth, executor readiness, storage portability, and human-loop coverage
 - keep template variants mapped to shipped runtime contracts, then deepen them with focused smoke tests for approval flow, harness flow, MCP resource catalog flow, federation loopback flow, and workbench-backed coding tasks
 - make `runs explain` the default next step after failed runs, and extend classifiers for provider schema errors, HTTP status buckets, approval states, MCP startup failures, and duplicated tool loops
-- keep traces as the debugging source of truth first, use `traces open` and the searchable HTML export for local inspection, use `report latest` to summarize available evidence, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
+- keep traces as the debugging source of truth first, use `traces open` and the searchable HTML export for local inspection, use `report latest` and its HTML export to summarize available evidence, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
 - make every new high-level feature ship with a mock-backed smoke path plus an optional live-provider path, so first-run experience stays reliable even when credentials are missing
+- keep the Python `AgentApp` facade intentionally thin, so embedded applications use the same config-driven runtime as the CLI instead of drifting into a second orchestration surface
 
 Reference:
 

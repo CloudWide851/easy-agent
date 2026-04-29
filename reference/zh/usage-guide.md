@@ -30,6 +30,9 @@ uv run easy-agent --help
 uv run easy-agent setup --provider mock
 uv run easy-agent new coding-agent
 uv run easy-agent new research-agent <target-dir>
+uv run easy-agent new data-agent
+uv run easy-agent new ops-agent
+uv run easy-agent new browser-agent <target-dir>
 uv run easy-agent init --provider mock
 uv run easy-agent quickstart --provider mock
 uv run easy-agent template list
@@ -48,6 +51,7 @@ uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
 uv run easy-agent report latest -c easy-agent.yml
+uv run easy-agent report latest -c easy-agent.yml --html --output report.html
 uv run easy-agent mcp resources list <server> -c easy-agent.yml
 uv run easy-agent mcp resources read <server> <uri> -c easy-agent.yml
 uv run easy-agent mcp resources templates <server> -c easy-agent.yml
@@ -75,6 +79,9 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 - `template create workbench-coding-agent <target-dir>` 创建 process-workbench starter。
 - `template create coding-agent <target-dir>` 创建面向业务编码任务的 starter，并带 process workbench 配置。
 - `template create research-agent <target-dir>` 创建面向资料调研任务的 starter，把 `official_source_search` 和 mock-first smoke 工具一起挂载。
+- `template create data-agent <target-dir>` 创建面向 CSV、JSON、日志、指标摘要与证据化建议的数据分析 starter。
+- `template create ops-agent <target-dir>` 创建面向 diagnostics、runbooks、incident notes 与 release checks 的运维 starter。
+- `template create browser-agent <target-dir>` 创建 mock-first 的浏览器任务规划 starter。它不会安装浏览器 runtime；只有在规划流和安全检查明确之后，再接入真实浏览器 connector。
 - `config explain` 会汇总 model/provider、entrypoint type、agents、tools、teams、harnesses、MCP、storage、executors、federation、eval settings 与 required environment variables，但不会打印 secret 值。
 - `config doctor` 做静态风险检查，不启动 model client，也不启动 MCP server。它会报告 Python baseline drift、缺失的 live env、缺失的本地工具、MCP roots/auth 缺口、federation auth 缺口、workbench executor readiness、human-loop 覆盖、storage 可移植性与 eval 凭据状态。
 - 生成的模板会带本地 README、最小 `.env.local.example` 与 mock-first smoke 命令路径。模板 smoke 从 `config doctor` 开始，再运行一个短任务，并为新 run id 导出 HTML trace。
@@ -104,7 +111,25 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 
 如果某个 report 文件不存在，命令会把该项标为 `missing`，但仍继续返回其他面板信息。比较临时或归档 artifact 时，可以使用 report path override flags。
 
+当终端表格太密时，可以使用 `report latest --html --output report.html`。导出的文件是独立 HTML，包含同一组 benchmark、public-eval、real-network、recent-run 与 raw JSON 证据。
+
 Trace-tree span 从现有 runtime event envelope 派生，包含稳定的 `span_id`、`parent_span_id`、`kind`、`status`、duration、input/output hash、retry count、checkpoint id 与 child spans。这样当前 JSON trace 仍然轻量，同时为后续 OpenTelemetry export 留出路径。
+
+## Python Facade
+
+在 Python 代码里嵌入 runtime、但不需要完整 CLI surface 时，可以使用轻量 facade：
+
+```python
+from agent_runtime import AgentApp
+
+app = AgentApp.from_config("easy-agent.yml")
+try:
+    result = app.run("Summarize this task")
+finally:
+    app.close()
+```
+
+facade 仍然委托给 CLI 同款 `EasyAgentRuntime`，因此 storage、session memory、guardrails、MCP、federation 与 workbench 行为都继续由配置文件决定。
 
 ## 本地凭据
 

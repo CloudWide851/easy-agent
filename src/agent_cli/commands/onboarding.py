@@ -395,6 +395,30 @@ def _templates() -> dict[str, dict[str, Any]]:
                 _research_agent_template_config(),
             ),
         },
+        'data-agent': {
+            'description': 'Business-ready data assistant for CSV, JSON, logs, and metric summaries.',
+            'files': _template_files(
+                'data-agent',
+                'A practical starter for data summaries, lightweight analysis, and evidence-backed recommendations.',
+                _data_agent_template_config(),
+            ),
+        },
+        'ops-agent': {
+            'description': 'Business-ready ops assistant for runbooks, diagnostics, and release checks.',
+            'files': _template_files(
+                'ops-agent',
+                'A practical starter for operational diagnostics and runbook-style task planning.',
+                _ops_agent_template_config(),
+            ),
+        },
+        'browser-agent': {
+            'description': 'Business-ready browser task planner with a mock-first smoke path.',
+            'files': _template_files(
+                'browser-agent',
+                'A practical starter for browser task planning before wiring a real browser connector.',
+                _browser_agent_template_config(),
+            ),
+        },
     }
 
 
@@ -437,7 +461,7 @@ def _template_env_example(name: str) -> str:
         lines.append('SERPAPI_API_KEY=<SECRET>')
     elif name == 'federation-loopback':
         lines.append('EASY_AGENT_FEDERATION_TOKEN=<SECRET>')
-    elif name in {'mcp-filesystem-agent', 'workbench-coding-agent', 'coding-agent'}:
+    elif name in {'mcp-filesystem-agent', 'workbench-coding-agent', 'coding-agent', 'data-agent', 'ops-agent', 'browser-agent'}:
         lines.append('# No credentials are required for the mock-backed smoke path.')
     elif name == 'research-agent':
         lines.append('# No credentials are required for the mock-backed smoke path.')
@@ -599,6 +623,123 @@ def _research_agent_template_config() -> str:
                 - python_echo
                 - official_source_search
               max_iterations: 5
+          nodes: []
+
+        skills:
+          - path: skills/examples
+
+        storage:
+          path: .easy-agent
+          database: state.db
+
+        security:
+          sandbox:
+            mode: auto
+            working_root: .
+        """
+    ).lstrip()
+
+
+def _data_agent_template_config() -> str:
+    return dedent(
+        """
+        model:
+          provider: mock
+          protocol: mock
+          model: mock-agent
+          base_url: mock://local
+          api_key_env: EASY_AGENT_MOCK_API_KEY
+
+        graph:
+          name: data_agent
+          entrypoint: analyst
+          agents:
+            - name: analyst
+              description: Data assistant for CSV, JSON, logs, metrics, and lightweight summaries.
+              system_prompt: |
+                You are a careful data assistant. For mock smoke runs, call python_echo once.
+                For real work, inspect available evidence, summarize assumptions, and separate findings from recommendations.
+              tools:
+                - python_echo
+              max_iterations: 4
+          nodes: []
+
+        skills:
+          - path: skills/examples
+
+        storage:
+          path: .easy-agent
+          database: state.db
+
+        security:
+          sandbox:
+            mode: auto
+            working_root: .
+        """
+    ).lstrip()
+
+
+def _ops_agent_template_config() -> str:
+    return dedent(
+        """
+        model:
+          provider: mock
+          protocol: mock
+          model: mock-agent
+          base_url: mock://local
+          api_key_env: EASY_AGENT_MOCK_API_KEY
+
+        graph:
+          name: ops_agent
+          entrypoint: operator
+          agents:
+            - name: operator
+              description: Ops assistant for diagnostics, runbooks, incident notes, and release checks.
+              system_prompt: |
+                You are a cautious operations assistant. For mock smoke runs, call python_echo once.
+                For real work, prefer read-only diagnostics, list risk before action, and request approval before sensitive changes.
+              tools:
+                - python_echo
+              max_iterations: 4
+          nodes: []
+
+        skills:
+          - path: skills/examples
+
+        storage:
+          path: .easy-agent
+          database: state.db
+
+        security:
+          sandbox:
+            mode: auto
+            working_root: .
+        """
+    ).lstrip()
+
+
+def _browser_agent_template_config() -> str:
+    return dedent(
+        """
+        model:
+          provider: mock
+          protocol: mock
+          model: mock-agent
+          base_url: mock://local
+          api_key_env: EASY_AGENT_MOCK_API_KEY
+
+        graph:
+          name: browser_agent
+          entrypoint: browser_planner
+          agents:
+            - name: browser_planner
+              description: Browser task planner for research, QA, and workflow automation.
+              system_prompt: |
+                You are a browser-task planning assistant. For mock smoke runs, call python_echo once.
+                For real browser work, produce a clear navigation plan, expected evidence, and safety checks before connector execution.
+              tools:
+                - python_echo
+              max_iterations: 4
           nodes: []
 
         skills:

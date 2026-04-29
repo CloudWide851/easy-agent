@@ -137,12 +137,12 @@ The README keeps the comparison high level. This page keeps the public evidence 
 This round uses Python-based verification only.
 
 - Static checks: `ruff` and `mypy`
-- Targeted regressions around setup preflight, config explanation, config doctor, searchable HTML trace export, local trace opening, latest-report summarization, mock provider, onboarding CLI, scenario creation, run explanation, provider compatibility, config validation, guardrails, BFCL evaluation, official-source search, and simple-evals profile support: `17 passed`, `36 passed`, `89 passed`, and `4 passed`
-- Full unit coverage: `216 passed`
+- Targeted regressions around setup preflight, config explanation, config doctor, searchable HTML trace export, local trace opening, latest-report summarization and HTML export, Python facade embedding, mock provider, onboarding CLI, scenario creation, run explanation, provider compatibility, config validation, guardrails, BFCL evaluation, official-source search, and simple-evals profile support: `18 passed`, `36 passed`, `89 passed`, and `4 passed`
+- Full unit coverage: `217 passed`
 - Targeted live provider-compatibility regression: `1 passed`
 - Full real integration coverage: `7 passed`, `2 warnings`
 - The retained benchmark and headline public-eval scores still point at the April 14 release snapshot, the live provider-compatibility evidence remains the April 20 snapshot, and the real-network artifact was refreshed on April 29
 - The remaining warnings are known Windows asyncio subprocess cleanup warnings after successful completion
-- New focused regressions cover setup preflight, config explanation, config doctor, searchable HTML trace export, `traces open`, `report latest`, offline mock runs, starter templates, `new <scenario>`, quickstart, run explanation, run listing, run summary, structured trace tree export, executor capability reports, storage contracts, and real-network scenario proof metadata.
+- New focused regressions cover setup preflight, config explanation, config doctor, searchable HTML trace export, `traces open`, `report latest`, latest-report HTML export, offline mock runs, starter templates, `new <scenario>` for coding/research/data/ops/browser starters, Python `AgentApp`, quickstart, run explanation, run listing, run summary, structured trace tree export, executor capability reports, storage contracts, and real-network scenario proof metadata.
 
 Exact machine-local execution logs stay outside the repository-facing documentation surface.

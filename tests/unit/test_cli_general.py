@@ -257,12 +257,38 @@ storage:
             str(real_network),
         ],
     )
+    html_path = tmp_path / 'latest-report.html'
+    html_result = CliRunner().invoke(
+        app,
+        [
+            'report',
+            'latest',
+            '-c',
+            str(config_path),
+            '--html',
+            '--output',
+            str(html_path),
+            '--benchmark-report',
+            str(benchmark),
+            '--public-eval-report',
+            str(public_eval),
+            '--real-network-report',
+            str(real_network),
+        ],
+    )
 
     assert result.exit_code == 0
     assert '"benchmark"' in result.output
     assert '"score": 100.0' in result.output
     assert '"score": 75.0' in result.output
     assert '"latest_run_id": "run_report"' in result.output
+    assert html_result.exit_code == 0
+    assert html_path.exists()
+    html = html_path.read_text(encoding='utf-8')
+    assert '<!doctype html>' in html
+    assert 'easy-agent latest report' in html
+    assert 'public_eval' in html
+    assert 'run_report' in html
 
 
 def test_runs_explain_reports_success(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@
 
 - 继续降低 runtime 复杂度，把大型兼容模块拆成更小但 import-compatible 的 surface，并把 storage contracts 与 trace helpers 从 SQLite 细节里分离出来。
 - 把已经交付的零凭据上手层固定为长期兼容门禁：`setup` preflight checks、`mock` quickstart、config explanation、config doctor、starter templates、可搜索 HTML traces 与 run explanation 测试要先于 live-provider 套件执行。
-- 把新的 run summary、可搜索 HTML trace viewer 与 trace-tree export 推进成主要排障入口；等本地 JSON trace 形态稳定后，再对齐 OpenTelemetry GenAI semantic conventions。
+- 把新的 run summary、可搜索 HTML trace viewer、单文件 latest-report HTML 与 trace-tree export 推进成主要排障入口；等本地 JSON trace 形态稳定后，再对齐 OpenTelemetry GenAI semantic conventions。
 - 把已经交付的 live provider-specific 兼容证据继续扩展到必跑的 DeepSeek/OpenAI-compatible 基线之外，在有凭据时补齐 Anthropic 与 Gemini 覆盖。
 - 把 raw official BFCL v4 归一化路径继续推进到更广的 agentic 与 multihop 覆盖，并补齐更清晰的官方分类诊断。
 - 在拿到本地数据导出与 grader 凭据后，把新交付的 `official_source_search` 与 `browsecomp_subset` / `simpleqa_subset` 支持推进成可刷新分数的评测切片。
@@ -19,12 +19,13 @@
 下一步可落地的易用性补强：
 
 - 把 `setup --provider mock` 与 `quickstart --provider mock` 保持为文档和 CI smoke 的第一组命令，因为它们可以在无 secret 的情况下验证 config loading、skills、storage、tool calls、trace persistence 与 preflight diagnostics
-- 把 `new <scenario>` 保持为从意图到可运行项目的最短路径，用 `coding-agent`、`research-agent` 这类业务 starter 先证明常见 workflow，再让用户手写 YAML
+- 把 `new <scenario>` 保持为从意图到可运行项目的最短路径，用 `coding-agent`、`research-agent`、`data-agent`、`ops-agent`、`browser-agent` 这类业务 starter 先证明常见 workflow，再让用户手写 YAML
 - 把 `config doctor` 保持为 live-provider 运行前的静态风险门禁，覆盖 env readiness、MCP roots/auth、federation auth、executor readiness、storage portability 与 human-loop coverage
 - 模板继续只围绕已交付 runtime contract 扩展，并为 approval flow、harness flow、MCP resource catalog flow、federation loopback flow 与 workbench-backed coding tasks 增加 focused smoke tests
 - 把 `runs explain` 做成失败 run 后默认的下一步，并继续扩展 provider schema error、HTTP status bucket、approval state、MCP startup failure 与 duplicated tool loop 分类
-- 让 trace 先作为排障事实来源，用 `traces open` 和可搜索 HTML export 改善本地检查体验，用 `report latest` 汇总可用证据，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
+- 让 trace 先作为排障事实来源，用 `traces open` 和可搜索 HTML export 改善本地检查体验，用 `report latest` 及其 HTML export 汇总可用证据，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
 - 每个新的高层能力都配套 mock-backed smoke path 和可选 live-provider path，让首次运行不再依赖本地凭据是否齐全
+- 让 Python `AgentApp` facade 保持轻量，让嵌入式应用继续复用 CLI 同款 config-driven runtime，而不是形成第二套 orchestration surface
 
 参考：
 

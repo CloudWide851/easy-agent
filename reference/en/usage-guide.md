@@ -30,6 +30,9 @@ uv run easy-agent --help
 uv run easy-agent setup --provider mock
 uv run easy-agent new coding-agent
 uv run easy-agent new research-agent <target-dir>
+uv run easy-agent new data-agent
+uv run easy-agent new ops-agent
+uv run easy-agent new browser-agent <target-dir>
 uv run easy-agent init --provider mock
 uv run easy-agent quickstart --provider mock
 uv run easy-agent template list
@@ -48,6 +51,7 @@ uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
 uv run easy-agent report latest -c easy-agent.yml
+uv run easy-agent report latest -c easy-agent.yml --html --output report.html
 uv run easy-agent mcp resources list <server> -c easy-agent.yml
 uv run easy-agent mcp resources read <server> <uri> -c easy-agent.yml
 uv run easy-agent mcp resources templates <server> -c easy-agent.yml
@@ -75,6 +79,9 @@ Use the `mock` provider when you want to verify the runtime, tools, storage, and
 - `template create workbench-coding-agent <target-dir>` creates a process-workbench starter.
 - `template create coding-agent <target-dir>` creates a business-oriented coding starter with process workbench configuration.
 - `template create research-agent <target-dir>` creates a business-oriented research starter with `official_source_search` wired beside the mock-first smoke tool.
+- `template create data-agent <target-dir>` creates a business-oriented data starter for CSV, JSON, logs, metric summaries, and evidence-backed recommendations.
+- `template create ops-agent <target-dir>` creates a business-oriented operations starter for diagnostics, runbooks, incident notes, and release checks.
+- `template create browser-agent <target-dir>` creates a mock-first browser task-planning starter. It does not install a browser runtime; wire a real connector only after the planning flow and safety checks are clear.
 - `config explain` summarizes model/provider choices, entrypoint type, agents, tools, teams, harnesses, MCP, storage, executors, federation, eval settings, and required environment variables without printing secret values.
 - `config doctor` performs static risk checks without starting model clients or MCP servers. It reports Python baseline drift, missing live env vars, missing local tools, MCP roots/auth gaps, federation auth gaps, workbench executor readiness, human-loop coverage, storage portability, and eval credential readiness.
 - Generated templates include a local README, a minimal `.env.local.example`, and a mock-first smoke command path. Template smoke starts with `config doctor`, then runs a short task and exports an HTML trace for the new run id.
@@ -104,7 +111,25 @@ Durable run inspection now has two layers:
 
 If a report file is absent, the command marks that surface as `missing` and still returns the rest of the dashboard. Use the report path override flags when comparing temporary or archived artifacts.
 
+Use `report latest --html --output report.html` when the terminal table is too dense. The exported file is standalone and includes the same benchmark, public-eval, real-network, recent-run, and raw JSON evidence.
+
 Trace-tree spans are derived from the existing runtime event envelope and include stable `span_id`, `parent_span_id`, `kind`, `status`, duration, input/output hashes, retry count, checkpoint id, and child spans. This keeps the current JSON trace path lightweight while leaving a future OpenTelemetry export path open.
+
+## Python Facade
+
+Use the lightweight facade when embedding the runtime in Python code and you do not need the full CLI surface:
+
+```python
+from agent_runtime import AgentApp
+
+app = AgentApp.from_config("easy-agent.yml")
+try:
+    result = app.run("Summarize this task")
+finally:
+    app.close()
+```
+
+The facade delegates to the same `EasyAgentRuntime` used by the CLI, so storage, session memory, guardrails, MCP, federation, and workbench behavior still come from the config file.
 
 ## Local Credentials
 

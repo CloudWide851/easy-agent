@@ -8,6 +8,7 @@ from agent_runtime.benchmark import (
     run_default_suite,
     summarize_trace,
 )
+from agent_runtime.facade import AgentApp
 from agent_runtime.harness import HarnessRuntime
 from agent_runtime.longrun import (
     LongRunRecord,
@@ -24,6 +25,7 @@ __all__ = [
     'BenchmarkCase',
     'BenchmarkRecord',
     'EasyAgentRuntime',
+    'AgentApp',
     'HarnessRuntime',
     'LongRunRecord',
     'PublicEvalRecord',
