@@ -54,6 +54,7 @@ uv run easy-agent runs list -c easy-agent.yml
 uv run easy-agent runs show <run_id> -c easy-agent.yml
 uv run easy-agent runs explain <run_id> -c easy-agent.yml
 uv run easy-agent runs fix <run_id> -c easy-agent.yml --format markdown --output fix.md
+uv run easy-agent runs fix <run_id> -c easy-agent.yml --format html --output fix.html
 uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
@@ -66,8 +67,11 @@ uv run easy-agent connectors list -c easy-agent.yml
 uv run easy-agent connectors doctor -c easy-agent.yml
 uv run easy-agent connectors test model -c easy-agent.yml
 uv run easy-agent connectors test browser -c easy-agent.yml
+uv run easy-agent browser doctor -c easy-agent.yml
+uv run easy-agent browser artifacts -c easy-agent.yml
 uv run easy-agent task list
 uv run easy-agent task show repo-review
+uv run easy-agent task show browser-qa
 uv run easy-agent task run repo-review -c easy-agent.yml --dry-run
 uv run easy-agent skills catalog list
 uv run easy-agent skills catalog install python_echo --target skills/installed --force
@@ -122,7 +126,7 @@ Durable run inspection now has two layers:
 - `runs list` shows recent run ids, status, kind, session id, and creation time.
 - `runs show <run_id>` returns a run summary with event, node, checkpoint, approval, and child-run counts.
 - `runs explain <run_id>` classifies common failure causes such as missing provider credentials, schema validation failures, guardrail blocks, MCP failures, iteration loops, and known Windows cleanup warnings.
-- `runs fix <run_id>` creates an advice-only repair package. It reuses the stored run explanation, selects a built-in task pack such as `bug-fix` or `release-check`, lists safe next commands, and can write JSON or Markdown without mutating files or rerunning the agent.
+- `runs fix <run_id>` creates an advice-only repair package. It reuses the stored run explanation, selects a built-in task pack such as `bug-fix`, `release-check`, or `browser-qa`, lists safe next commands, and can write JSON, Markdown, or standalone HTML without mutating files or rerunning the agent.
 - `traces export <run_id>` returns a structured trace tree by default.
 - `traces export <run_id> --raw` returns the historical raw trace payload.
 - `traces export <run_id> --html --output trace.html` writes a standalone HTML trace viewer for the structured tree, including summary cards, status/error highlighting, span-kind filters, text search, and the raw JSON payload.
@@ -142,7 +146,7 @@ If a report file is absent, the command marks that surface as `missing` and stil
 
 Use `report latest --html --output report.html` when the terminal table is too dense. The exported file is standalone and includes the same benchmark, public-eval, real-network, recent-run, and raw JSON evidence.
 
-Use `dashboard -c easy-agent.yml --output dashboard.html` for a broader static local dashboard that combines latest reports, report trend, connector readiness, recent runs, pending approvals, and raw JSON into one read-only HTML file.
+Use `dashboard -c easy-agent.yml --output dashboard.html` for a broader static local dashboard that combines latest reports, report trend, connector readiness, failed or waiting runs, pending approvals, browser readiness, browser artifacts, and raw JSON into one read-only HTML file.
 
 `report trend` compares local report artifacts in a directory and shows the latest score, previous score, and score delta for benchmark, public-eval, and real-network reports. Use `--html --output trend.html` for a standalone trend page.
 
@@ -154,11 +158,13 @@ Trace-tree spans are derived from the existing runtime event envelope and includ
 - `connectors doctor` performs static connector checks without starting high-risk external flows.
 - `connectors test <name>` focuses on one connector from the list.
 - When `browser.enabled` is true and `provider: playwright_mcp`, browser diagnostics verify that `npx` is available and report whether approval is required before live browser automation. The Playwright MCP server is mounted through normal MCP startup, so `mcp list` remains the catalog inspection path.
+- `browser doctor` prints a browser-specific static readiness report for Playwright MCP command shape, headless/isolated mode, artifact directory, approval mode, `npx` availability, and MCP server name collisions.
+- `browser artifacts` lists the current browser artifact directory without starting Playwright MCP. It classifies screenshots, snapshots, videos, archives, network captures, logs, and other files so browser failures can be inspected before reruns.
 - `task list` shows built-in task packs.
 - `task show <pack>` prints the prompt template, recommended scenario, and acceptance criteria.
 - `task run <pack>` renders and runs the task through the configured entrypoint. Use `--dry-run` to inspect the prompt before execution.
 
-Built-in task packs currently include `repo-review`, `bug-fix`, `docs-refresh`, `release-check`, `data-summary`, and `federation-loopback-demo`.
+Built-in task packs currently include `repo-review`, `bug-fix`, `docs-refresh`, `release-check`, `data-summary`, `federation-loopback-demo`, `browser-qa`, `browser-research`, and `browser-form-check`.
 
 ## Python Facade
 

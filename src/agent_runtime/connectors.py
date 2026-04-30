@@ -52,6 +52,67 @@ def test_connector(config_path: str | Path, name: str) -> dict[str, Any]:
     return {'name': name, 'status': status, 'summary': summary, 'checks': [check.__dict__ for check in checks]}
 
 
+def browser_doctor(config_path: str | Path = 'easy-agent.yml') -> dict[str, Any]:
+    config = load_config(config_path)
+    browser = config.browser
+    configured_server = config.mcp_map.get(browser.server_name)
+    command = ['npx', '-y', '@playwright/mcp@latest']
+    if browser.headless:
+        command.append('--headless')
+    if browser.isolated:
+        command.append('--isolated')
+    if browser.artifacts_dir:
+        command.extend(['--output-dir', browser.artifacts_dir])
+    checks = [check.__dict__ for check in connector_checks(config_path) if check.name == 'browser']
+    return {
+        'enabled': browser.enabled,
+        'provider': browser.provider,
+        'server_name': browser.server_name,
+        'headless': browser.headless,
+        'isolated': browser.isolated,
+        'artifacts_dir': browser.artifacts_dir,
+        'timeout_seconds': browser.timeout_seconds,
+        'require_approval': browser.require_approval,
+        'npx_available': shutil.which('npx') is not None,
+        'mcp_server_declared': configured_server is not None,
+        'effective_command': list(configured_server.command) if configured_server and configured_server.command else command,
+        'checks': checks,
+        'summary': connector_summary([ConnectorCheck(**item) for item in checks]),
+    }
+
+
+def browser_artifacts(config_path: str | Path = 'easy-agent.yml', *, limit: int = 50) -> dict[str, Any]:
+    config = load_config(config_path)
+    root = Path(config.browser.artifacts_dir)
+    files: list[dict[str, Any]] = []
+    if root.exists():
+        candidates = [path for path in root.rglob('*') if path.is_file()]
+        candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        for path in candidates[:limit]:
+            stat = path.stat()
+            files.append(
+                {
+                    'path': str(path),
+                    'relative_path': str(path.relative_to(root)),
+                    'kind': _browser_artifact_kind(path),
+                    'size_bytes': stat.st_size,
+                    'modified_at': stat.st_mtime,
+                }
+            )
+    counts: dict[str, int] = {}
+    for item in files:
+        kind = str(item['kind'])
+        counts[kind] = counts.get(kind, 0) + 1
+    return {
+        'enabled': config.browser.enabled,
+        'artifacts_dir': str(root),
+        'exists': root.exists(),
+        'count': len(files),
+        'counts': counts,
+        'artifacts': files,
+    }
+
+
 def _model_check(config: AppConfig) -> ConnectorCheck:
     if config.model.provider == 'mock':
         return ConnectorCheck('model', 'provider', 'ok', 'Mock provider is configured for offline runs.', 'No action needed.')
@@ -187,3 +248,21 @@ def _browser_check(config: AppConfig) -> ConnectorCheck:
         f'Unsupported browser provider: {browser.provider}.',
         'Use provider=playwright_mcp.',
     )
+
+
+def _browser_artifact_kind(path: Path) -> str:
+    suffix = path.suffix.lower()
+    name = path.name.lower()
+    if suffix in {'.png', '.jpg', '.jpeg', '.webp'}:
+        return 'screenshot'
+    if suffix in {'.webm', '.mp4'}:
+        return 'video'
+    if suffix in {'.har'}:
+        return 'network'
+    if suffix in {'.zip'}:
+        return 'archive'
+    if suffix in {'.json'} and ('snapshot' in name or 'trace' in name):
+        return 'snapshot'
+    if suffix in {'.json', '.txt', '.log'}:
+        return 'log'
+    return 'other'

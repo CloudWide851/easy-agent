@@ -11,7 +11,7 @@ This roadmap starts from the published `0.3.5` baseline.
 - Extend the raw official BFCL v4 normalization path into wider agentic and multihop coverage with clearer official-category diagnostics.
 - Turn the newly shipped `official_source_search` plus `browsecomp_subset` / `simpleqa_subset` support into refreshable scored slices once local dataset exports and grader credentials are available.
 - Deepen MCP notification parity around resource updates, prompt-detail refresh, and template diff telemetry without widening the model-facing runtime surface.
-- Treat the new wizard, connector diagnostics, built-in task packs, advice-only run fix packages, static dashboard, local skill catalog workflows, and federation-demo checks as the next operator-facing usability layer before adding heavier runtime dependencies.
+- Treat the new wizard, connector diagnostics, browser doctor/artifact inspection, browser-specific task packs, advice-only HTML run fix packages, static dashboard, local skill catalog workflows, and federation-demo checks as the next operator-facing usability layer before adding heavier runtime dependencies.
 
 ## Onboarding and Diagnostics
 
@@ -23,32 +23,41 @@ Next reinforcement for usability:
 - keep `new <scenario>` as the shortest path from intent to a runnable project, and keep `wizard --scenario <name>` as the guided path that adds static checks, next commands, and optional mock smoke before users write YAML by hand
 - keep `config doctor` as the static risk gate before live-provider runs, with checks for env readiness, MCP roots/auth, federation auth, executor readiness, storage portability, and human-loop coverage
 - keep template variants mapped to shipped runtime contracts, then deepen them with focused smoke tests for approval flow, harness flow, MCP resource catalog flow, federation loopback flow, and workbench-backed coding tasks
-- make `runs explain` the default next step after failed runs, then use `runs fix` when the user needs a packaged advice-only repair prompt, safe commands, and task-pack selection without mutating the repository
+- make `runs explain` the default next step after failed runs, then use `runs fix` when the user needs a packaged advice-only repair prompt, safe commands, HTML handoff page, and task-pack selection without mutating the repository
 - keep traces as the debugging source of truth first, use `traces open` and the searchable HTML export for local inspection, use `report latest`, dashboard HTML, and report trend HTML to summarize available evidence, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
 - make every new high-level feature ship with a mock-backed smoke path plus an optional live-provider path, so first-run experience stays reliable even when credentials are missing
 - keep the Python `AgentApp` facade intentionally thin, so embedded applications use the same config-driven runtime as the CLI instead of drifting into a second orchestration surface
-- keep browser work MCP-first: `browser-agent` now uses `browser.enabled: true` with Playwright MCP, default isolated/headless execution, local browser artifacts, and approval-gated sensitive browser actions; next work should harden catalog drift, artifact lifecycle, and browser-specific approval UX rather than adding a second native browser stack prematurely
+- keep browser work MCP-first: `browser-agent` now uses `browser.enabled: true` with Playwright MCP, default isolated/headless execution, local browser artifacts, browser doctor/artifact commands, and approval-gated sensitive browser actions; next work should harden catalog drift, artifact lifecycle, and browser-specific approval UX rather than adding a second native browser stack prematurely
 
 Reference:
 
 - <https://developers.openai.com/api/docs/guides/agents#choose-your-starting-point>
 - <https://developers.openai.com/api/docs/guides/agents/quickstart>
 - <https://developers.openai.com/api/docs/guides/agents/integrations-observability>
+- <https://github.com/microsoft/playwright-mcp>
 
 ## Operator Productivity Surfaces
 
 The newest CLI layer should make common work executable without forcing users to know the full YAML/runtime shape first:
 
 - use `connectors list`, `connectors doctor`, and `connectors test <name>` as static readiness checks for model, storage, search, MCP, workbench, federation, and browser-facing surfaces
-- keep browser diagnostics explicit about the current boundary: Playwright MCP configuration and readiness are shipped, but live navigation, screenshots, forms, and downloads still depend on the user's local Node/npm, browser, MCP startup, and approval settings
-- use `task list`, `task show`, and `task run` as a packaged workflow layer for repository review, bug fixing, docs refresh, release checks, data summaries, and federation loopback validation
-- use `dashboard` as a static local operations page before adding a persistent web server, because it keeps the operator view dependency-free and easy to archive with run evidence
+- keep browser diagnostics explicit about the current boundary: Playwright MCP configuration, static doctor, and artifact listing are shipped, but live navigation, screenshots, forms, and downloads still depend on the user's local Node/npm, browser, MCP startup, and approval settings
+- use `task list`, `task show`, and `task run` as a packaged workflow layer for repository review, bug fixing, docs refresh, release checks, data summaries, browser QA/research/form checks, and federation loopback validation
+- use `dashboard` as a static local operations page before adding a persistent web server, because it keeps the operator view dependency-free and easy to archive with run evidence while surfacing failed runs, approvals, browser readiness, and browser artifacts together
 - keep `task run --dry-run` useful for prompt review and approvals before a task is sent to a model-backed agent
 - use `report trend` to compare local benchmark, public-eval, and real-network artifacts over time instead of reading individual JSON files by hand
 - keep `traces export --otel-json` explicitly experimental while the local trace tree remains the source of truth, because OpenTelemetry GenAI conventions are still evolving
 - use `skills catalog list/install` and `plugins doctor` as a local install/readiness path before adding remote marketplace or signed plugin distribution
 - use `integration federation-demo` as a lightweight federation proof before running the complete real-network matrix
 - keep skill metadata fields such as risk, dependencies, and smoke prompts current so CLI and docs can expose which skills are safe to run in mock-first or live-provider flows
+
+External alignment for this layer:
+
+- Playwright MCP documents snapshot-first browser state, screenshots, headless/isolated execution, and output-directory artifact collection, which matches the current browser doctor/artifact split.
+- MCP 2025-11-25 keeps roots, sampling, elicitation, and user-consent boundaries explicit, so browser and filesystem expansion should continue to stay behind runtime-owned approvals.
+- OpenAI Agents guidance puts tracing before formal evaluation loops, so the static dashboard and failure-to-fix HTML should remain evidence views before becoming auto-remediation surfaces.
+- OpenTelemetry GenAI agent/tool spans are still evolving, so `traces export --otel-json` should remain experimental until local trace fields stabilize.
+- A2A task/event/push surfaces should keep using real-network proof rows before the public federation API is treated as compatibility complete.
 
 ## Web Search Reinforcement
 

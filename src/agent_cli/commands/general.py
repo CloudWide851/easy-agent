@@ -19,7 +19,12 @@ from agent_common.version import runtime_version
 from agent_protocols import resolve_protocol
 from agent_runtime import EasyAgentRuntime, build_runtime
 from agent_runtime.dashboard import dashboard_html, dashboard_payload
-from agent_runtime.diagnostics import build_fix_package, explain_run, fix_package_markdown
+from agent_runtime.diagnostics import (
+    build_fix_package,
+    explain_run,
+    fix_package_html,
+    fix_package_markdown,
+)
 from agent_runtime.reports import (
     build_report_trend,
     latest_report_html,
@@ -197,9 +202,9 @@ def explain_run_command(
 def fix_run_command(
     run_id: str = typer.Argument(..., help='Existing run id.'),
     config: str = typer.Option('easy-agent.yml', '-c', '--config'),
-    task_pack: str = typer.Option('auto', '--task-pack', help='Task pack: auto, bug-fix, docs-refresh, release-check, or repo-review.'),
-    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty, json, or markdown.'),
-    output: str | None = typer.Option(None, '-o', '--output', help='Optional output file for json or markdown formats.'),
+    task_pack: str = typer.Option('auto', '--task-pack', help='Task pack: auto, bug-fix, docs-refresh, release-check, repo-review, or browser-qa.'),
+    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty, json, markdown, or html.'),
+    output: str | None = typer.Option(None, '-o', '--output', help='Optional output file for json, markdown, or html formats.'),
 ) -> None:
     runtime = build_runtime(config)
     try:
@@ -226,8 +231,17 @@ def fix_run_command(
         else:
             console.print(content)
         return
+    if output_format == 'html':
+        if output is None:
+            raise typer.BadParameter('--format html requires --output <path>.')
+        content = fix_package_html(payload)
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding='utf-8')
+        console.print_json(json.dumps({'run_id': run_id, 'output': str(output_path)}, ensure_ascii=False))
+        return
     if output_format != 'pretty':
-        raise typer.BadParameter('format must be pretty, json, or markdown')
+        raise typer.BadParameter('format must be pretty, json, markdown, or html')
     explanation = payload['explanation']
     table = Table(title=f'run fix advice: {run_id}')
     table.add_column('Field', style='cyan')

@@ -12,6 +12,8 @@ from agent_cli.shared import with_runtime
 from agent_common.models import HumanLoopMode
 from agent_runtime import EasyAgentRuntime
 from agent_runtime.connectors import (
+    browser_artifacts,
+    browser_doctor,
     connector_checks,
     connector_payloads,
     connector_summary,
@@ -27,6 +29,7 @@ from agent_runtime.tasks import (
 console = Console()
 connectors_app = typer.Typer(help='Inspect configured external connectors.')
 task_app = typer.Typer(help='Run built-in task packs.')
+browser_app = typer.Typer(help='Inspect MCP-first browser workflow readiness.')
 
 
 @connectors_app.command('list')
@@ -138,3 +141,51 @@ def run_task(
         console.print_json(json.dumps(result, ensure_ascii=False))
 
     asyncio.run(with_runtime(config, _run))
+
+
+@browser_app.command('doctor')
+def doctor_browser(
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty or json.'),
+) -> None:
+    payload = browser_doctor(config)
+    if output_format == 'json':
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    table = Table(title='easy-agent browser doctor')
+    table.add_column('Field', style='cyan')
+    table.add_column('Value', style='green')
+    for key in [
+        'enabled',
+        'provider',
+        'server_name',
+        'headless',
+        'isolated',
+        'artifacts_dir',
+        'require_approval',
+        'npx_available',
+        'mcp_server_declared',
+    ]:
+        table.add_row(key, str(payload.get(key)))
+    console.print(table)
+
+
+@browser_app.command('artifacts')
+def list_browser_artifacts(
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+    limit: int = typer.Option(50, '--limit', min=1, max=500),
+    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty or json.'),
+) -> None:
+    payload = browser_artifacts(config, limit=limit)
+    if output_format == 'json':
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    table = Table(title='easy-agent browser artifacts')
+    table.add_column('Kind', style='cyan')
+    table.add_column('Path', style='green')
+    table.add_column('Bytes', style='yellow')
+    for item in payload['artifacts']:
+        table.add_row(str(item['kind']), str(item['relative_path']), str(item['size_bytes']))
+    if not payload['artifacts']:
+        table.add_row('-', 'No browser artifacts found.', '-')
+    console.print(table)

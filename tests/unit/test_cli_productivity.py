@@ -78,6 +78,34 @@ browser:
     assert '"status": "ok"' in enabled.output
     assert 'Playwright MCP is configured as mcp:playwright' in enabled.output
 
+    artifact_root = tmp_path / 'browser-artifacts'
+    artifact_root.mkdir()
+    (artifact_root / 'snapshot.json').write_text('{"ok": true}', encoding='utf-8')
+    (artifact_root / 'screen.png').write_bytes(b'png')
+    artifact_dir = str(artifact_root).replace('\\', '/')
+    config.write_text(
+        config.read_text(encoding='utf-8')
+        + f"""
+browser:
+  enabled: true
+  provider: playwright_mcp
+  server_name: playwright
+  artifacts_dir: {artifact_dir}
+  require_approval: true
+""",
+        encoding='utf-8',
+    )
+
+    doctor = CliRunner().invoke(app, ['browser', 'doctor', '-c', str(config), '--format', 'json'])
+    artifacts = CliRunner().invoke(app, ['browser', 'artifacts', '-c', str(config), '--format', 'json'])
+
+    assert doctor.exit_code == 0
+    assert '"server_name": "playwright"' in doctor.output
+    assert '"npx_available": true' in doctor.output
+    assert artifacts.exit_code == 0
+    assert '"count": 2' in artifacts.output
+    assert '"snapshot"' in artifacts.output
+
 
 def test_task_pack_show_dry_run_and_run(tmp_path: Path) -> None:
     config = tmp_path / 'easy-agent.yml'
@@ -85,13 +113,17 @@ def test_task_pack_show_dry_run_and_run(tmp_path: Path) -> None:
 
     listed = CliRunner().invoke(app, ['task', 'list'])
     shown = CliRunner().invoke(app, ['task', 'show', 'repo-review', '--format', 'json'])
+    browser_task = CliRunner().invoke(app, ['task', 'show', 'browser-qa', '--format', 'json'])
     dry = CliRunner().invoke(app, ['task', 'run', 'repo-review', '-c', str(config), '--dry-run', '--context', 'focus tests'])
     run = CliRunner().invoke(app, ['task', 'run', 'repo-review', '-c', str(config), '--context', 'focus tests'])
 
     assert listed.exit_code == 0
     assert 'repo-review' in listed.output
+    assert 'browser-qa' in listed.output
     assert shown.exit_code == 0
     assert '"acceptance_criteria"' in shown.output
+    assert browser_task.exit_code == 0
+    assert '"recommended_scenario": "browser-agent"' in browser_task.output
     assert dry.exit_code == 0
     assert 'focus tests' in dry.output
     assert run.exit_code == 0

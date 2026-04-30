@@ -22,7 +22,7 @@ from agent_cli.commands.onboarding import (
 from agent_cli.commands.onboarding import (
     register as register_onboarding,
 )
-from agent_cli.commands.productivity import connectors_app, task_app
+from agent_cli.commands.productivity import browser_app, connectors_app, task_app
 
 app = typer.Typer(help='Engineered CLI for the easy-agent foundation.')
 app.add_typer(skills_app, name='skills')
@@ -41,5 +41,6 @@ app.add_typer(template_app, name='template')
 app.add_typer(config_app, name='config')
 app.add_typer(connectors_app, name='connectors')
 app.add_typer(task_app, name='task')
+app.add_typer(browser_app, name='browser')
 register_general(app)
 register_onboarding(app)

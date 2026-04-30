@@ -98,6 +98,51 @@ _TASK_PACKS: dict[str, TaskPack] = {
             'Security checks are called out.',
         ],
     ),
+    'browser-qa': TaskPack(
+        name='browser-qa',
+        description='Validate a browser workflow through Playwright MCP evidence.',
+        recommended_scenario='browser-agent',
+        prompt_template=(
+            'Validate this browser workflow with the configured Playwright MCP browser tools. '
+            'Prefer snapshots before screenshots, keep sensitive actions approval-gated, and '
+            'summarize the evidence, failures, and next commands.\n\nBrowser QA context:\n{context}'
+        ),
+        acceptance_criteria=[
+            'Browser connector readiness is checked before live navigation.',
+            'Snapshot, screenshot, or artifact evidence is named when available.',
+            'Sensitive browser actions are not performed without approval.',
+        ],
+    ),
+    'browser-research': TaskPack(
+        name='browser-research',
+        description='Collect web evidence through the browser connector and separate sources from conclusions.',
+        recommended_scenario='browser-agent',
+        prompt_template=(
+            'Research this topic with browser-backed evidence. Keep sources, observations, '
+            'and conclusions separate, and record browser artifacts that support the answer.\n\n'
+            'Research context:\n{context}'
+        ),
+        acceptance_criteria=[
+            'Claims are tied to observed browser evidence or cited pages.',
+            'Unverified assumptions are labeled.',
+            'Artifacts or trace commands are included for follow-up inspection.',
+        ],
+    ),
+    'browser-form-check': TaskPack(
+        name='browser-form-check',
+        description='Check a browser form or transactional flow without submitting real secrets.',
+        recommended_scenario='browser-agent',
+        prompt_template=(
+            'Check this browser form or transactional flow. Use fake safe inputs only, '
+            'do not enter real secrets, and require approval before navigation, typing, upload, '
+            'or submission-like actions.\n\nForm context:\n{context}'
+        ),
+        acceptance_criteria=[
+            'No real credentials, payment data, or personal secrets are entered.',
+            'Validation states and blocking errors are captured.',
+            'Approval-gated browser actions remain explicit in the report.',
+        ],
+    ),
 }
 
 

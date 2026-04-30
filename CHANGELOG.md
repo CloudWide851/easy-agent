@@ -35,6 +35,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `easy-agent connectors list|doctor|test`
   - `easy-agent task list|show|run`
 - Added MCP-first browser configuration with `browser.enabled`, Playwright MCP stdio server mounting, browser connector diagnostics, local browser artifacts, and default human approval gating for sensitive browser actions.
+- Added browser workflow inspection surfaces:
+  - `easy-agent browser doctor`
+  - `easy-agent browser artifacts`
+- Added browser-specific task packs:
+  - `browser-qa`
+  - `browser-research`
+  - `browser-form-check`
+- Added standalone HTML run repair packages through `easy-agent runs fix <run_id> --format html --output <path>`.
 - Added local skill and plugin operator surfaces:
   - `easy-agent skills catalog list|install`
   - `easy-agent plugins doctor`
@@ -88,6 +96,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Promoted the shorter scenario command, local trace opening, and latest-report summary into the onboarding documentation.
 - Promoted data, ops, and browser-planning scenario starters into the mock-first onboarding path.
 - Promoted `browser-agent` from planning-only to Playwright MCP-ready while keeping smoke validation mock-first and approval-aware.
+- Enhanced run diagnostics so Playwright MCP and browser-tool failures classify as `browser_mcp`, select `browser-qa`, and suggest browser doctor, artifact, connector, trace, and repair commands.
+- Enhanced the static dashboard with failed/waiting/interrupted run attention rows, pending approval rows, browser readiness, browser artifacts, and generated failure-to-fix commands.
 - Extended run diagnostics with advice-only fix packages that select a task pack and list safe follow-up commands without mutating files or rerunning agents.
 - Updated the bilingual README pair and reference docs to keep scores while adding scenario-proof framing for resume, approvals, MCP restart, provider schema repair, federation retry, and workbench snapshot restore.
 - Extended the CLI integration surface with `easy-agent integration real-network`.
@@ -117,10 +127,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_readme_snapshot.py -q` with `17 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_runtime_facade.py tests/unit/test_readme_snapshot.py -q` with `18 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_cli_productivity.py tests/unit/test_config.py tests/unit/test_readme_snapshot.py -q` with `54 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `229 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_cli_productivity.py tests/unit/test_config.py tests/unit/test_readme_snapshot.py -q` with `55 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `230 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\real-network-<timestamp>` with `1 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `7 passed`, `2 warnings`
-- CLI smoke passed for wizard creation, static dashboard export, advice-only run fix packages, connector diagnostics, Playwright MCP browser readiness, task-pack inspection, report trend, local skill catalog listing, and `new customer-support-agent`.
+- CLI smoke passed for wizard creation, enhanced static dashboard export, advice-only HTML run fix packages, browser doctor, browser artifacts, connector diagnostics, Playwright MCP browser readiness, browser task-pack inspection, report trend, local skill catalog listing, and `new customer-support-agent`.
 
 ## [0.3.5] - 2026-04-14
 

@@ -56,8 +56,8 @@ Most agent projects move quickly from "call a model" to "ship an application". T
 - Session memory, checkpoints, replay, branchable resume, and approval-aware recovery.
 - Guardrails, schema-aware tool validation, runtime event streaming, and persistent traces.
 - Durable run inspection with structured trace-tree export for debugging complex agent flows.
-- Offline `mock` provider plus `setup`, `wizard`, `init`, `quickstart`, scenario templates, connector diagnostics, task packs, `config doctor`, `runs explain`, advice-only `runs fix`, `traces open`, `report latest`, `report trend`, standalone HTML trace/report/dashboard export, and a light Python `AgentApp` facade for zero-credential onboarding and faster failure triage.
-- MCP-first browser automation through `browser.enabled: true`, which mounts Playwright MCP as a stdio MCP server and approval-gates sensitive browser actions by default.
+- Offline `mock` provider plus `setup`, `wizard`, `init`, `quickstart`, scenario templates, connector diagnostics, task packs, `config doctor`, `runs explain`, advice-only `runs fix`, `traces open`, `report latest`, `report trend`, standalone HTML trace/report/fix/dashboard export, and a light Python `AgentApp` facade for zero-credential onboarding and faster failure triage.
+- MCP-first browser automation through `browser.enabled: true`, which mounts Playwright MCP as a stdio MCP server, approval-gates sensitive browser actions by default, and exposes browser doctor/artifact inspection commands.
 - A2A-style remote federation with durable task state and signed callback verification.
 - Practical `official_source_search` skill support for source-prioritized search and fetched-page extraction.
 - Public evaluation helpers for benchmark, BFCL, tau2 mock, BrowseComp/SimpleQA-style slices, live provider-compatibility matrices, and real-network regression tracking.
@@ -176,6 +176,9 @@ uv run easy-agent new browser-agent
 uv run easy-agent new customer-support-agent
 uv run easy-agent connectors doctor -c easy-agent.yml
 uv run easy-agent task show repo-review
+uv run easy-agent task show browser-qa
+uv run easy-agent browser doctor -c easy-agent.yml
+uv run easy-agent browser artifacts -c easy-agent.yml
 uv run easy-agent report latest -c easy-agent.yml
 uv run easy-agent report latest -c easy-agent.yml --html --output report.html
 uv run easy-agent report trend --history reports --html --output trend.html
@@ -201,7 +204,7 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-The latest published patch remains `0.3.5`. The retained benchmark and headline public-eval score snapshot is still the April 14, 2026 release baseline, while the latest Python verification refresh on April 30, 2026 revalidated `ruff`, `mypy`, `229` unit tests, and `7` live integration tests without changing that retained score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+The latest published patch remains `0.3.5`. The retained benchmark and headline public-eval score snapshot is still the April 14, 2026 release baseline, while the latest Python verification refresh on April 30, 2026 revalidated `ruff`, `mypy`, `230` unit tests, and `7` live integration tests without changing that retained score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
@@ -233,7 +236,7 @@ The real-network matrix is still summarized by score here, but the report now al
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
 - using the shipped structured trace tree, `traces open`, `report latest`, `report trend`, standalone report HTML, and experimental `--otel-json` export as the main debugging surface while keeping the native trace tree as source of truth
-- keeping zero-credential onboarding strict through guided setup and wizard preflight checks, config explanation, connector diagnostics, task packs, static dashboards, advice-only run repair packages, and business templates for coding, research, data, ops, browser automation, support, sales, documents, QA, and release checks
+- keeping zero-credential onboarding strict through guided setup and wizard preflight checks, config explanation, connector diagnostics, browser doctor/artifact inspection, task packs, static dashboards, advice-only HTML run repair packages, and business templates for coding, research, data, ops, browser automation, support, sales, documents, QA, and release checks
 - widening the shipped live provider-compatibility matrix beyond the required DeepSeek/OpenAI-compatible baseline, including optional Anthropic and Gemini evidence when credentials are present
 - promoting the new official-source search plus BrowseComp or SimpleQA path into refreshed scored slices once official dataset exports and grader credentials are available
 - expanding live `/responses` compatibility coverage where OpenAI-compatible providers actually expose it, while keeping single-tool enforcement explicitly labeled as best effort when providers do not honor it strictly

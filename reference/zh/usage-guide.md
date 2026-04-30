@@ -54,6 +54,7 @@ uv run easy-agent runs list -c easy-agent.yml
 uv run easy-agent runs show <run_id> -c easy-agent.yml
 uv run easy-agent runs explain <run_id> -c easy-agent.yml
 uv run easy-agent runs fix <run_id> -c easy-agent.yml --format markdown --output fix.md
+uv run easy-agent runs fix <run_id> -c easy-agent.yml --format html --output fix.html
 uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
@@ -66,8 +67,11 @@ uv run easy-agent connectors list -c easy-agent.yml
 uv run easy-agent connectors doctor -c easy-agent.yml
 uv run easy-agent connectors test model -c easy-agent.yml
 uv run easy-agent connectors test browser -c easy-agent.yml
+uv run easy-agent browser doctor -c easy-agent.yml
+uv run easy-agent browser artifacts -c easy-agent.yml
 uv run easy-agent task list
 uv run easy-agent task show repo-review
+uv run easy-agent task show browser-qa
 uv run easy-agent task run repo-review -c easy-agent.yml --dry-run
 uv run easy-agent skills catalog list
 uv run easy-agent skills catalog install python_echo --target skills/installed --force
@@ -122,7 +126,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 - `runs list` 展示最近 run id、status、kind、session id 与创建时间。
 - `runs show <run_id>` 返回 run summary，包括 event、node、checkpoint、approval 与 child-run 数量。
 - `runs explain <run_id>` 会归类常见失败原因，包括 provider 凭据缺失、schema validation failure、guardrail block、MCP failure、iteration loop，以及 Windows cleanup warning。
-- `runs fix <run_id>` 会生成 advice-only 修复包。它复用已存储的 run explanation，自动选择 `bug-fix` 或 `release-check` 等内置 task pack，列出安全下一步命令，并可以输出 JSON 或 Markdown；该命令不会修改文件，也不会重新运行 agent。
+- `runs fix <run_id>` 会生成 advice-only 修复包。它复用已存储的 run explanation，自动选择 `bug-fix`、`release-check` 或 `browser-qa` 等内置 task pack，列出安全下一步命令，并可以输出 JSON、Markdown 或单文件 HTML；该命令不会修改文件，也不会重新运行 agent。
 - `traces export <run_id>` 默认返回结构化 trace tree。
 - `traces export <run_id> --raw` 返回历史 raw trace payload。
 - `traces export <run_id> --html --output trace.html` 会为 structured tree 写出单文件 HTML trace viewer，包含 summary cards、status/error highlighting、span-kind filters、文本搜索与 raw JSON payload。
@@ -142,7 +146,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 
 当终端表格太密时，可以使用 `report latest --html --output report.html`。导出的文件是独立 HTML，包含同一组 benchmark、public-eval、real-network、recent-run 与 raw JSON 证据。
 
-如果想要更完整的本地静态面板，可以使用 `dashboard -c easy-agent.yml --output dashboard.html`。它会把 latest reports、report trend、connector readiness、recent runs、pending approvals 与 raw JSON 放到一个只读 HTML 文件里。
+如果想要更完整的本地静态面板，可以使用 `dashboard -c easy-agent.yml --output dashboard.html`。它会把 latest reports、report trend、connector readiness、failed/waiting runs、pending approvals、browser readiness、browser artifacts 与 raw JSON 放到一个只读 HTML 文件里。
 
 `report trend` 会比较某个目录下的本地 report artifacts，并展示 benchmark、public-eval、real-network 的 latest score、previous score 与 score delta。使用 `--html --output trend.html` 可以生成单文件趋势页。
 
@@ -154,11 +158,13 @@ Trace-tree span 从现有 runtime event envelope 派生，包含稳定的 `span_
 - `connectors doctor` 做静态 connector 检查，不启动高风险外部流程。
 - `connectors test <name>` 聚焦检查列表里的一个 connector。
 - 当 `browser.enabled` 为 true 且 `provider: playwright_mcp` 时，browser diagnostics 会检查 `npx` 是否可用，并说明 live browser automation 是否需要审批。Playwright MCP 通过常规 MCP startup 挂载，因此 `mcp list` 仍然是检查 catalog 的入口。
+- `browser doctor` 输出 browser-specific 静态就绪报告，覆盖 Playwright MCP command shape、headless/isolated mode、artifact directory、approval mode、`npx` 可用性与 MCP server name collision。
+- `browser artifacts` 只扫描当前 browser artifact directory，不启动 Playwright MCP；它会把截图、snapshot、video、archive、network capture、log 和其他文件分类，方便在 rerun 前检查 browser failure 证据。
 - `task list` 展示内置 task packs。
 - `task show <pack>` 输出 prompt template、recommended scenario 与 acceptance criteria。
 - `task run <pack>` 会把任务渲染后交给当前配置的 entrypoint。使用 `--dry-run` 可先检查 prompt。
 
-当前内置 task packs 包括 `repo-review`、`bug-fix`、`docs-refresh`、`release-check`、`data-summary` 与 `federation-loopback-demo`。
+当前内置 task packs 包括 `repo-review`、`bug-fix`、`docs-refresh`、`release-check`、`data-summary`、`federation-loopback-demo`、`browser-qa`、`browser-research` 与 `browser-form-check`。
 
 ## Python Facade
 

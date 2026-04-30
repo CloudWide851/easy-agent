@@ -410,10 +410,15 @@ storage:
         asyncio.run(runtime.aclose())
 
     markdown_path = tmp_path / 'nested' / 'fix.md'
+    html_path = tmp_path / 'nested' / 'fix.html'
     json_result = CliRunner().invoke(app, ['runs', 'fix', 'run_fix', '-c', str(config_path), '--format', 'json'])
     markdown_result = CliRunner().invoke(
         app,
         ['runs', 'fix', 'run_fix', '-c', str(config_path), '--format', 'markdown', '--output', str(markdown_path)],
+    )
+    html_result = CliRunner().invoke(
+        app,
+        ['runs', 'fix', 'run_fix', '-c', str(config_path), '--format', 'html', '--output', str(html_path)],
     )
 
     assert json_result.exit_code == 0
@@ -422,6 +427,43 @@ storage:
     assert markdown_result.exit_code == 0
     assert markdown_path.exists()
     assert '# easy-agent run fix: run_fix' in markdown_path.read_text(encoding='utf-8')
+    assert html_result.exit_code == 0
+    assert html_path.exists()
+    html = html_path.read_text(encoding='utf-8')
+    assert '<!doctype html>' in html
+    assert 'Recommended Commands' in html
+    assert 'Task Prompt' in html
+
+
+def test_runs_fix_classifies_browser_mcp_failure(tmp_path: Path) -> None:
+    config_path = tmp_path / 'easy-agent.yml'
+    storage_path = str(tmp_path / 'state').replace('\\', '/')
+    config_path.write_text(
+        f"""
+graph:
+  entrypoint: agent_a
+  agents:
+    - name: agent_a
+storage:
+  path: {storage_path}
+  database: state.db
+""",
+        encoding='utf-8',
+    )
+    runtime = build_runtime(config_path)
+    try:
+        runtime.store.create_run('run_browser_fix', 'baseline', {'input': 'hello'})
+        runtime.store.record_event('run_browser_fix', 'tool_call_failed', {'tool': 'browser_navigate', 'error': 'Playwright MCP npx failed'})
+        runtime.store.finish_run('run_browser_fix', RunStatus.FAILED.value, {'error': 'browser_artifacts missing'})
+    finally:
+        asyncio.run(runtime.aclose())
+
+    result = CliRunner().invoke(app, ['runs', 'fix', 'run_browser_fix', '-c', str(config_path), '--format', 'json'])
+
+    assert result.exit_code == 0
+    assert '"likely_layer": "browser_mcp"' in result.output
+    assert '"selected_task_pack": "browser-qa"' in result.output
+    assert 'easy-agent browser doctor' in result.output
 
 
 def test_dashboard_writes_static_html(tmp_path: Path) -> None:
@@ -449,6 +491,8 @@ storage:
     try:
         runtime.store.create_run('run_dash', 'baseline', {'input': 'hello'})
         runtime.store.finish_run('run_dash', RunStatus.SUCCEEDED.value, {'output': 'done'})
+        runtime.store.create_run('run_failed_dash', 'baseline', {'input': 'bad'})
+        runtime.store.finish_run('run_failed_dash', RunStatus.FAILED.value, {'error': 'bad'})
     finally:
         asyncio.run(runtime.aclose())
 
@@ -460,9 +504,13 @@ storage:
 
     assert result.exit_code == 0
     assert output_path.exists()
-    assert '"run_count": 1' in result.output
+    assert '"run_count": 2' in result.output
     html = output_path.read_text(encoding='utf-8')
     assert '<!doctype html>' in html
     assert 'easy-agent dashboard' in html
     assert 'run_dash' in html
-
+    assert 'Needs Attention' in html
+    assert 'Approvals' in html
+    assert 'Browser' in html
+    assert 'run_failed_dash' in html
+    assert 'runs fix run_failed_dash' in html

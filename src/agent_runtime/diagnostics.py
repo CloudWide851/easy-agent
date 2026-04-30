@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 from typing import Any, Protocol
 
 from agent_common.models import RunStatus
@@ -87,6 +88,101 @@ def fix_package_markdown(payload: dict[str, Any]) -> str:
     )
 
 
+def fix_package_html(payload: dict[str, Any]) -> str:
+    raw_explanation = payload.get('explanation')
+    explanation: dict[str, Any] = raw_explanation if isinstance(raw_explanation, dict) else {}
+    raw_evidence = explanation.get('evidence')
+    evidence: list[Any] = raw_evidence if isinstance(raw_evidence, list) else []
+    raw_commands = payload.get('recommended_commands')
+    commands: list[Any] = raw_commands if isinstance(raw_commands, list) else []
+    raw_notes = payload.get('safety_notes')
+    notes: list[Any] = raw_notes if isinstance(raw_notes, list) else []
+    evidence_rows = ''.join(_evidence_row(item if isinstance(item, dict) else {'source': 'unknown', 'value': item}) for item in evidence)
+    command_rows = ''.join(f'<li><code>{escape(str(item))}</code></li>' for item in commands)
+    note_rows = ''.join(f'<li>{escape(str(item))}</li>' for item in notes)
+    raw_json = escape(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>easy-agent run fix {escape(str(payload.get('run_id') or ''))}</title>
+  <style>
+    :root {{ color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    body {{ margin: 0; background: #f7f5ef; color: #20242b; }}
+    header {{ background: #fffdfa; border-bottom: 1px solid #d8d0c2; padding: 28px 0; }}
+    main, .wrap {{ width: min(1080px, calc(100% - 32px)); margin: 0 auto; }}
+    main {{ padding: 24px 0 42px; }}
+    h1 {{ margin: 0; font-size: 30px; line-height: 1.1; letter-spacing: 0; }}
+    h2 {{ margin: 24px 0 10px; font-size: 18px; }}
+    .lead {{ margin: 10px 0 0; color: #5f6673; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }}
+    .card {{ border: 1px solid #d8d0c2; border-radius: 8px; background: #fffdfa; padding: 13px; }}
+    .label {{ display: block; color: #6b7280; font-size: 12px; text-transform: uppercase; }}
+    .value {{ display: block; margin-top: 5px; font-weight: 700; overflow-wrap: anywhere; }}
+    table {{ width: 100%; border-collapse: collapse; background: #fffdfa; border: 1px solid #d8d0c2; border-radius: 8px; overflow: hidden; }}
+    th, td {{ text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid #eee4d5; font-size: 13px; }}
+    tr:last-child td {{ border-bottom: 0; }}
+    code {{ background: #ebe5d8; border-radius: 5px; padding: 2px 5px; overflow-wrap: anywhere; }}
+    pre {{ overflow: auto; padding: 12px; border-radius: 8px; background: #20242b; color: #f7f5ef; }}
+    li {{ margin: 7px 0; }}
+    @media (prefers-color-scheme: dark) {{
+      body {{ background: #151515; color: #f3efe5; }}
+      header, .card, table {{ background: #20201f; border-color: #38332a; }}
+      .lead, .label {{ color: #b9b0a2; }}
+      th, td {{ border-color: #38332a; }}
+      code {{ background: #2b2924; }}
+      pre {{ background: #0f1115; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>easy-agent run fix</h1>
+      <p class="lead">Advice-only failure package. This page does not apply patches, rerun agents, or bypass approvals.</p>
+    </div>
+  </header>
+  <main>
+    <section class="grid">
+      <div class="card"><span class="label">Run</span><span class="value">{escape(str(payload.get('run_id') or '-'))}</span></div>
+      <div class="card"><span class="label">Status</span><span class="value">{escape(str(explanation.get('status') or '-'))}</span></div>
+      <div class="card"><span class="label">Layer</span><span class="value">{escape(str(explanation.get('likely_layer') or '-'))}</span></div>
+      <div class="card"><span class="label">Task pack</span><span class="value">{escape(str(payload.get('selected_task_pack') or '-'))}</span></div>
+    </section>
+    <section>
+      <h2>Probable Cause</h2>
+      <p>{escape(str(payload.get('probable_cause') or '-'))}</p>
+      <p>{escape(str(explanation.get('headline') or '-'))}</p>
+    </section>
+    <section>
+      <h2>Evidence</h2>
+      <table><thead><tr><th>Source</th><th>Value</th></tr></thead><tbody>{evidence_rows or '<tr><td colspan="2">No focused evidence recorded.</td></tr>'}</tbody></table>
+    </section>
+    <section>
+      <h2>Recommended Commands</h2>
+      <ul>{command_rows}</ul>
+    </section>
+    <section>
+      <h2>Safety Notes</h2>
+      <ul>{note_rows}</ul>
+    </section>
+    <section>
+      <h2>Task Prompt</h2>
+      <pre>{escape(str(payload.get('task_prompt') or ''))}</pre>
+    </section>
+    <section>
+      <details>
+        <summary>Raw JSON</summary>
+        <pre>{raw_json}</pre>
+      </details>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
 def _classify(status: str, event_kinds: list[str], text: str) -> tuple[str, str, list[str]]:
     if status == RunStatus.SUCCEEDED.value:
         if any('retry' in kind or 'repair' in kind for kind in event_kinds):
@@ -125,6 +221,12 @@ def _classify(status: str, event_kinds: list[str], text: str) -> tuple[str, str,
             'guardrail',
             'A guardrail blocked tool input or final output.',
             ['Inspect guardrail events and decide whether the input, tool arguments, or policy should change.'],
+        )
+    if _looks_like_browser_mcp(text, event_kinds):
+        return (
+            'browser_mcp',
+            'The failure appears related to browser automation through Playwright MCP.',
+            ['Run browser doctor, inspect browser artifacts, and confirm approvals before rerunning the browser task.'],
         )
     if any(kind == 'tool_call_failed' for kind in event_kinds):
         return (
@@ -177,6 +279,8 @@ def _select_task_pack(requested: str, explanation: dict[str, Any]) -> str:
     if requested != 'auto':
         return requested
     layer = str(explanation.get('likely_layer') or '')
+    if layer == 'browser_mcp':
+        return 'browser-qa'
     if layer in {'tool_validation', 'tool_runtime', 'mcp', 'model_provider', 'runtime', 'agent_loop'}:
         return 'bug-fix'
     if layer in {'cleanup_warning', 'success', 'runtime_recovery'}:
@@ -214,6 +318,7 @@ def _probable_cause(explanation: dict[str, Any]) -> str:
         'tool_validation': 'The model emitted tool arguments that did not match the registered schema.',
         'guardrail': 'A configured guardrail blocked tool input or final output.',
         'tool_runtime': 'A local tool raised an exception during execution.',
+        'browser_mcp': 'A Playwright MCP browser startup, tool, approval, or artifact path failed.',
         'mcp': 'An MCP transport, catalog, auth, roots, or tool-call path failed.',
         'agent_loop': 'The agent repeated work until it hit the iteration budget.',
         'cleanup_warning': 'Windows asyncio subprocess teardown emitted a known cleanup warning after execution.',
@@ -233,6 +338,14 @@ def _fix_commands(run_id: str, explanation: dict[str, Any]) -> list[str]:
         commands.insert(1, 'easy-agent approvals list -c easy-agent.yml')
     if layer == 'mcp':
         commands.append('easy-agent mcp list -c easy-agent.yml')
+    if layer == 'browser_mcp':
+        commands.extend(
+            [
+                'easy-agent browser doctor -c easy-agent.yml',
+                'easy-agent browser artifacts -c easy-agent.yml',
+                'easy-agent connectors test browser -c easy-agent.yml',
+            ]
+        )
     if layer in {'model_provider', 'tool_validation', 'agent_loop'}:
         commands.append('easy-agent task show bug-fix --format json')
     return commands
@@ -245,8 +358,35 @@ def _safety_notes(explanation: dict[str, Any]) -> list[str]:
         notes.append('Do not bypass approvals or guardrails without reviewing the recorded payload.')
     if layer == 'mcp':
         notes.append('Check MCP roots and auth before widening filesystem or browser access.')
+    if layer == 'browser_mcp':
+        notes.append('Keep browser automation MCP-first and review artifacts before repeating navigation, typing, upload, or submission actions.')
     if layer == 'model_provider':
         notes.append('Keep provider credentials in environment variables or local env files only.')
     if layer == 'agent_loop':
         notes.append('Prefer tightening prompts or duplicate-call controls before raising max_iterations.')
     return notes
+
+
+def _evidence_row(item: dict[str, Any]) -> str:
+    return (
+        '<tr>'
+        f'<td>{escape(str(item.get("source") or "-"))}</td>'
+        f'<td><pre>{escape(json.dumps(item.get("value"), ensure_ascii=False, indent=2, default=str))}</pre></td>'
+        '</tr>'
+    )
+
+
+def _looks_like_browser_mcp(text: str, event_kinds: list[str]) -> bool:
+    lowered = text.lower()
+    if any('browser' in kind for kind in event_kinds):
+        return True
+    tokens = [
+        '@playwright/mcp',
+        'playwright mcp',
+        'browser_',
+        'browser snapshot',
+        'browser screenshot',
+        'browser artifacts',
+        'npx',
+    ]
+    return any(token in lowered for token in tokens)
