@@ -137,13 +137,13 @@ README 只保留高层摘要，本页保留公开证据映射。
 本轮只使用 Python-based verification。
 
 - 静态检查：`ruff` 与 `mypy`
-- 定向回归：setup preflight、config explanation、config doctor、可搜索 HTML trace export、本地 trace 打开、latest-report 汇总和 HTML export、report trend、experimental OTel trace export、connector diagnostics、task packs、本地 skill catalog、plugin doctor、Python facade embedding、mock provider、onboarding CLI、scenario creation、run explanation、provider compatibility、config validation、guardrails、BFCL evaluation、official-source search 与 simple-evals profile support，结果 `23 passed`、`36 passed`、`89 passed` 加 `4 passed`
-- 全量 unit tests：`222 passed`
+- 定向回归：setup preflight、wizard、config explanation、config doctor、可搜索 HTML trace export、本地 trace 打开、latest-report 汇总和 HTML export、静态 dashboard export、report trend、experimental OTel trace export、connector diagnostics、Playwright MCP browser readiness、task packs、本地 skill catalog、plugin doctor、Python facade embedding、mock provider、onboarding CLI、scenario creation、run explanation/fix packages、provider compatibility、config validation、guardrails、BFCL evaluation、official-source search 与 simple-evals profile support；最新 focused set 为 `54 passed`，保留兼容性集合为 `23 passed`、`36 passed`、`89 passed` 加 `4 passed`
+- 全量 unit tests：`229 passed`
 - 定向 live provider compatibility 回归：`1 passed`
 - 全量 real integration：`7 passed`、`2 warnings`
-- 保留的 benchmark 与 public-eval headline 分数仍指向 4 月 14 日发布快照，live provider compatibility 证据保留 4 月 20 日快照，而 real-network artifact 在 4 月 29 日重新刷新
+- 保留的 benchmark 与 public-eval headline 分数仍指向 4 月 14 日发布快照，live provider compatibility 证据保留 4 月 20 日快照，而 real-network artifact 在 4 月 30 日重新刷新
 - 剩余 warning 仍然是 Windows asyncio subprocess cleanup 的已知问题，不属于功能失败
-- 新增 focused regressions 覆盖 setup preflight、config explanation、config doctor、可搜索 HTML trace export、`traces open`、`report latest`、`report trend`、latest-report HTML export、experimental OTel trace export、connector diagnostics、task packs、本地 skill catalog install、plugin doctor、offline mock runs、starter templates、coding/research/data/ops/browser/support/sales/document/QA/release starters 的 `new <scenario>`、Python `AgentApp`、quickstart、run explanation、run listing、run summary、structured trace tree export、executor capability reports、storage contracts 与 real-network scenario proof metadata。
-- CLI smoke 已覆盖 `connectors doctor`、`connectors test browser`、`task show repo-review`、`report trend`、`skills catalog list` 与 `new customer-support-agent`。
+- 新增 focused regressions 覆盖 setup preflight、wizard scenario creation、browser template Playwright MCP config、config explanation、config doctor、可搜索 HTML trace export、`traces open`、`report latest`、`dashboard`、`report trend`、latest-report HTML export、experimental OTel trace export、connector diagnostics、task packs、本地 skill catalog install、plugin doctor、offline mock runs、starter templates、coding/research/data/ops/browser/support/sales/document/QA/release starters 的 `new <scenario>`、Python `AgentApp`、quickstart、run explanation、advice-only run fix packages、run listing、run summary、structured trace tree export、executor capability reports、storage contracts 与 real-network scenario proof metadata。
+- CLI smoke 已覆盖 `wizard`、`dashboard`、`runs fix`、`connectors doctor`、`connectors test browser`、`task show repo-review`、`report trend`、`skills catalog list` 与 `new customer-support-agent`。
 
 机器本地的完整执行日志不进入仓库公开文档。

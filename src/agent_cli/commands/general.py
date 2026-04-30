@@ -18,7 +18,8 @@ from agent_common.models import HumanLoopMode, RunContext
 from agent_common.version import runtime_version
 from agent_protocols import resolve_protocol
 from agent_runtime import EasyAgentRuntime, build_runtime
-from agent_runtime.diagnostics import explain_run
+from agent_runtime.dashboard import dashboard_html, dashboard_payload
+from agent_runtime.diagnostics import build_fix_package, explain_run, fix_package_markdown
 from agent_runtime.reports import (
     build_report_trend,
     latest_report_html,
@@ -192,6 +193,54 @@ def explain_run_command(
         asyncio.run(runtime.aclose())
 
 
+@runs_app.command('fix')
+def fix_run_command(
+    run_id: str = typer.Argument(..., help='Existing run id.'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+    task_pack: str = typer.Option('auto', '--task-pack', help='Task pack: auto, bug-fix, docs-refresh, release-check, or repo-review.'),
+    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty, json, or markdown.'),
+    output: str | None = typer.Option(None, '-o', '--output', help='Optional output file for json or markdown formats.'),
+) -> None:
+    runtime = build_runtime(config)
+    try:
+        payload = build_fix_package(runtime.store, run_id, task_pack=task_pack)
+    finally:
+        asyncio.run(runtime.aclose())
+    if output_format == 'json':
+        content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        if output:
+            output_path = Path(output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content, encoding='utf-8')
+            console.print_json(json.dumps({'run_id': run_id, 'output': str(output_path)}, ensure_ascii=False))
+        else:
+            console.print_json(content)
+        return
+    if output_format == 'markdown':
+        content = fix_package_markdown(payload)
+        if output:
+            output_path = Path(output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content, encoding='utf-8')
+            console.print_json(json.dumps({'run_id': run_id, 'output': str(output_path)}, ensure_ascii=False))
+        else:
+            console.print(content)
+        return
+    if output_format != 'pretty':
+        raise typer.BadParameter('format must be pretty, json, or markdown')
+    explanation = payload['explanation']
+    table = Table(title=f'run fix advice: {run_id}')
+    table.add_column('Field', style='cyan')
+    table.add_column('Value', style='green')
+    table.add_row('Mode', str(payload['mode']))
+    table.add_row('Layer', str(explanation['likely_layer']))
+    table.add_row('Status', str(explanation['status']))
+    table.add_row('Task Pack', str(payload['selected_task_pack']))
+    table.add_row('Probable Cause', str(payload['probable_cause']))
+    table.add_row('Recommended Commands', '\n'.join(str(item) for item in payload['recommended_commands']))
+    console.print(table)
+
+
 @traces_app.command('export')
 def export_trace(
     run_id: str = typer.Argument(..., help='Existing run id.'),
@@ -343,6 +392,41 @@ def trend_report(
 
 
 def register(app: typer.Typer) -> None:
+    @app.command('dashboard')
+    def dashboard(
+        config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+        history: str = typer.Option('.easy-agent', '--history', help='Directory containing local report JSON artifacts.'),
+        run_limit: int = typer.Option(30, '--run-limit', min=1, max=500),
+        output: str = typer.Option('dashboard.html', '-o', '--output', help='Standalone HTML output path.'),
+        open_browser: bool = typer.Option(False, '--open', help='Open the generated dashboard in the default browser.'),
+        output_format: str = typer.Option('pretty', '--format', help='Output format: pretty or json.'),
+    ) -> None:
+        payload = dashboard_payload(Path(config), history=Path(history), run_limit=run_limit)
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(dashboard_html(payload), encoding='utf-8')
+        opened = False
+        if open_browser:
+            opened = webbrowser.open(output_path.resolve().as_uri())
+        response = {
+            'output': str(output_path),
+            'opened': opened,
+            'connector_summary': payload['connectors']['summary'],
+            'run_count': len(payload['runs']),
+            'pending_approvals': len(payload['approvals']['pending']),
+        }
+        if output_format == 'json':
+            console.print_json(json.dumps(response, ensure_ascii=False))
+            return
+        if output_format != 'pretty':
+            raise typer.BadParameter('format must be pretty or json')
+        table = Table(title='easy-agent dashboard')
+        table.add_column('Field', style='cyan')
+        table.add_column('Value', style='green')
+        for key, value in response.items():
+            table.add_row(key, json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value))
+        console.print(table)
+
     @app.command()
     def doctor(
         config: str = typer.Option('easy-agent.yml', '-c', '--config'),

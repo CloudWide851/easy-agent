@@ -506,6 +506,25 @@ class StorageConfig(BaseModel):
     database: str = 'state.db'
 
 
+class BrowserConfig(BaseModel):
+    enabled: bool = False
+    provider: Literal['playwright_mcp'] = 'playwright_mcp'
+    server_name: str = 'playwright'
+    headless: bool = True
+    isolated: bool = True
+    artifacts_dir: str = '.easy-agent/browser'
+    timeout_seconds: float = 30.0
+    require_approval: bool = True
+
+    @model_validator(mode='after')
+    def validate_browser(self) -> BrowserConfig:
+        if not self.server_name.strip():
+            raise ValueError('browser.server_name must not be empty')
+        if self.timeout_seconds <= 0:
+            raise ValueError('browser.timeout_seconds must be positive')
+        return self
+
+
 class LoggingConfig(BaseModel):
     level: str = 'INFO'
 
@@ -710,6 +729,7 @@ class AppConfig(BaseModel):
     federation: FederationConfig = Field(default_factory=FederationConfig)
     executors: list[ExecutorConfig] = Field(default_factory=lambda: [ExecutorConfig()])
     workbench: WorkbenchConfig = Field(default_factory=WorkbenchConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
@@ -816,6 +836,7 @@ def load_config(path: str | Path) -> AppConfig:
     expanded.setdefault('federation', {})
     expanded.setdefault('executors', [{'name': 'process', 'kind': 'process', 'default_timeout_seconds': 30.0}])
     expanded.setdefault('workbench', {})
+    expanded.setdefault('browser', {})
     security = expanded.setdefault('security', {})
     security.setdefault('human_loop', {})
     return AppConfig.model_validate(expanded)

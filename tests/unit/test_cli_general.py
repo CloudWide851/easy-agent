@@ -385,3 +385,84 @@ storage:
     assert result.exit_code == 0
     assert '"likely_layer": "model_provider"' in result.output
 
+
+def test_runs_fix_outputs_advice_only_package(tmp_path: Path) -> None:
+    config_path = tmp_path / 'easy-agent.yml'
+    storage_path = str(tmp_path / 'state').replace('\\', '/')
+    config_path.write_text(
+        f"""
+graph:
+  entrypoint: agent_a
+  agents:
+    - name: agent_a
+storage:
+  path: {storage_path}
+  database: state.db
+""",
+        encoding='utf-8',
+    )
+    runtime = build_runtime(config_path)
+    try:
+        runtime.store.create_run('run_fix', 'baseline', {'input': 'hello'})
+        runtime.store.record_event('run_fix', 'tool_validation_failed', {'error': 'bad args'})
+        runtime.store.finish_run('run_fix', RunStatus.FAILED.value, {'error': 'bad args'})
+    finally:
+        asyncio.run(runtime.aclose())
+
+    markdown_path = tmp_path / 'nested' / 'fix.md'
+    json_result = CliRunner().invoke(app, ['runs', 'fix', 'run_fix', '-c', str(config_path), '--format', 'json'])
+    markdown_result = CliRunner().invoke(
+        app,
+        ['runs', 'fix', 'run_fix', '-c', str(config_path), '--format', 'markdown', '--output', str(markdown_path)],
+    )
+
+    assert json_result.exit_code == 0
+    assert '"mode": "advice_only"' in json_result.output
+    assert '"selected_task_pack": "bug-fix"' in json_result.output
+    assert markdown_result.exit_code == 0
+    assert markdown_path.exists()
+    assert '# easy-agent run fix: run_fix' in markdown_path.read_text(encoding='utf-8')
+
+
+def test_dashboard_writes_static_html(tmp_path: Path) -> None:
+    config_path = tmp_path / 'easy-agent.yml'
+    storage_path = str(tmp_path / 'state').replace('\\', '/')
+    config_path.write_text(
+        f"""
+model:
+  provider: mock
+  protocol: mock
+  model: mock-agent
+  base_url: mock://local
+  api_key_env: EASY_AGENT_MOCK_API_KEY
+graph:
+  entrypoint: agent_a
+  agents:
+    - name: agent_a
+storage:
+  path: {storage_path}
+  database: state.db
+""",
+        encoding='utf-8',
+    )
+    runtime = build_runtime(config_path)
+    try:
+        runtime.store.create_run('run_dash', 'baseline', {'input': 'hello'})
+        runtime.store.finish_run('run_dash', RunStatus.SUCCEEDED.value, {'output': 'done'})
+    finally:
+        asyncio.run(runtime.aclose())
+
+    output_path = tmp_path / 'dashboard.html'
+    result = CliRunner().invoke(
+        app,
+        ['dashboard', '-c', str(config_path), '--history', str(tmp_path), '--output', str(output_path), '--format', 'json'],
+    )
+
+    assert result.exit_code == 0
+    assert output_path.exists()
+    assert '"run_count": 1' in result.output
+    html = output_path.read_text(encoding='utf-8')
+    assert '<!doctype html>' in html
+    assert 'easy-agent dashboard' in html
+    assert 'run_dash' in html
+

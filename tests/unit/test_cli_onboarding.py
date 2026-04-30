@@ -86,6 +86,22 @@ def test_all_templates_create_valid_configs(tmp_path: Path) -> None:
         assert (destination / '.env.local.example').exists()
 
 
+def test_browser_template_enables_playwright_mcp_browser(tmp_path: Path) -> None:
+    runner = CliRunner()
+    destination = tmp_path / 'browser-starter'
+
+    result = runner.invoke(app, ['template', 'create', 'browser-agent', str(destination)])
+    config = load_config(destination / 'easy-agent.yml')
+
+    assert result.exit_code == 0
+    assert config.browser.enabled is True
+    assert config.browser.provider == 'playwright_mcp'
+    assert config.browser.server_name == 'playwright'
+    assert config.browser.require_approval is True
+    assert 'browser:' in (destination / 'easy-agent.yml').read_text(encoding='utf-8')
+    assert 'easy-agent connectors test browser' in (destination / 'README.md').read_text(encoding='utf-8')
+
+
 def test_new_command_creates_business_scenarios(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
@@ -140,6 +156,62 @@ def test_setup_creates_config_and_runs_mock_smoke(tmp_path: Path, monkeypatch: M
     assert 'succeeded' in result.output
     assert 'Checks' in result.output
     assert 'easy-agent traces export' in result.output
+
+
+def test_wizard_creates_scenario_non_interactively(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / 'wizard-basic'
+
+    result = runner.invoke(
+        app,
+        [
+            'wizard',
+            '--scenario',
+            'basic-agent',
+            '--target-dir',
+            str(target),
+            '--provider',
+            'mock',
+            '--skip-smoke',
+            '--format',
+            'json',
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (target / 'easy-agent.yml').exists()
+    assert '"scenario": "basic-agent"' in result.output
+    assert '"smoke": "skipped"' in result.output
+    assert 'easy-agent dashboard' in result.output
+    load_config(target / 'easy-agent.yml')
+
+
+def test_wizard_skips_browser_smoke_for_mcp_connector(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / 'wizard-browser'
+
+    result = runner.invoke(
+        app,
+        [
+            'wizard',
+            '--scenario',
+            'browser-agent',
+            '--target-dir',
+            str(target),
+            '--provider',
+            'mock',
+            '--format',
+            'json',
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"scenario": "browser-agent"' in result.output
+    assert 'connectors test browser' in result.output
+    assert 'skipped: browser-agent uses a live Playwright MCP connector' in result.output
+    assert load_config(target / 'easy-agent.yml').browser.enabled is True
 
 
 def test_config_validate_explain_and_doctor(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

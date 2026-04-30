@@ -11,7 +11,7 @@ This roadmap starts from the published `0.3.5` baseline.
 - Extend the raw official BFCL v4 normalization path into wider agentic and multihop coverage with clearer official-category diagnostics.
 - Turn the newly shipped `official_source_search` plus `browsecomp_subset` / `simpleqa_subset` support into refreshable scored slices once local dataset exports and grader credentials are available.
 - Deepen MCP notification parity around resource updates, prompt-detail refresh, and template diff telemetry without widening the model-facing runtime surface.
-- Treat connector diagnostics, built-in task packs, report trends, local skill catalog workflows, and federation-demo checks as the next operator-facing usability layer before adding heavier runtime dependencies.
+- Treat the new wizard, connector diagnostics, built-in task packs, advice-only run fix packages, static dashboard, local skill catalog workflows, and federation-demo checks as the next operator-facing usability layer before adding heavier runtime dependencies.
 
 ## Onboarding and Diagnostics
 
@@ -20,14 +20,14 @@ Current public agent-building guidance puts the shortest path first: create one 
 Next reinforcement for usability:
 
 - keep `setup --provider mock` and `quickstart --provider mock` as the first commands in docs and CI smoke, because they prove config loading, skills, storage, tool calls, trace persistence, and preflight diagnostics without requiring secrets
-- keep `new <scenario>` as the shortest path from intent to a runnable project, with business starters such as `coding-agent`, `research-agent`, `data-agent`, `ops-agent`, and `browser-agent` proving common workflows before users write YAML by hand
+- keep `new <scenario>` as the shortest path from intent to a runnable project, and keep `wizard --scenario <name>` as the guided path that adds static checks, next commands, and optional mock smoke before users write YAML by hand
 - keep `config doctor` as the static risk gate before live-provider runs, with checks for env readiness, MCP roots/auth, federation auth, executor readiness, storage portability, and human-loop coverage
 - keep template variants mapped to shipped runtime contracts, then deepen them with focused smoke tests for approval flow, harness flow, MCP resource catalog flow, federation loopback flow, and workbench-backed coding tasks
-- make `runs explain` the default next step after failed runs, and extend classifiers for provider schema errors, HTTP status buckets, approval states, MCP startup failures, and duplicated tool loops
-- keep traces as the debugging source of truth first, use `traces open` and the searchable HTML export for local inspection, use `report latest` and its HTML export to summarize available evidence, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
+- make `runs explain` the default next step after failed runs, then use `runs fix` when the user needs a packaged advice-only repair prompt, safe commands, and task-pack selection without mutating the repository
+- keep traces as the debugging source of truth first, use `traces open` and the searchable HTML export for local inspection, use `report latest`, dashboard HTML, and report trend HTML to summarize available evidence, then promote stable trace fields into public evaluation and OpenTelemetry export contracts
 - make every new high-level feature ship with a mock-backed smoke path plus an optional live-provider path, so first-run experience stays reliable even when credentials are missing
 - keep the Python `AgentApp` facade intentionally thin, so embedded applications use the same config-driven runtime as the CLI instead of drifting into a second orchestration surface
-- keep browser work connector-ready for now: `browser-agent` should plan browser tasks and expose missing connector requirements, but it should not claim first-class navigation, screenshot, or form execution until a real browser connector is implemented
+- keep browser work MCP-first: `browser-agent` now uses `browser.enabled: true` with Playwright MCP, default isolated/headless execution, local browser artifacts, and approval-gated sensitive browser actions; next work should harden catalog drift, artifact lifecycle, and browser-specific approval UX rather than adding a second native browser stack prematurely
 
 Reference:
 
@@ -40,8 +40,9 @@ Reference:
 The newest CLI layer should make common work executable without forcing users to know the full YAML/runtime shape first:
 
 - use `connectors list`, `connectors doctor`, and `connectors test <name>` as static readiness checks for model, storage, search, MCP, workbench, federation, and browser-facing surfaces
-- keep browser diagnostics explicit about the current boundary: planning and connector discovery are shipped; navigation, screenshots, forms, and downloads still need a real browser connector such as a browser MCP server or future native integration
+- keep browser diagnostics explicit about the current boundary: Playwright MCP configuration and readiness are shipped, but live navigation, screenshots, forms, and downloads still depend on the user's local Node/npm, browser, MCP startup, and approval settings
 - use `task list`, `task show`, and `task run` as a packaged workflow layer for repository review, bug fixing, docs refresh, release checks, data summaries, and federation loopback validation
+- use `dashboard` as a static local operations page before adding a persistent web server, because it keeps the operator view dependency-free and easy to archive with run evidence
 - keep `task run --dry-run` useful for prompt review and approvals before a task is sent to a model-backed agent
 - use `report trend` to compare local benchmark, public-eval, and real-network artifacts over time instead of reading individual JSON files by hand
 - keep `traces export --otel-json` explicitly experimental while the local trace tree remains the source of truth, because OpenTelemetry GenAI conventions are still evolving
@@ -191,6 +192,7 @@ Reference:
 
 - <https://modelcontextprotocol.io/specification/2025-03-26/server/resources>
 - <https://modelcontextprotocol.io/specification/2025-11-25/schema>
+- <https://github.com/microsoft/playwright-mcp>
 - <https://a2a-protocol.org/latest/specification/>
 - <https://opentelemetry.io/docs/specs/semconv/gen-ai/>
 

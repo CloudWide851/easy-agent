@@ -153,11 +153,37 @@ def _federation_checks(config: AppConfig) -> list[ConnectorCheck]:
 
 
 def _browser_check(config: AppConfig) -> ConnectorCheck:
-    del config
+    browser = config.browser
+    if not browser.enabled:
+        return ConnectorCheck(
+            'browser',
+            'browser',
+            'warn',
+            'No first-class browser connector is configured; browser-agent is a planning starter.',
+            'Enable browser.provider=playwright_mcp or add a browser MCP server before executing navigation, form, download, or screenshot tasks.',
+        )
+    if browser.provider == 'playwright_mcp':
+        npx_available = shutil.which('npx') is not None
+        approval = 'approval required' if browser.require_approval else 'approval disabled'
+        if npx_available:
+            return ConnectorCheck(
+                'browser',
+                'browser',
+                'ok',
+                f'Playwright MCP is configured as mcp:{browser.server_name}; npx is available; {approval}.',
+                'Run mcp list or a browser task smoke when live browser automation is needed.',
+            )
+        return ConnectorCheck(
+            'browser',
+            'browser',
+            'warn',
+            f'Playwright MCP is configured as mcp:{browser.server_name}, but npx is not on PATH; {approval}.',
+            'Install Node.js/npm or set up an explicit MCP browser server command.',
+        )
     return ConnectorCheck(
         'browser',
         'browser',
-        'warn',
-        'No first-class browser connector is configured; browser-agent is a planning starter.',
-        'Use a browser MCP server or future browser connector before executing navigation, form, download, or screenshot tasks.',
+        'error',
+        f'Unsupported browser provider: {browser.provider}.',
+        'Use provider=playwright_mcp.',
     )

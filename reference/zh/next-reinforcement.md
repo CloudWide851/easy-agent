@@ -11,7 +11,7 @@
 - 把 raw official BFCL v4 归一化路径继续推进到更广的 agentic 与 multihop 覆盖，并补齐更清晰的官方分类诊断。
 - 在拿到本地数据导出与 grader 凭据后，把新交付的 `official_source_search` 与 `browsecomp_subset` / `simpleqa_subset` 支持推进成可刷新分数的评测切片。
 - 在不随意扩大 model-facing runtime surface 的前提下，继续深化 MCP 通知对齐，包括 resource updates、prompt-detail refresh 与 template diff telemetry。
-- 把 connector diagnostics、内置 task packs、report trend、本地 skill catalog workflow 与 federation-demo checks 作为下一层 operator-facing 易用性入口，再考虑引入更重的 runtime 依赖。
+- 把新的 wizard、connector diagnostics、内置 task packs、advice-only run fix package、静态 dashboard、本地 skill catalog workflow 与 federation-demo checks 作为下一层 operator-facing 易用性入口，再考虑引入更重的 runtime 依赖。
 
 ## 上手与诊断补强
 
@@ -20,14 +20,14 @@
 下一步可落地的易用性补强：
 
 - 把 `setup --provider mock` 与 `quickstart --provider mock` 保持为文档和 CI smoke 的第一组命令，因为它们可以在无 secret 的情况下验证 config loading、skills、storage、tool calls、trace persistence 与 preflight diagnostics
-- 把 `new <scenario>` 保持为从意图到可运行项目的最短路径，用 `coding-agent`、`research-agent`、`data-agent`、`ops-agent`、`browser-agent` 这类业务 starter 先证明常见 workflow，再让用户手写 YAML
+- 把 `new <scenario>` 保持为从意图到可运行项目的最短路径，同时把 `wizard --scenario <name>` 作为带静态检查、下一步命令和可选 mock smoke 的 guided path，减少用户一开始手写 YAML 的需求
 - 把 `config doctor` 保持为 live-provider 运行前的静态风险门禁，覆盖 env readiness、MCP roots/auth、federation auth、executor readiness、storage portability 与 human-loop coverage
 - 模板继续只围绕已交付 runtime contract 扩展，并为 approval flow、harness flow、MCP resource catalog flow、federation loopback flow 与 workbench-backed coding tasks 增加 focused smoke tests
-- 把 `runs explain` 做成失败 run 后默认的下一步，并继续扩展 provider schema error、HTTP status bucket、approval state、MCP startup failure 与 duplicated tool loop 分类
-- 让 trace 先作为排障事实来源，用 `traces open` 和可搜索 HTML export 改善本地检查体验，用 `report latest` 及其 HTML export 汇总可用证据，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
+- 把 `runs explain` 做成失败 run 后默认的下一步；当用户需要可交接的修复建议时，使用 `runs fix` 生成 advice-only repair prompt、安全命令和 task-pack 选择，不直接修改仓库
+- 让 trace 先作为排障事实来源，用 `traces open` 和可搜索 HTML export 改善本地检查体验，用 `report latest`、dashboard HTML 与 report trend HTML 汇总可用证据，等字段稳定后再提升为 public evaluation 与 OpenTelemetry export contract
 - 每个新的高层能力都配套 mock-backed smoke path 和可选 live-provider path，让首次运行不再依赖本地凭据是否齐全
 - 让 Python `AgentApp` facade 保持轻量，让嵌入式应用继续复用 CLI 同款 config-driven runtime，而不是形成第二套 orchestration surface
-- 让 browser 能力暂时保持 connector-ready：`browser-agent` 负责规划浏览器任务并暴露缺失 connector 需求，但在真正实现 browser connector 前，不宣称已经支持导航、截图、表单或下载执行
+- 让 browser 能力继续保持 MCP-first：`browser-agent` 现在通过 `browser.enabled: true` 使用 Playwright MCP，默认 isolated/headless、本地浏览器工件目录与敏感浏览器操作审批；下一步重点应放在 catalog drift、artifact lifecycle 和 browser-specific 审批体验，而不是过早引入第二套 native browser stack
 
 参考：
 
@@ -40,8 +40,9 @@
 最新 CLI 层应该让常见工作可以直接执行，而不是要求用户先理解完整 YAML/runtime 结构：
 
 - 用 `connectors list`、`connectors doctor` 和 `connectors test <name>` 做 model、storage、search、MCP、workbench、federation 与 browser-facing surface 的静态就绪检查
-- browser 诊断需要明确当前边界：已经交付的是任务规划和 connector discovery；导航、截图、表单和下载仍需要 browser MCP server 或未来原生 connector
+- browser 诊断需要明确当前边界：Playwright MCP 配置和 readiness 已经交付，但真实导航、截图、表单与下载仍取决于用户本地 Node/npm、browser、MCP startup 与审批设置
 - 用 `task list`、`task show` 和 `task run` 承载 repo review、bug fix、docs refresh、release check、data summary 与 federation loopback validation 等打包 workflow
+- 用 `dashboard` 作为静态本地运营页面，先不引入持久 Web server；这样 operator view 仍然无依赖，并且方便和 run evidence 一起归档
 - 保持 `task run --dry-run` 对 prompt review 与审批前检查有用，避免任务直接进入 model-backed agent
 - 用 `report trend` 对比本地 benchmark、public-eval 与 real-network artifacts 的变化，而不是手工阅读多个 JSON 文件
 - `traces export --otel-json` 继续标记为 experimental；在 OpenTelemetry GenAI conventions 仍在演进时，本地 trace tree 仍是事实来源
@@ -191,6 +192,7 @@ Executor report 应继续说明每个 backend 隔离什么、不隔离什么：
 
 - <https://modelcontextprotocol.io/specification/2025-03-26/server/resources>
 - <https://modelcontextprotocol.io/specification/2025-11-25/schema>
+- <https://github.com/microsoft/playwright-mcp>
 - <https://a2a-protocol.org/latest/specification/>
 - <https://opentelemetry.io/docs/specs/semconv/gen-ai/>
 

@@ -8,7 +8,13 @@ import anyio
 
 from agent_common.models import HumanLoopMode, HumanRequestStatus, ToolSpec
 from agent_common.tools import ToolHandler, ToolRegistry
-from agent_config.app import AppConfig, FederationExportConfig, McpServerConfig, load_config
+from agent_config.app import (
+    AppConfig,
+    BrowserConfig,
+    FederationExportConfig,
+    McpServerConfig,
+    load_config,
+)
 from agent_graph import AgentOrchestrator, GraphScheduler
 from agent_integrations.executors import build_executor_backends
 from agent_integrations.federation import FederationClientManager, FederationServer
@@ -654,8 +660,10 @@ def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
     human_loop = HumanLoopManager(store, config.security.human_loop)
     model_client = MockModelClient(config.model) if config.model.provider.lower() == 'mock' else HttpModelClient(config.model)
     federation_manager = FederationClientManager(config.federation, store=store)
+    mcp_configs = _effective_mcp_configs(config)
+    _configure_browser_approvals(config)
     mcp_manager = McpClientManager(
-        config.mcp,
+        mcp_configs,
         sandbox_manager,
         workbench_manager=workbench_manager,
         store=store,
@@ -708,6 +716,57 @@ def build_runtime_from_config(config: AppConfig) -> EasyAgentRuntime:
         )
     orchestrator.register_subagent_tools()
     return runtime
+
+
+def _effective_mcp_configs(config: AppConfig) -> list[McpServerConfig]:
+    configs = list(config.mcp)
+    if not config.browser.enabled:
+        return configs
+    if any(server.name == config.browser.server_name for server in configs):
+        return configs
+    configs.append(_browser_mcp_server(config.browser))
+    return configs
+
+
+def _browser_mcp_server(browser: BrowserConfig) -> McpServerConfig:
+    command = ['npx', '-y', '@playwright/mcp@latest']
+    if browser.headless:
+        command.append('--headless')
+    if browser.isolated:
+        command.append('--isolated')
+    if browser.artifacts_dir:
+        command.extend(['--output-dir', browser.artifacts_dir])
+    return McpServerConfig(
+        name=browser.server_name,
+        transport='stdio',
+        command=command,
+        timeout_seconds=browser.timeout_seconds,
+    )
+
+
+def _configure_browser_approvals(config: AppConfig) -> None:
+    if not (config.browser.enabled and config.browser.require_approval):
+        return
+    sensitive = config.security.human_loop.sensitive_tools
+    for tool_name in _browser_sensitive_tool_names(config.browser.server_name):
+        if tool_name not in sensitive:
+            sensitive.append(tool_name)
+
+
+def _browser_sensitive_tool_names(server_name: str) -> list[str]:
+    tool_names = [
+        'browser_click',
+        'browser_type',
+        'browser_press_key',
+        'browser_file_upload',
+        'browser_select_option',
+        'browser_drag',
+        'browser_navigate',
+        'browser_evaluate',
+        'browser_handle_dialog',
+        'browser_close',
+    ]
+    return [build_mcp_tool_name(server_name, tool_name) for tool_name in tool_names] + tool_names
 
 
 

@@ -88,6 +88,48 @@ def test_load_config_accepts_mock_protocol() -> None:
     assert config.model.protocol is Protocol.MOCK
 
 
+def test_load_config_reads_browser_defaults_and_enabled_config(tmp_path: Path) -> None:
+    default_config = AppConfig.model_validate(
+        {
+            'graph': {
+                'entrypoint': 'agent-a',
+                'agents': [{'name': 'agent-a'}],
+                'nodes': [],
+            },
+        }
+    )
+
+    assert default_config.browser.enabled is False
+    assert default_config.browser.provider == 'playwright_mcp'
+    assert default_config.browser.require_approval is True
+
+    config_path = tmp_path / 'easy-agent.yml'
+    config_path.write_text(
+        """
+graph:
+  entrypoint: agent-a
+  agents:
+    - name: agent-a
+browser:
+  enabled: true
+  provider: playwright_mcp
+  server_name: playwright
+  headless: true
+  isolated: true
+  artifacts_dir: .easy-agent/browser
+  timeout_seconds: 30
+  require_approval: true
+""",
+        encoding='utf-8',
+    )
+
+    config = load_config(config_path)
+
+    assert config.browser.enabled is True
+    assert config.browser.server_name == 'playwright'
+    assert config.browser.artifacts_dir == '.easy-agent/browser'
+
+
 def test_load_config_rejects_force_mode_without_tool_name() -> None:
     with pytest.raises(ValueError, match='forced_tool_name'):
         AppConfig.model_validate(

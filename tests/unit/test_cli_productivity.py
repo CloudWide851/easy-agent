@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
 from agent_cli.app import app
@@ -46,6 +47,36 @@ def test_connectors_doctor_and_test(tmp_path: Path) -> None:
     assert '"browser"' in doctor.output
     assert tested.exit_code == 0
     assert '"status": "ok"' in tested.output
+
+
+def test_browser_connector_reports_disabled_and_playwright_ready(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    config = tmp_path / 'easy-agent.yml'
+    _mock_config(config)
+
+    disabled = CliRunner().invoke(app, ['connectors', 'test', 'browser', '-c', str(config), '--format', 'json'])
+
+    assert disabled.exit_code == 0
+    assert '"status": "warn"' in disabled.output
+    assert 'No first-class browser connector is configured' in disabled.output
+
+    config.write_text(
+        config.read_text(encoding='utf-8')
+        + """
+browser:
+  enabled: true
+  provider: playwright_mcp
+  server_name: playwright
+  require_approval: true
+""",
+        encoding='utf-8',
+    )
+    monkeypatch.setattr('agent_runtime.connectors.shutil.which', lambda command: 'npx.cmd' if command == 'npx' else None)
+
+    enabled = CliRunner().invoke(app, ['connectors', 'test', 'browser', '-c', str(config), '--format', 'json'])
+
+    assert enabled.exit_code == 0
+    assert '"status": "ok"' in enabled.output
+    assert 'Playwright MCP is configured as mcp:playwright' in enabled.output
 
 
 def test_task_pack_show_dry_run_and_run(tmp_path: Path) -> None:

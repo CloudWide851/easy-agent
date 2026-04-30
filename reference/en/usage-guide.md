@@ -28,6 +28,7 @@ uv sync --dev
 ```bash
 uv run easy-agent --help
 uv run easy-agent setup --provider mock
+uv run easy-agent wizard --scenario coding-agent --target-dir my-agent --provider mock
 uv run easy-agent new coding-agent
 uv run easy-agent new research-agent <target-dir>
 uv run easy-agent new data-agent
@@ -52,6 +53,7 @@ uv run easy-agent federation list -c easy-agent.yml
 uv run easy-agent runs list -c easy-agent.yml
 uv run easy-agent runs show <run_id> -c easy-agent.yml
 uv run easy-agent runs explain <run_id> -c easy-agent.yml
+uv run easy-agent runs fix <run_id> -c easy-agent.yml --format markdown --output fix.md
 uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
@@ -59,9 +61,11 @@ uv run easy-agent traces export <run_id> -c easy-agent.yml --otel-json --output 
 uv run easy-agent report latest -c easy-agent.yml
 uv run easy-agent report latest -c easy-agent.yml --html --output report.html
 uv run easy-agent report trend --history reports --html --output trend.html
+uv run easy-agent dashboard -c easy-agent.yml --output dashboard.html
 uv run easy-agent connectors list -c easy-agent.yml
 uv run easy-agent connectors doctor -c easy-agent.yml
 uv run easy-agent connectors test model -c easy-agent.yml
+uv run easy-agent connectors test browser -c easy-agent.yml
 uv run easy-agent task list
 uv run easy-agent task show repo-review
 uv run easy-agent task run repo-review -c easy-agent.yml --dry-run
@@ -83,6 +87,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 Use the `mock` provider when you want to verify the runtime, tools, storage, and trace surfaces without any model credentials.
 
 - `setup --provider mock` creates or reuses a local config, runs static preflight checks, validates it, runs a deterministic smoke test, and prints the next run-inspection commands.
+- `wizard --scenario <name> --target-dir <dir> --provider mock` creates a starter, runs static checks, optionally runs a mock smoke path, and prints the next `config doctor`, `connectors doctor`, `task`, trace, and dashboard commands. For `browser-agent`, the wizard skips the run smoke by default and points to browser connector checks first.
 - `init --provider mock` writes a starter config that uses `protocol: mock`.
 - `quickstart --provider mock` creates a temporary local config, runs one deterministic tool-using agent turn, and prints the follow-up `runs show`, `runs explain`, and `traces export` commands for the new run id.
 - `new <scenario> [target-dir]` is the shortest project creation path. It wraps `template create`, defaults the target directory to the scenario name, and keeps the older template commands available.
@@ -98,7 +103,7 @@ Use the `mock` provider when you want to verify the runtime, tools, storage, and
 - `template create research-agent <target-dir>` creates a business-oriented research starter with `official_source_search` wired beside the mock-first smoke tool.
 - `template create data-agent <target-dir>` creates a business-oriented data starter for CSV, JSON, logs, metric summaries, and evidence-backed recommendations.
 - `template create ops-agent <target-dir>` creates a business-oriented operations starter for diagnostics, runbooks, incident notes, and release checks.
-- `template create browser-agent <target-dir>` creates a mock-first browser task-planning starter. It does not install a browser runtime; wire a real connector only after the planning flow and safety checks are clear.
+- `template create browser-agent <target-dir>` creates a mock-first starter with `browser.enabled: true` and `provider: playwright_mcp`. The runtime mounts Playwright MCP as a stdio MCP server when the config is started, keeps artifacts under `.easy-agent/browser`, and requires approval for sensitive browser tools by default.
 - `template create customer-support-agent <target-dir>` creates a support triage and response-drafting starter.
 - `template create sales-agent <target-dir>` creates a sales qualification and follow-up starter.
 - `template create document-agent <target-dir>` creates a document summary, extraction, and docs-refresh starter.
@@ -117,6 +122,7 @@ Durable run inspection now has two layers:
 - `runs list` shows recent run ids, status, kind, session id, and creation time.
 - `runs show <run_id>` returns a run summary with event, node, checkpoint, approval, and child-run counts.
 - `runs explain <run_id>` classifies common failure causes such as missing provider credentials, schema validation failures, guardrail blocks, MCP failures, iteration loops, and known Windows cleanup warnings.
+- `runs fix <run_id>` creates an advice-only repair package. It reuses the stored run explanation, selects a built-in task pack such as `bug-fix` or `release-check`, lists safe next commands, and can write JSON or Markdown without mutating files or rerunning the agent.
 - `traces export <run_id>` returns a structured trace tree by default.
 - `traces export <run_id> --raw` returns the historical raw trace payload.
 - `traces export <run_id> --html --output trace.html` writes a standalone HTML trace viewer for the structured tree, including summary cards, status/error highlighting, span-kind filters, text search, and the raw JSON payload.
@@ -136,6 +142,8 @@ If a report file is absent, the command marks that surface as `missing` and stil
 
 Use `report latest --html --output report.html` when the terminal table is too dense. The exported file is standalone and includes the same benchmark, public-eval, real-network, recent-run, and raw JSON evidence.
 
+Use `dashboard -c easy-agent.yml --output dashboard.html` for a broader static local dashboard that combines latest reports, report trend, connector readiness, recent runs, pending approvals, and raw JSON into one read-only HTML file.
+
 `report trend` compares local report artifacts in a directory and shows the latest score, previous score, and score delta for benchmark, public-eval, and real-network reports. Use `--html --output trend.html` for a standalone trend page.
 
 Trace-tree spans are derived from the existing runtime event envelope and include stable `span_id`, `parent_span_id`, `kind`, `status`, duration, input/output hashes, retry count, checkpoint id, and child spans. This keeps the current JSON trace path lightweight while leaving a future OpenTelemetry export path open.
@@ -145,6 +153,7 @@ Trace-tree spans are derived from the existing runtime event envelope and includ
 - `connectors list` shows configured connector surfaces such as model, storage, search, MCP, workbench, federation, and browser readiness.
 - `connectors doctor` performs static connector checks without starting high-risk external flows.
 - `connectors test <name>` focuses on one connector from the list.
+- When `browser.enabled` is true and `provider: playwright_mcp`, browser diagnostics verify that `npx` is available and report whether approval is required before live browser automation. The Playwright MCP server is mounted through normal MCP startup, so `mcp list` remains the catalog inspection path.
 - `task list` shows built-in task packs.
 - `task show <pack>` prints the prompt template, recommended scenario, and acceptance criteria.
 - `task run <pack>` renders and runs the task through the configured entrypoint. Use `--dry-run` to inspect the prompt before execution.

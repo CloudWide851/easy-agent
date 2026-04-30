@@ -16,21 +16,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added zero-credential onboarding and diagnostics surfaces:
   - `mock` provider and protocol path
   - `easy-agent setup`
+  - `easy-agent wizard`
   - `easy-agent init`
   - `easy-agent quickstart`
   - `easy-agent new <scenario>`
   - `easy-agent template list|create`
   - `easy-agent config validate|explain|doctor`
   - `easy-agent runs explain`
+  - `easy-agent runs fix`
 - Added standalone HTML trace export through `easy-agent traces export <run_id> --html --output <path>`.
 - Added `easy-agent traces open <run_id>` for one-command local HTML trace inspection.
 - Added `easy-agent report latest` to summarize local benchmark, public-eval, real-network, and recent-run evidence.
 - Added standalone HTML latest-report export through `easy-agent report latest --html --output <path>`.
 - Added `easy-agent report trend` with JSON, pretty, and standalone HTML outputs for comparing local benchmark, public-eval, and real-network report artifacts over time.
+- Added `easy-agent dashboard` for a dependency-free static HTML operations page that combines latest reports, report trends, connector readiness, recent runs, pending approvals, and raw JSON evidence.
 - Added experimental OpenTelemetry-style trace export through `easy-agent traces export <run_id> --otel-json --output <path>`.
 - Added connector diagnostics and built-in task-pack surfaces:
   - `easy-agent connectors list|doctor|test`
   - `easy-agent task list|show|run`
+- Added MCP-first browser configuration with `browser.enabled`, Playwright MCP stdio server mounting, browser connector diagnostics, local browser artifacts, and default human approval gating for sensitive browser actions.
 - Added local skill and plugin operator surfaces:
   - `easy-agent skills catalog list|install`
   - `easy-agent plugins doctor`
@@ -83,6 +87,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Enhanced HTML trace export with summary cards, span-kind filters, text search, and status/error highlighting.
 - Promoted the shorter scenario command, local trace opening, and latest-report summary into the onboarding documentation.
 - Promoted data, ops, and browser-planning scenario starters into the mock-first onboarding path.
+- Promoted `browser-agent` from planning-only to Playwright MCP-ready while keeping smoke validation mock-first and approval-aware.
+- Extended run diagnostics with advice-only fix packages that select a task pack and list safe follow-up commands without mutating files or rerunning agents.
 - Updated the bilingual README pair and reference docs to keep scores while adding scenario-proof framing for resume, approvals, MCP restart, provider schema repair, federation retry, and workbench snapshot restore.
 - Extended the CLI integration surface with `easy-agent integration real-network`.
 - Split the oversized public-eval runtime surface so:
@@ -110,11 +116,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_mock_provider.py tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_config.py -q` with `36 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_readme_snapshot.py -q` with `17 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_runtime_facade.py tests/unit/test_readme_snapshot.py -q` with `18 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_cli_productivity.py tests/unit/test_runtime_facade.py tests/unit/test_readme_snapshot.py -q` with `23 passed`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `222 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_cli_productivity.py tests/unit/test_config.py tests/unit/test_readme_snapshot.py -q` with `54 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `229 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\real-network-<timestamp>` with `1 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `7 passed`, `2 warnings`
-- CLI smoke passed for connector diagnostics, browser connector readiness warning, task-pack inspection, report trend, local skill catalog listing, and `new customer-support-agent`.
+- CLI smoke passed for wizard creation, static dashboard export, advice-only run fix packages, connector diagnostics, Playwright MCP browser readiness, task-pack inspection, report trend, local skill catalog listing, and `new customer-support-agent`.
 
 ## [0.3.5] - 2026-04-14
 

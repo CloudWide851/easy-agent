@@ -82,6 +82,51 @@ def register(app: typer.Typer) -> None:
 
         asyncio.run(_run())
 
+    @app.command('wizard')
+    def wizard(
+        scenario: str | None = typer.Option(None, '--scenario', help='Starter scenario name.'),
+        target_dir: str | None = typer.Option(None, '--target-dir', help='Destination directory. Defaults to the scenario name.'),
+        provider: str = typer.Option('mock', '--provider', help='Provider preset: mock or deepseek.'),
+        force: bool = typer.Option(False, '--force', help='Overwrite generated files when they already exist.'),
+        skip_smoke: bool = typer.Option(False, '--skip-smoke', help='Create files without running the mock smoke path.'),
+        output_format: str = typer.Option('pretty', '--format', help='Output format: pretty or json.'),
+    ) -> None:
+        if provider not in {'mock', 'deepseek'}:
+            raise typer.BadParameter('provider must be mock or deepseek')
+        templates = _templates()
+        selected = scenario or typer.prompt(
+            'Scenario',
+            default='basic-agent',
+            show_default=True,
+        )
+        if selected not in templates:
+            raise typer.BadParameter(f"Unknown template '{selected}'. Run 'easy-agent template list'.")
+        destination = Path(target_dir or selected)
+        _create_template(selected, destination, force)
+        config_path = destination / 'easy-agent.yml'
+        if provider == 'deepseek':
+            _set_template_provider(config_path, provider)
+        loaded = load_config(config_path)
+        checks = _diagnostic_checks(loaded, config_path)
+        smoke_result: dict[str, Any] | str = 'skipped'
+        next_commands = _wizard_next_commands(selected, config_path, run_id=None)
+        if not skip_smoke and selected != 'browser-agent':
+            smoke_result = _run_wizard_smoke(config_path)
+            run_id = str(smoke_result.get('run_id') or '') if isinstance(smoke_result, dict) else ''
+            next_commands = _wizard_next_commands(selected, config_path, run_id=run_id or None)
+        elif not skip_smoke and selected == 'browser-agent':
+            smoke_result = 'skipped: browser-agent uses a live Playwright MCP connector; run connectors test browser first'
+        payload: dict[str, Any] = {
+            'scenario': selected,
+            'target_dir': str(destination),
+            'config': str(config_path),
+            'provider': provider,
+            'smoke': smoke_result,
+            'checks': checks,
+            'next_commands': next_commands,
+        }
+        _print_wizard_payload(payload, output_format)
+
     @app.command('init')
     def init_config(
         path: str = typer.Option('easy-agent.yml', '--path', help='Config file to create.'),
@@ -166,6 +211,20 @@ def _create_template(name: str, destination: Path, force: bool) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(content), encoding='utf-8')
     console.print(f'[green]Created template[/green] {name} at {destination}')
+
+
+def _set_template_provider(config_path: Path, provider: str) -> None:
+    if provider == 'mock':
+        return
+    config = load_config(config_path).model_dump(mode='json')
+    config['model'] = {
+        'provider': 'deepseek',
+        'protocol': 'auto',
+        'model': 'deepseek-chat',
+        'base_url': 'https://api.deepseek.com',
+        'api_key_env': 'DEEPSEEK_API_KEY',
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding='utf-8')
 
 
 @config_app.command('validate')
@@ -489,14 +548,31 @@ def _templates() -> dict[str, dict[str, Any]]:
 
 def _template_files(name: str, description: str, config: str) -> dict[str, str]:
     env_example = _template_env_example(name)
-    return {
-        'easy-agent.yml': config,
-        'README.md': dedent(
-            f"""
-            # {name}
+    run_block = (
+        dedent(
+            """
+            ## Run
 
-            {description}
+            ```bash
+            easy-agent doctor -c easy-agent.yml
+            easy-agent config explain -c easy-agent.yml
+            easy-agent config doctor -c easy-agent.yml
+            easy-agent connectors test browser -c easy-agent.yml
+            easy-agent mcp list -c easy-agent.yml
+            ```
 
+            ## Smoke
+
+            ```bash
+            easy-agent config doctor -c easy-agent.yml
+            easy-agent connectors test browser -c easy-agent.yml
+            easy-agent wizard --scenario browser-agent --target-dir browser-agent-smoke --skip-smoke
+            ```
+            """
+        ).strip()
+        if name == 'browser-agent'
+        else dedent(
+            """
             ## Run
 
             ```bash
@@ -514,6 +590,18 @@ def _template_files(name: str, description: str, config: str) -> dict[str, str]:
             easy-agent run "Run the template smoke path once." -c easy-agent.yml
             easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
             ```
+            """
+        ).strip()
+    )
+    return {
+        'easy-agent.yml': config,
+        'README.md': dedent(
+            f"""
+            # {name}
+
+            {description}
+
+            {run_block}
             """
         ).lstrip(),
         '.env.local.example': env_example,
@@ -810,14 +898,24 @@ def _browser_agent_template_config() -> str:
           entrypoint: browser_planner
           agents:
             - name: browser_planner
-              description: Browser task planner for research, QA, and workflow automation.
+              description: Browser task operator for research, QA, and workflow automation.
               system_prompt: |
-                You are a browser-task planning assistant. For mock smoke runs, call python_echo once.
-                For real browser work, produce a clear navigation plan, expected evidence, and safety checks before connector execution.
+                You are a browser-task assistant. For mock smoke runs, call python_echo once.
+                For real browser work, prefer the Playwright MCP browser tools, keep navigation scoped to the user request, and summarize collected evidence.
               tools:
                 - python_echo
               max_iterations: 4
           nodes: []
+
+        browser:
+          enabled: true
+          provider: playwright_mcp
+          server_name: playwright
+          headless: true
+          isolated: true
+          artifacts_dir: .easy-agent/browser
+          timeout_seconds: 30
+          require_approval: true
 
         skills:
           - path: skills/examples
@@ -827,6 +925,8 @@ def _browser_agent_template_config() -> str:
           database: state.db
 
         security:
+          human_loop:
+            mode: hybrid
           sandbox:
             mode: auto
             working_root: .
@@ -909,6 +1009,64 @@ def _print_setup_payload(payload: dict[str, Any], output_format: str) -> None:
             console.print(command)
     if payload.get('diagnostic'):
         console.print_json(json.dumps(payload['diagnostic'], ensure_ascii=False))
+
+
+def _run_wizard_smoke(config_path: Path) -> dict[str, Any]:
+    async def _run() -> dict[str, Any]:
+        runtime = build_runtime(config_path)
+        try:
+            return await runtime.run('Run wizard smoke and call python_echo once.')
+        finally:
+            await runtime.aclose()
+
+    return asyncio.run(_run())
+
+
+def _wizard_next_commands(scenario: str, config_path: Path, run_id: str | None) -> list[str]:
+    commands = [
+        f'easy-agent config doctor -c {config_path}',
+        f'easy-agent connectors doctor -c {config_path}',
+        'easy-agent task show repo-review --format json',
+        f'easy-agent task run repo-review -c {config_path} --dry-run --context "replace with your goal"',
+    ]
+    if scenario == 'browser-agent':
+        commands.insert(2, f'easy-agent connectors test browser -c {config_path}')
+        commands.append(f'easy-agent mcp list -c {config_path}')
+    if run_id:
+        commands.extend(
+            [
+                f'easy-agent runs explain {run_id} -c {config_path}',
+                f'easy-agent traces open {run_id} -c {config_path} --no-browser',
+            ]
+        )
+    else:
+        commands.append(f'easy-agent runs list -c {config_path}')
+    commands.append(f'easy-agent dashboard -c {config_path} --output dashboard.html')
+    return commands
+
+
+def _print_wizard_payload(payload: dict[str, Any], output_format: str) -> None:
+    if output_format == 'json':
+        console.print_json(json.dumps(payload, ensure_ascii=False, default=str))
+        return
+    if output_format != 'pretty':
+        raise typer.BadParameter('format must be pretty or json')
+    table = Table(title='easy-agent wizard')
+    table.add_column('Field', style='cyan')
+    table.add_column('Value', style='green')
+    table.add_row('Scenario', str(payload['scenario']))
+    table.add_row('Target', str(payload['target_dir']))
+    table.add_row('Config', str(payload['config']))
+    smoke = payload['smoke']
+    table.add_row('Smoke', str(smoke.get('status')) if isinstance(smoke, dict) else str(smoke))
+    raw_checks = payload.get('checks')
+    if isinstance(raw_checks, list):
+        checks = [item for item in raw_checks if isinstance(item, dict)]
+        table.add_row('Checks', json.dumps(_check_summary(checks), ensure_ascii=False))
+    console.print(table)
+    console.print('\nNext commands:')
+    for command in payload['next_commands']:
+        console.print(command)
 
 
 def _config_summary(config: AppConfig) -> dict[str, Any]:

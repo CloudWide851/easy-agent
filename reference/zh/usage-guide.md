@@ -28,6 +28,7 @@ uv sync --dev
 ```bash
 uv run easy-agent --help
 uv run easy-agent setup --provider mock
+uv run easy-agent wizard --scenario coding-agent --target-dir my-agent --provider mock
 uv run easy-agent new coding-agent
 uv run easy-agent new research-agent <target-dir>
 uv run easy-agent new data-agent
@@ -52,6 +53,7 @@ uv run easy-agent federation list -c easy-agent.yml
 uv run easy-agent runs list -c easy-agent.yml
 uv run easy-agent runs show <run_id> -c easy-agent.yml
 uv run easy-agent runs explain <run_id> -c easy-agent.yml
+uv run easy-agent runs fix <run_id> -c easy-agent.yml --format markdown --output fix.md
 uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
@@ -59,9 +61,11 @@ uv run easy-agent traces export <run_id> -c easy-agent.yml --otel-json --output 
 uv run easy-agent report latest -c easy-agent.yml
 uv run easy-agent report latest -c easy-agent.yml --html --output report.html
 uv run easy-agent report trend --history reports --html --output trend.html
+uv run easy-agent dashboard -c easy-agent.yml --output dashboard.html
 uv run easy-agent connectors list -c easy-agent.yml
 uv run easy-agent connectors doctor -c easy-agent.yml
 uv run easy-agent connectors test model -c easy-agent.yml
+uv run easy-agent connectors test browser -c easy-agent.yml
 uv run easy-agent task list
 uv run easy-agent task show repo-review
 uv run easy-agent task run repo-review -c easy-agent.yml --dry-run
@@ -83,6 +87,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 如果只是想先验证 runtime、tools、storage 和 trace surface，不需要任何模型凭据，可以使用 `mock` provider。
 
 - `setup --provider mock` 会创建或复用本地配置，运行静态 preflight checks，完成配置验证，运行一次确定性 smoke test，并输出后续 run inspection 命令。
+- `wizard --scenario <name> --target-dir <dir> --provider mock` 会创建 starter、运行静态检查、可选执行 mock smoke path，并输出后续 `config doctor`、`connectors doctor`、`task`、trace 和 dashboard 命令。对于 `browser-agent`，wizard 默认跳过 run smoke，并先引导用户检查 browser connector。
 - `init --provider mock` 会写出使用 `protocol: mock` 的 starter config。
 - `quickstart --provider mock` 会创建一个临时本地配置，运行一次确定性的工具调用 agent，并输出新 run id 对应的 `runs show`、`runs explain` 与 `traces export` 后续命令。
 - `new <scenario> [target-dir]` 是最短的项目创建路径。它包装 `template create`，默认把目标目录设为 scenario 名称，同时保留旧的 template 命令。
@@ -98,7 +103,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 - `template create research-agent <target-dir>` 创建面向资料调研任务的 starter，把 `official_source_search` 和 mock-first smoke 工具一起挂载。
 - `template create data-agent <target-dir>` 创建面向 CSV、JSON、日志、指标摘要与证据化建议的数据分析 starter。
 - `template create ops-agent <target-dir>` 创建面向 diagnostics、runbooks、incident notes 与 release checks 的运维 starter。
-- `template create browser-agent <target-dir>` 创建 mock-first 的浏览器任务规划 starter。它不会安装浏览器 runtime；只有在规划流和安全检查明确之后，再接入真实浏览器 connector。
+- `template create browser-agent <target-dir>` 创建 mock-first starter，并写入 `browser.enabled: true` 与 `provider: playwright_mcp`。配置启动时，runtime 会把 Playwright MCP 挂成 stdio MCP server，把工件写到 `.easy-agent/browser`，并默认要求敏感浏览器工具先走审批。
 - `template create customer-support-agent <target-dir>` 创建面向 support triage 与回复草拟的 starter。
 - `template create sales-agent <target-dir>` 创建面向 sales qualification 与 follow-up 的 starter。
 - `template create document-agent <target-dir>` 创建面向文档摘要、抽取和 docs refresh 的 starter。
@@ -117,6 +122,7 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 - `runs list` 展示最近 run id、status、kind、session id 与创建时间。
 - `runs show <run_id>` 返回 run summary，包括 event、node、checkpoint、approval 与 child-run 数量。
 - `runs explain <run_id>` 会归类常见失败原因，包括 provider 凭据缺失、schema validation failure、guardrail block、MCP failure、iteration loop，以及 Windows cleanup warning。
+- `runs fix <run_id>` 会生成 advice-only 修复包。它复用已存储的 run explanation，自动选择 `bug-fix` 或 `release-check` 等内置 task pack，列出安全下一步命令，并可以输出 JSON 或 Markdown；该命令不会修改文件，也不会重新运行 agent。
 - `traces export <run_id>` 默认返回结构化 trace tree。
 - `traces export <run_id> --raw` 返回历史 raw trace payload。
 - `traces export <run_id> --html --output trace.html` 会为 structured tree 写出单文件 HTML trace viewer，包含 summary cards、status/error highlighting、span-kind filters、文本搜索与 raw JSON payload。
@@ -136,6 +142,8 @@ uv run easy-agent mcp prompts get <server> <prompt-name> --arguments '{"topic":"
 
 当终端表格太密时，可以使用 `report latest --html --output report.html`。导出的文件是独立 HTML，包含同一组 benchmark、public-eval、real-network、recent-run 与 raw JSON 证据。
 
+如果想要更完整的本地静态面板，可以使用 `dashboard -c easy-agent.yml --output dashboard.html`。它会把 latest reports、report trend、connector readiness、recent runs、pending approvals 与 raw JSON 放到一个只读 HTML 文件里。
+
 `report trend` 会比较某个目录下的本地 report artifacts，并展示 benchmark、public-eval、real-network 的 latest score、previous score 与 score delta。使用 `--html --output trend.html` 可以生成单文件趋势页。
 
 Trace-tree span 从现有 runtime event envelope 派生，包含稳定的 `span_id`、`parent_span_id`、`kind`、`status`、duration、input/output hash、retry count、checkpoint id 与 child spans。这样当前 JSON trace 仍然轻量，同时为后续 OpenTelemetry export 留出路径。
@@ -145,6 +153,7 @@ Trace-tree span 从现有 runtime event envelope 派生，包含稳定的 `span_
 - `connectors list` 展示 model、storage、search、MCP、workbench、federation、browser readiness 等 connector surface。
 - `connectors doctor` 做静态 connector 检查，不启动高风险外部流程。
 - `connectors test <name>` 聚焦检查列表里的一个 connector。
+- 当 `browser.enabled` 为 true 且 `provider: playwright_mcp` 时，browser diagnostics 会检查 `npx` 是否可用，并说明 live browser automation 是否需要审批。Playwright MCP 通过常规 MCP startup 挂载，因此 `mcp list` 仍然是检查 catalog 的入口。
 - `task list` 展示内置 task packs。
 - `task show <pack>` 输出 prompt template、recommended scenario 与 acceptance criteria。
 - `task run <pack>` 会把任务渲染后交给当前配置的 entrypoint。使用 `--dry-run` 可先检查 prompt。
