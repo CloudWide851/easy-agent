@@ -2,8 +2,8 @@
 
 ## Snapshot Policy
 
-- Release `0.3.5` publishes benchmark, public-eval, Python verification, and real-network snapshots refreshed on April 14, 2026.
-- The latest unreleased verification refresh on April 30, 2026 keeps the April 14 benchmark and headline public-eval score snapshot, while refreshing Python verification and workflow/browser/dashboard/failure-to-fix CLI checks, including the expanded `runs inspect` Markdown/HTML export, run notes, `workflow validate/explain`, MCP static doctor/test, federation graph export, template filtering/show/recommendation, cost reports, the read-only local console, and Python facade workflow/browser/bundle/dashboard/cost helpers. The live provider compatibility matrix remains the April 20 verification snapshot.
+- Release `0.3.6` keeps the April 14 benchmark and headline public-eval score snapshot while publishing the April 30 Python verification refresh and workflow/browser/dashboard/failure-to-fix CLI checks, including the expanded `runs inspect` Markdown/HTML export, run notes, `workflow validate/explain`, MCP static doctor/test, federation graph export, template filtering/show/recommendation, cost reports, the read-only local console, and Python facade workflow/browser/bundle/dashboard/cost helpers.
+- The live provider compatibility matrix remains the April 20 verification snapshot.
 - Public docs in this repository intentionally expose methodology and scores only; local collaboration logs are not part of the repository-facing surface.
 
 ## Benchmark Snapshot

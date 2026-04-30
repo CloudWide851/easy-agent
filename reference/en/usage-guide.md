@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide matches the published `0.3.5` documentation set.
+This guide matches the published `0.3.6` documentation set.
 
 ## Environment
 

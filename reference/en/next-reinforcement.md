@@ -1,6 +1,6 @@
 # Next Reinforcement
 
-This roadmap starts from the published `0.3.5` baseline.
+This roadmap starts from the published `0.3.6` baseline.
 
 ## Immediate Focus
 

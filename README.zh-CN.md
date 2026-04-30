@@ -22,7 +22,7 @@
 
 `easy-agent` 面向的是 Agent 产品下面的那层运行时基础设施，而不是具体业务应用本身。它把编排、工具调用、持久化、人审、联邦与评测能力显式保留在框架里，方便团队持续演进而不是被黑盒抽象锁死。
 
-当前已发布的小版本是 `0.3.5`。
+当前已发布的小版本是 `0.3.6`。
 
 ## 这个项目到底是什么
 
@@ -246,7 +246,7 @@ uv run easy-agent doctor -c easy-agent.yml
 
 ## 验证方式
 
-当前已发布的小版本仍然是 `0.3.5`。README 里保留的 benchmark 与 public-eval headline 分数仍以 2026 年 4 月 14 日发布快照为基线，而 2026 年 4 月 30 日这轮最新的 Python 验证重新跑通了 `ruff`、`mypy`、`232` 个 unit tests 和 `7` 个 live integration tests，但没有改写这组保留分数基线。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
+当前已发布的小版本是 `0.3.6`。README 里保留的 benchmark 与 public-eval headline 分数仍以 2026 年 4 月 14 日发布快照为基线，而 2026 年 4 月 30 日这次发布验证重新跑通了 `ruff`、`mypy`、`233` 个 unit tests 和 `7` 个 live integration tests，但没有改写这组保留分数基线。方法说明、公开对比与详细矩阵见 [reference/zh/test-results.md](./reference/zh/test-results.md)。
 
 ### 分数摘要
 

@@ -22,7 +22,7 @@
 
 `easy-agent` is the runtime layer underneath an agent product, not the product itself. It keeps orchestration, tool calling, persistence, approvals, federation, and evaluation explicit so teams can evolve their systems without hiding critical behavior behind opaque framework abstractions.
 
-The latest published patch is `0.3.5`.
+The latest published patch is `0.3.6`.
 
 ## What This Project Is
 
@@ -246,7 +246,7 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-The latest published patch remains `0.3.5`. The retained benchmark and headline public-eval score snapshot is still the April 14, 2026 release baseline, while the latest Python verification refresh on April 30, 2026 revalidated `ruff`, `mypy`, `232` unit tests, and `7` live integration tests without changing that retained score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+The latest published patch is `0.3.6`. The retained benchmark and headline public-eval score snapshot is still the April 14, 2026 release baseline, while the April 30, 2026 release verification revalidated `ruff`, `mypy`, `233` unit tests, and `7` live integration tests without changing that retained score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 

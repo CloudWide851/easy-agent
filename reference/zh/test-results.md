@@ -2,8 +2,8 @@
 
 ## 快照策略
 
-- `0.3.5` 版本发布的是 2026 年 4 月 14 日刷新后的 benchmark、public-eval、Python verification 与 real-network 快照。
-- 最新一轮未发布验证发生在 2026 年 4 月 30 日：保留 4 月 14 日的 benchmark 与 public-eval headline 分数快照，同时刷新 Python verification 与 workflow/browser/dashboard/failure-to-fix CLI 检查，并覆盖扩展后的 `runs inspect` Markdown/HTML 导出、run notes、`workflow validate/explain`、MCP 静态 doctor/test、federation graph export、template 过滤/show/recommend、cost reports、只读本地 console，以及 Python facade workflow/browser/bundle/dashboard/cost helpers；live provider compatibility matrix 仍保留 4 月 20 日验证快照。
+- `0.3.6` 版本保留 4 月 14 日的 benchmark 与 public-eval headline 分数快照，同时发布 4 月 30 日的 Python verification refresh 与 workflow/browser/dashboard/failure-to-fix CLI 检查，并覆盖扩展后的 `runs inspect` Markdown/HTML 导出、run notes、`workflow validate/explain`、MCP 静态 doctor/test、federation graph export、template 过滤/show/recommend、cost reports、只读本地 console，以及 Python facade workflow/browser/bundle/dashboard/cost helpers。
+- live provider compatibility matrix 仍保留 4 月 20 日验证快照。
 - 仓库公开文档只保留方法说明与分数，不暴露机器本地协作日志。
 
 ## Benchmark 快照

@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+- No unreleased changes.
+
+## [0.3.6] - 2026-04-30
+
 ### Added
 
 - Added durable run-inspection and structured trace export surfaces:
@@ -164,6 +168,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - the refreshed April 20, 2026 real-network snapshot
   - the current reinforcement direction against official OpenAI, Anthropic, Gemini, MCP, and `simple-evals` sources
 - Corrected the example config so simple-evals source URLs are no longer incorrectly pointed at evaluator source-code files.
+- Published patch release `0.3.6`.
 
 ### Verified
 
