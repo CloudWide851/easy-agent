@@ -49,6 +49,9 @@ def test_template_commands_list_and_create(tmp_path: Path) -> None:
     assert 'competitor-research-agent' in listed.output
     assert 'meeting-notes-agent' in listed.output
     assert 'content-pipeline-agent' in listed.output
+    assert 'github-issue-agent' in listed.output
+    assert 'website-audit-agent' in listed.output
+    assert 'daily-report-agent' in listed.output
     assert created.exit_code == 0
     assert (destination / 'easy-agent.yml').exists()
     assert (destination / 'workflow.yml').exists()
@@ -84,6 +87,9 @@ def test_all_templates_create_valid_configs(tmp_path: Path) -> None:
         'competitor-research-agent',
         'meeting-notes-agent',
         'content-pipeline-agent',
+        'github-issue-agent',
+        'website-audit-agent',
+        'daily-report-agent',
     ]
 
     listed = runner.invoke(app, ['template', 'list'])
@@ -130,6 +136,9 @@ def test_new_command_creates_business_scenarios(tmp_path: Path, monkeypatch: Mon
     web_monitor = runner.invoke(app, ['new', 'web-monitor-agent'])
     seo = runner.invoke(app, ['new', 'seo-agent'])
     meeting_notes = runner.invoke(app, ['new', 'meeting-notes-agent'])
+    github_issue = runner.invoke(app, ['new', 'github-issue-agent'])
+    website_audit = runner.invoke(app, ['new', 'website-audit-agent'])
+    daily_report = runner.invoke(app, ['new', 'daily-report-agent'])
 
     assert coding.exit_code == 0
     assert research.exit_code == 0
@@ -140,6 +149,9 @@ def test_new_command_creates_business_scenarios(tmp_path: Path, monkeypatch: Mon
     assert web_monitor.exit_code == 0
     assert seo.exit_code == 0
     assert meeting_notes.exit_code == 0
+    assert github_issue.exit_code == 0
+    assert website_audit.exit_code == 0
+    assert daily_report.exit_code == 0
     load_config(tmp_path / 'coding-agent' / 'easy-agent.yml')
     load_config(tmp_path / 'research-starter' / 'easy-agent.yml')
     load_config(tmp_path / 'data-agent' / 'easy-agent.yml')
@@ -149,6 +161,9 @@ def test_new_command_creates_business_scenarios(tmp_path: Path, monkeypatch: Mon
     assert load_config(tmp_path / 'web-monitor-agent' / 'easy-agent.yml').browser.enabled is True
     assert load_config(tmp_path / 'seo-agent' / 'easy-agent.yml').browser.enabled is True
     load_config(tmp_path / 'meeting-notes-agent' / 'easy-agent.yml')
+    load_config(tmp_path / 'github-issue-agent' / 'easy-agent.yml')
+    assert load_config(tmp_path / 'website-audit-agent' / 'easy-agent.yml').browser.enabled is True
+    load_config(tmp_path / 'daily-report-agent' / 'easy-agent.yml')
     assert 'workbench' in (tmp_path / 'coding-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
     assert 'official_source_search' in (tmp_path / 'research-starter' / 'easy-agent.yml').read_text(encoding='utf-8')
     assert 'data_agent' in (tmp_path / 'data-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
@@ -158,6 +173,9 @@ def test_new_command_creates_business_scenarios(tmp_path: Path, monkeypatch: Mon
     assert 'web_monitor_agent' in (tmp_path / 'web-monitor-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
     assert 'official_source_search' in (tmp_path / 'seo-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
     assert 'meeting_notes_agent' in (tmp_path / 'meeting-notes-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
+    assert 'github_issue_agent' in (tmp_path / 'github-issue-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
+    assert 'website_audit_agent' in (tmp_path / 'website-audit-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
+    assert 'daily_report_agent' in (tmp_path / 'daily-report-agent' / 'easy-agent.yml').read_text(encoding='utf-8')
     assert 'SERPAPI_API_KEY=<SECRET>' in (tmp_path / 'research-starter' / '.env.local.example').read_text(encoding='utf-8')
 
 

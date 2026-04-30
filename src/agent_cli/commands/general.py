@@ -19,7 +19,7 @@ from agent_common.version import runtime_version
 from agent_protocols import resolve_protocol
 from agent_runtime import EasyAgentRuntime, build_runtime
 from agent_runtime.bundles import write_run_bundle
-from agent_runtime.connectors import browser_artifacts
+from agent_runtime.connectors import browser_artifacts, browser_doctor
 from agent_runtime.dashboard import dashboard_html, dashboard_payload
 from agent_runtime.diagnostics import (
     build_fix_package,
@@ -59,6 +59,63 @@ def _mcp_transport_summary(runtime: Any) -> str:
     if not runtime.config.mcp:
         return 'none'
     return ', '.join(f'{server.name}:{server.transport}' for server in runtime.config.mcp)
+
+
+def _build_run_inspection(runtime: EasyAgentRuntime, run_id: str, config: str) -> dict[str, Any]:
+    summary = runtime.store.load_run_summary(run_id)
+    explanation = explain_run(runtime.store, run_id)
+    triage = build_triage_package(runtime.store, run_id)
+    fix = build_fix_package(runtime.store, run_id, task_pack=str(triage.get('selected_task_pack') or 'auto'))
+    trace_tree = runtime.store.load_trace_tree(run_id)
+    raw_tree = trace_tree.get('tree')
+    spans: list[Any] = raw_tree if isinstance(raw_tree, list) else []
+    statuses: dict[str, int] = {}
+    kinds: dict[str, int] = {}
+    for raw_span in spans:
+        span = raw_span if isinstance(raw_span, dict) else {}
+        status = str(span.get('status') or 'unknown')
+        kind = str(span.get('kind') or 'unknown')
+        statuses[status] = statuses.get(status, 0) + 1
+        kinds[kind] = kinds.get(kind, 0) + 1
+    selected_pack = str(fix.get('selected_task_pack') or triage.get('selected_task_pack') or 'repo-review')
+    bundle_command = f'easy-agent runs bundle {run_id} -c easy-agent.yml --output run-bundle-{_html_token(run_id)}'
+    next_commands = [
+        f'easy-agent runs inspect {run_id} -c easy-agent.yml --format json',
+        f'easy-agent workflow init {selected_pack} --output workflow.yml --force',
+        'easy-agent workflow plan workflow.yml -c easy-agent.yml',
+        bundle_command,
+        f'easy-agent traces open {run_id} -c easy-agent.yml --no-browser',
+    ]
+    if triage.get('browser_related'):
+        next_commands.insert(1, f'easy-agent browser report {run_id} -c easy-agent.yml')
+        next_commands.insert(2, 'easy-agent browser artifacts -c easy-agent.yml')
+    raw_notes = fix.get('safety_notes')
+    notes: list[Any] = raw_notes if isinstance(raw_notes, list) else []
+    return {
+        'run_id': run_id,
+        'mode': 'advice_only',
+        'summary': summary,
+        'explanation': explanation,
+        'triage': triage,
+        'fix_summary': {
+            'selected_task_pack': fix.get('selected_task_pack'),
+            'probable_cause': fix.get('probable_cause'),
+            'recommended_commands': fix.get('recommended_commands', []),
+            'safety_notes': notes,
+        },
+        'trace': {
+            'span_count': len(spans),
+            'statuses': statuses,
+            'kinds': kinds,
+            'run': trace_tree.get('run', {}),
+        },
+        'browser': {
+            'doctor': browser_doctor(config),
+            'artifacts': browser_artifacts(config, limit=20),
+        },
+        'bundle_command': bundle_command,
+        'next_commands': next_commands,
+    }
 
 
 
@@ -294,6 +351,53 @@ def triage_run_command(
     console.print(table)
     if payload['evidence']:
         console.print_json(json.dumps({'evidence': payload['evidence']}, ensure_ascii=False))
+
+
+@runs_app.command('inspect')
+def inspect_run_command(
+    run_id: str = typer.Argument(..., help='Existing run id.'),
+    config: str = typer.Option('easy-agent.yml', '-c', '--config'),
+    output_format: str = typer.Option('pretty', '--format', help='Output format: pretty or json.'),
+    bundle: bool = typer.Option(False, '--bundle/--no-bundle', help='Also write an advice-only run bundle.'),
+    bundle_output: str | None = typer.Option(None, '--bundle-output', help='Output directory for --bundle.'),
+    force: bool = typer.Option(False, '--force', help='Allow writing into a non-empty bundle directory.'),
+) -> None:
+    runtime = build_runtime(config)
+    try:
+        payload = _build_run_inspection(runtime, run_id, config)
+        if bundle:
+            output_dir = Path(bundle_output) if bundle_output else Path(f'run-bundle-{_html_token(run_id)}')
+            payload['bundle'] = write_run_bundle(
+                runtime.store,
+                run_id,
+                output_dir,
+                browser_payload=browser_artifacts(config, limit=50),
+                force=force,
+            )
+    finally:
+        asyncio.run(runtime.aclose())
+    if output_format == 'json':
+        console.print_json(json.dumps(payload, ensure_ascii=False, default=str))
+        return
+    if output_format != 'pretty':
+        raise typer.BadParameter('format must be pretty or json')
+    table = Table(title=f'run inspection: {run_id}')
+    table.add_column('Field', style='cyan')
+    table.add_column('Value', style='green')
+    table.add_row('Status', str(payload['summary'].get('status') or '-'))
+    table.add_row('Likely Layer', str(payload['explanation'].get('likely_layer') or '-'))
+    table.add_row('Severity', str(payload['triage'].get('severity') or '-'))
+    table.add_row('Task Pack', str(payload['fix_summary'].get('selected_task_pack') or '-'))
+    table.add_row('Trace', json.dumps(payload['trace'], ensure_ascii=False))
+    table.add_row('Browser Enabled', str(payload['browser']['doctor'].get('enabled')))
+    table.add_row('Browser Artifacts', str(payload['browser']['artifacts'].get('count') or 0))
+    table.add_row('Bundle Command', str(payload['bundle_command']))
+    table.add_row('Next Commands', '\n'.join(str(item) for item in payload['next_commands']))
+    if 'bundle' in payload:
+        raw_bundle = payload['bundle']
+        bundle_payload: dict[str, Any] = raw_bundle if isinstance(raw_bundle, dict) else {}
+        table.add_row('Bundle Output', str(bundle_payload.get('output_dir') or '-'))
+    console.print(table)
 
 
 @runs_app.command('bundle')

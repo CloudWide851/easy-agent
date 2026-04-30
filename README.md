@@ -56,8 +56,8 @@ Most agent projects move quickly from "call a model" to "ship an application". T
 - Session memory, checkpoints, replay, branchable resume, and approval-aware recovery.
 - Guardrails, schema-aware tool validation, runtime event streaming, and persistent traces.
 - Durable run inspection with structured trace-tree export for debugging complex agent flows.
-- Offline `mock` provider plus `setup`, `wizard`, `init`, `quickstart`, scenario templates, connector diagnostics, task packs, workflow packs, `workflow init/run workflow.yml`, `config doctor`, `runs explain`, advice-only `runs triage` / `runs fix` / `runs bundle`, `traces open`, `report latest`, `report trend`, standalone HTML trace/report/fix/dashboard export, dashboard workflow/template recommendations, and a light Python `AgentApp` facade for zero-credential onboarding and faster failure triage.
-- MCP-first browser automation through `browser.enabled: true`, which mounts Playwright MCP as a stdio MCP server, approval-gates sensitive browser actions by default, and exposes browser doctor/artifact inspection commands.
+- Offline `mock` provider plus `setup`, `wizard`, `init`, `quickstart`, scenario templates, connector diagnostics, task packs, workflow packs, `workflow init/doctor/plan/run workflow.yml`, `config doctor`, `runs explain`, advice-only `runs triage` / `runs inspect` / `runs fix` / `runs bundle`, `traces open`, `report latest`, `report trend`, standalone HTML trace/report/fix/dashboard export, dashboard workflow/template recommendations with copyable commands, and a light Python `AgentApp` facade for zero-credential onboarding and faster failure triage.
+- MCP-first browser automation through `browser.enabled: true`, which mounts Playwright MCP as a stdio MCP server, approval-gates sensitive browser actions by default, and exposes browser doctor/artifact inspection plus audit-focused `browser seo`, `browser a11y`, and `browser links` planning commands.
 - A2A-style remote federation with durable task state and signed callback verification.
 - Practical `official_source_search` skill support for source-prioritized search and fetched-page extraction.
 - Public evaluation helpers for benchmark, BFCL, tau2 mock, BrowseComp/SimpleQA-style slices, live provider-compatibility matrices, and real-network regression tracking.
@@ -176,12 +176,17 @@ uv run easy-agent new browser-agent
 uv run easy-agent new web-monitor-agent
 uv run easy-agent new seo-agent
 uv run easy-agent new competitor-research-agent
+uv run easy-agent new github-issue-agent
+uv run easy-agent new website-audit-agent
+uv run easy-agent new daily-report-agent
 uv run easy-agent new meeting-notes-agent
 uv run easy-agent new content-pipeline-agent
 uv run easy-agent new customer-support-agent
 uv run easy-agent connectors doctor -c easy-agent.yml
 uv run easy-agent workflow list
 uv run easy-agent workflow init browser-audit --output workflow.yml --context "Audit the home page"
+uv run easy-agent workflow doctor workflow.yml -c easy-agent.yml
+uv run easy-agent workflow plan workflow.yml -c easy-agent.yml
 uv run easy-agent workflow run workflow.yml -c easy-agent.yml --dry-run
 uv run easy-agent workflow run browser-qa -c easy-agent.yml --dry-run --context "Check the home page"
 uv run easy-agent task show repo-review
@@ -190,7 +195,11 @@ uv run easy-agent browser doctor -c easy-agent.yml
 uv run easy-agent browser smoke https://example.com -c easy-agent.yml
 uv run easy-agent browser snapshot https://example.com -c easy-agent.yml
 uv run easy-agent browser audit https://example.com -c easy-agent.yml
+uv run easy-agent browser seo https://example.com -c easy-agent.yml
+uv run easy-agent browser a11y https://example.com -c easy-agent.yml
+uv run easy-agent browser links https://example.com -c easy-agent.yml
 uv run easy-agent browser artifacts -c easy-agent.yml
+uv run easy-agent runs inspect <run_id> -c easy-agent.yml
 uv run easy-agent runs triage <run_id> -c easy-agent.yml
 uv run easy-agent runs bundle <run_id> -c easy-agent.yml --output run-bundle
 uv run easy-agent report latest -c easy-agent.yml
@@ -218,7 +227,7 @@ Artifact details are documented in [reference/en/usage-guide.md](./reference/en/
 
 ## Verification
 
-The latest published patch remains `0.3.5`. The retained benchmark and headline public-eval score snapshot is still the April 14, 2026 release baseline, while the latest Python verification refresh on April 30, 2026 revalidated `ruff`, `mypy`, `231` unit tests, and `7` live integration tests without changing that retained score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
+The latest published patch remains `0.3.5`. The retained benchmark and headline public-eval score snapshot is still the April 14, 2026 release baseline, while the latest Python verification refresh on April 30, 2026 revalidated `ruff`, `mypy`, `232` unit tests, and `7` live integration tests without changing that retained score baseline. Methodology notes, public comparison rows, and detailed matrices live in [reference/en/test-results.md](./reference/en/test-results.md).
 
 ### Score Summary
 
@@ -250,7 +259,7 @@ The real-network matrix is still summarized by score here, but the report now al
 The next reinforcement track is documented in full at [reference/en/next-reinforcement.md](./reference/en/next-reinforcement.md). The near-term focus remains:
 
 - using the shipped structured trace tree, `traces open`, `report latest`, `report trend`, standalone report HTML, and experimental `--otel-json` export as the main debugging surface while keeping the native trace tree as source of truth
-- keeping zero-credential onboarding strict through guided setup and wizard preflight checks, config explanation, connector diagnostics, workflow YAML, browser smoke/snapshot/audit/report helpers, browser doctor/artifact inspection, task packs, static dashboard workflow/template recommendations, advice-only triage/fix/bundle packages, and business templates for coding, research, data, ops, browser automation, web monitoring, SEO, competitor research, meeting notes, content pipelines, support, sales, documents, QA, and release checks
+- keeping zero-credential onboarding strict through guided setup and wizard preflight checks, config explanation, connector diagnostics, workflow YAML doctor/plan/run, browser smoke/snapshot/audit/seo/a11y/links/report helpers, browser doctor/artifact inspection, task packs, static dashboard workflow/template recommendations, advice-only triage/inspect/fix/bundle packages, Python `AgentApp` workflow/browser/bundle helpers, and business templates for coding, research, data, ops, browser automation, web monitoring, SEO, website audits, GitHub issue triage, daily reporting, competitor research, meeting notes, content pipelines, support, sales, documents, QA, and release checks
 - widening the shipped live provider-compatibility matrix beyond the required DeepSeek/OpenAI-compatible baseline, including optional Anthropic and Gemini evidence when credentials are present
 - promoting the new official-source search plus BrowseComp or SimpleQA path into refreshed scored slices once official dataset exports and grader credentials are available
 - expanding live `/responses` compatibility coverage where OpenAI-compatible providers actually expose it, while keeping single-tool enforcement explicitly labeled as best effort when providers do not honor it strictly

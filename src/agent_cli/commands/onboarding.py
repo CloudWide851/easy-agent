@@ -478,6 +478,46 @@ def _templates() -> dict[str, dict[str, Any]]:
                 _browser_agent_template_config(),
             ),
         },
+        'github-issue-agent': {
+            'description': 'Business-ready GitHub issue assistant for issue triage, reproduction notes, and scoped fixes.',
+            'files': _template_files(
+                'github-issue-agent',
+                'A practical starter for GitHub issue triage, scoped bug fixing, and evidence bundle handoff.',
+                _business_agent_template_config(
+                    graph_name='github_issue_agent',
+                    agent_name='issue_triager',
+                    description='GitHub issue assistant for issue triage, reproduction notes, and scoped fixes.',
+                    prompt='For real issue work, separate reproduction evidence, suspected root cause, impacted files, proposed fix, tests, and remaining questions before changing code.',
+                ),
+            ),
+        },
+        'website-audit-agent': {
+            'description': 'Business-ready website audit assistant for SEO, accessibility, links, and browser evidence.',
+            'files': _template_files(
+                'website-audit-agent',
+                'A practical starter for MCP-first website audits across SEO, accessibility, links, and page evidence.',
+                _browser_business_agent_template_config(
+                    graph_name='website_audit_agent',
+                    agent_name='website_auditor',
+                    description='Website audit assistant for SEO, accessibility, links, and browser evidence.',
+                    prompt='For real website audits, check browser readiness first, collect snapshot/accessibility-tree evidence, then separate SEO, accessibility, links, and content risks with prioritized fixes.',
+                    tools=['python_echo', 'official_source_search'],
+                ),
+            ),
+        },
+        'daily-report-agent': {
+            'description': 'Business-ready daily report assistant for metrics, run evidence, and action summaries.',
+            'files': _template_files(
+                'daily-report-agent',
+                'A practical starter for daily metrics reports, run evidence summaries, and prioritized follow-up actions.',
+                _business_agent_template_config(
+                    graph_name='daily_report_agent',
+                    agent_name='daily_reporter',
+                    description='Daily report assistant for metrics, run evidence, and action summaries.',
+                    prompt='For real daily reports, separate observed metrics, notable changes, risks, blockers, owners, and next actions in a concise structured update.',
+                ),
+            ),
+        },
         'customer-support-agent': {
             'description': 'Business-ready support assistant for tickets, replies, and escalation summaries.',
             'files': _template_files(
@@ -731,6 +771,9 @@ def _recommended_workflow_pack(name: str) -> str:
         'data-agent': 'data-summary',
         'ops-agent': 'release-check',
         'browser-agent': 'browser-audit',
+        'github-issue-agent': 'bug-fix',
+        'website-audit-agent': 'browser-audit',
+        'daily-report-agent': 'data-summary',
         'web-monitor-agent': 'browser-qa',
         'seo-agent': 'browser-audit',
         'competitor-research-agent': 'browser-research',
@@ -767,7 +810,7 @@ def _template_workflow(name: str, pack: str) -> str:
 
 
 def _browser_scenario_templates() -> set[str]:
-    return {'browser-agent', 'web-monitor-agent', 'seo-agent', 'competitor-research-agent'}
+    return {'browser-agent', 'web-monitor-agent', 'seo-agent', 'competitor-research-agent', 'website-audit-agent'}
 
 
 def _template_env_example(name: str) -> str:
@@ -783,6 +826,8 @@ def _template_env_example(name: str) -> str:
         'data-agent',
         'ops-agent',
         'browser-agent',
+        'github-issue-agent',
+        'daily-report-agent',
         'customer-support-agent',
         'sales-agent',
         'document-agent',
@@ -792,7 +837,7 @@ def _template_env_example(name: str) -> str:
         'content-pipeline-agent',
     }:
         lines.append('# No credentials are required for the mock-backed smoke path.')
-    elif name in {'research-agent', 'seo-agent', 'competitor-research-agent'}:
+    elif name in {'research-agent', 'seo-agent', 'competitor-research-agent', 'website-audit-agent'}:
         lines.append('# No credentials are required for the mock-backed smoke path.')
         lines.append('SERPAPI_API_KEY=<SECRET>')
     elif name == 'web-monitor-agent':

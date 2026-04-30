@@ -429,6 +429,10 @@ storage:
     assert '"mode": "advice_only"' in triage_result.output
     assert '"severity": "high"' in triage_result.output
     assert '"can_retry": true' in triage_result.output
+    inspect_result = CliRunner().invoke(app, ['runs', 'inspect', 'run_fix', '-c', str(config_path), '--format', 'json'])
+    assert inspect_result.exit_code == 0
+    assert '"fix_summary"' in inspect_result.output
+    assert '"bundle_command"' in inspect_result.output
     assert markdown_result.exit_code == 0
     assert markdown_path.exists()
     assert '# easy-agent run fix: run_fix' in markdown_path.read_text(encoding='utf-8')
@@ -537,6 +541,7 @@ storage:
     assert 'Template Recommendations' in html
     assert 'Browser' in html
     assert 'run_failed_dash' in html
-    assert 'runs triage run_failed_dash' in html
+    assert 'runs inspect run_failed_dash' in html
+    assert 'runs bundle run_failed_dash' in html
     assert 'runs fix run_failed_dash' in html
     assert 'workflow init bug-fix' in html

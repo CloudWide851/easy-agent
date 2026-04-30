@@ -157,12 +157,17 @@ browser:
         app,
         ['workflow', 'init', 'browser-audit', '--output', str(workflow_file), '--context', 'audit home', '--bundle-on-completion', '--format', 'json'],
     )
+    doctor = CliRunner().invoke(app, ['workflow', 'doctor', str(workflow_file), '-c', str(browser_config), '--format', 'json'])
+    plan = CliRunner().invoke(app, ['workflow', 'plan', str(workflow_file), '-c', str(browser_config), '--format', 'json'])
     file_dry = CliRunner().invoke(app, ['workflow', 'run', str(workflow_file), '-c', str(browser_config), '--dry-run', '--format', 'json'])
     dry = CliRunner().invoke(app, ['workflow', 'run', 'browser-qa', '-c', str(browser_config), '--dry-run', '--context', 'home page', '--format', 'json'])
     run = CliRunner().invoke(app, ['workflow', 'run', 'repo-review', '-c', str(config), '--context', 'focus tests', '--format', 'json'])
     smoke = CliRunner().invoke(app, ['browser', 'smoke', 'https://example.com', '-c', str(browser_config), '--format', 'json'])
     snapshot = CliRunner().invoke(app, ['browser', 'snapshot', 'https://example.com', '-c', str(browser_config), '--format', 'json'])
     audit = CliRunner().invoke(app, ['browser', 'audit', 'https://example.com', '-c', str(browser_config), '--format', 'json'])
+    seo = CliRunner().invoke(app, ['browser', 'seo', 'https://example.com', '-c', str(browser_config), '--format', 'json'])
+    a11y = CliRunner().invoke(app, ['browser', 'a11y', 'https://example.com', '-c', str(browser_config), '--format', 'json'])
+    links = CliRunner().invoke(app, ['browser', 'links', 'https://example.com', '-c', str(browser_config), '--format', 'json'])
 
     runtime = build_runtime(browser_config)
     try:
@@ -178,6 +183,11 @@ browser:
     assert initialized.exit_code == 0
     assert workflow_file.exists()
     assert 'browser-audit' in workflow_file.read_text(encoding='utf-8')
+    assert doctor.exit_code == 0
+    assert '"status": "ok"' in doctor.output
+    assert plan.exit_code == 0
+    assert '"doctor"' in plan.output
+    assert '"pack": "browser-audit"' in plan.output
     assert file_dry.exit_code == 0
     assert '"pack": "browser-audit"' in file_dry.output
     assert 'title, meta description' in file_dry.output
@@ -194,6 +204,12 @@ browser:
     assert audit.exit_code == 0
     assert '"pack": "browser-audit"' in audit.output
     assert 'canonical signals' in audit.output
+    assert seo.exit_code == 0
+    assert 'prioritized SEO fixes' in seo.output
+    assert a11y.exit_code == 0
+    assert 'accessibility fixes' in a11y.output
+    assert links.exit_code == 0
+    assert 'link-quality' in links.output
     assert report.exit_code == 0
     assert '"likely_layer": "browser_mcp"' in report.output
 

@@ -23,6 +23,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `easy-agent template list|create`
   - `easy-agent config validate|explain|doctor`
   - `easy-agent runs explain`
+  - `easy-agent runs inspect`
   - `easy-agent runs fix`
   - `easy-agent runs bundle`
 - Added standalone HTML trace export through `easy-agent traces export <run_id> --html --output <path>`.
@@ -30,7 +31,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added `easy-agent report latest` to summarize local benchmark, public-eval, real-network, and recent-run evidence.
 - Added standalone HTML latest-report export through `easy-agent report latest --html --output <path>`.
 - Added `easy-agent report trend` with JSON, pretty, and standalone HTML outputs for comparing local benchmark, public-eval, and real-network report artifacts over time.
-- Added `easy-agent dashboard` for a dependency-free static HTML operations page that combines latest reports, report trends, connector readiness, recent runs, pending approvals, and raw JSON evidence.
+- Added `easy-agent dashboard` for a dependency-free static HTML operations page that combines latest reports, report trends, connector readiness, recent runs, pending approvals, copyable diagnostic commands, and raw JSON evidence.
 - Added experimental OpenTelemetry-style trace export through `easy-agent traces export <run_id> --otel-json --output <path>`.
 - Added connector diagnostics and built-in task-pack surfaces:
   - `easy-agent connectors list|doctor|test`
@@ -40,12 +41,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `easy-agent browser doctor`
   - `easy-agent browser artifacts`
 - Added workflow and triage operator surfaces:
-  - `easy-agent workflow list|show|init|run`
+  - `easy-agent workflow list|show|init|doctor|plan|run`
   - `easy-agent runs triage`
 - Added MCP-first browser helper surfaces:
   - `easy-agent browser smoke`
   - `easy-agent browser snapshot`
   - `easy-agent browser audit`
+  - `easy-agent browser seo`
+  - `easy-agent browser a11y`
+  - `easy-agent browser links`
   - `easy-agent browser report`
 - Added browser-specific task packs:
   - `browser-qa`
@@ -71,9 +75,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - `web-monitor-agent`
   - `seo-agent`
   - `competitor-research-agent`
+  - `github-issue-agent`
+  - `website-audit-agent`
+  - `daily-report-agent`
   - `meeting-notes-agent`
   - `content-pipeline-agent`
-- Added a lightweight Python `AgentApp` facade over `EasyAgentRuntime` for config-driven embedding.
+- Added a lightweight Python `AgentApp` facade over `EasyAgentRuntime` for config-driven embedding, including workflow planning/running, browser audit planning/running, and run bundle export helpers.
 - Added setup preflight and config-doctor risk checks for Python baseline drift, local tool availability, required environment variables, MCP roots/auth, federation auth, workbench executors, storage portability, human-loop coverage, and eval readiness.
 - Added scenario starter templates for MCP filesystem, public-eval smoke, federation loopback, workbench-backed coding tasks, coding tasks, and source-first research tasks.
 - Added trace-tree generation from existing runtime event envelopes with span status, duration, input/output hashes, retry count, checkpoint id, and parent/child structure.
@@ -101,7 +108,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 
 - Moved report summarization and standalone report HTML helpers into `agent_runtime.reports` so the CLI reuses runtime-level report logic instead of carrying duplicate helper implementations.
-- Extended the Python `AgentApp` facade with task execution, streaming, latest-report, and trace-loading helpers while keeping it backed by the same config-driven runtime contracts.
+- Extended the Python `AgentApp` facade with task execution, streaming, latest-report, trace-loading, workflow, browser, and run-bundle helpers while keeping it backed by the same config-driven runtime contracts.
 - Extended skill metadata for bundled example and real skills with risk, dependency, and smoke-prompt fields.
 - Extended real-network reporting so scenario proof and safety assertions sit beside performance telemetry instead of relying only on headline score rows.
 - Hardened the real-network disconnect/retry scenario against transient Windows socket-buffer exhaustion while avoiding unawaited coroutine cleanup warnings on retry setup.
@@ -114,7 +121,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Enhanced run diagnostics so Playwright MCP and browser-tool failures classify as `browser_mcp`, select `browser-qa`, and suggest browser doctor, artifact, connector, trace, and repair commands.
 - Enhanced the static dashboard with failed/waiting/interrupted run attention rows, pending approval rows, browser readiness, browser artifacts, and generated failure-to-fix commands.
 - Enhanced the static dashboard with suggested next steps that point operators to triage, approvals, browser checks, connector checks, and report refresh commands.
-- Enhanced the static dashboard with workflow and template recommendations so operators can move from evidence to a concrete `workflow.yml` or starter scenario.
+- Enhanced the static dashboard with workflow and template recommendations plus copyable `runs inspect` and `runs bundle` commands so operators can move from evidence to a concrete `workflow.yml`, bundle, or starter scenario.
 - Extended workflow packs with portable versioned YAML files and optional bundle-on-completion evidence export.
 - Standardized generated starter template README files around Run, Recommended Workflow, Smoke, Diagnostics, and Next Steps, and added a starter `workflow.yml` to every template.
 - Added advice-only run bundles that export run summary, triage JSON, fix Markdown/HTML, trace tree JSON/HTML, browser artifact inventory, copied browser artifacts, and a local README.
@@ -149,10 +156,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_runtime_facade.py tests/unit/test_readme_snapshot.py -q` with `18 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_cli_productivity.py tests/unit/test_config.py tests/unit/test_readme_snapshot.py -q` with `54 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit/test_cli_onboarding.py tests/unit/test_cli_general.py tests/unit/test_cli_productivity.py tests/unit/test_config.py tests/unit/test_readme_snapshot.py -q` with `55 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests\unit\test_cli_general.py tests\unit\test_cli_productivity.py tests\unit\test_cli_onboarding.py tests\unit\test_runtime_facade.py tests\unit\test_readme_snapshot.py -q` with `32 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests\unit\test_readme_snapshot.py -q` with `3 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `230 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests\unit -q --basetemp=%TEMP%\easy-agent-pytest\unit-full-<timestamp>` with `232 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration/test_real_network_eval.py -m real -q --basetemp=%TEMP%\easy-agent-pytest\real-network-<timestamp>` with `1 passed`
 - `.\.venv\Scripts\python.exe -m pytest tests/integration -m real -q --basetemp=%TEMP%\easy-agent-pytest\integration-full-<timestamp>` with `7 passed`, `2 warnings`
-- CLI smoke passed for wizard creation, enhanced static dashboard export, advice-only HTML run fix packages, browser doctor, browser artifacts, connector diagnostics, Playwright MCP browser readiness, browser task-pack inspection, report trend, local skill catalog listing, and `new customer-support-agent`.
+- CLI smoke passed for wizard creation, enhanced static dashboard export, advice-only HTML run fix packages, run inspect/bundle export, workflow doctor/plan, browser doctor, browser artifacts, browser SEO/a11y/link plans, connector diagnostics, Playwright MCP browser readiness, browser task-pack inspection, report trend, local skill catalog listing, and `new customer-support-agent` / `new github-issue-agent` / `new website-audit-agent` / `new daily-report-agent`.
 
 ## [0.3.5] - 2026-04-14
 

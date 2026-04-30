@@ -125,6 +125,8 @@ def dashboard_html(payload: dict[str, Any]) -> str:
     .score {{ font-size: 28px; font-weight: 750; margin: 10px 0 4px; }}
     .muted {{ color: #6b7280; font-size: 13px; }}
     .pill {{ display: inline-block; padding: 3px 8px; border-radius: 999px; border: 1px solid #c9c0b0; font-size: 12px; }}
+    .cmd {{ display: inline-flex; align-items: center; gap: 6px; margin: 2px 0; }}
+    .copy {{ border: 1px solid #c9c0b0; border-radius: 6px; background: #fffdfa; color: inherit; cursor: pointer; font-size: 12px; padding: 2px 7px; }}
     .ok {{ color: #12613a; background: #eaf6ee; }}
     .warn {{ color: #8a5a00; background: #fff3d7; }}
     .error, .failed {{ color: #9f1d1d; background: #ffe4e4; }}
@@ -141,6 +143,7 @@ def dashboard_html(payload: dict[str, Any]) -> str:
       .card, .stat, table {{ background: #20201f; border-color: #38332a; }}
       th, td {{ border-color: #38332a; }}
       pre {{ background: #0f1115; }}
+      .copy {{ background: #20201f; border-color: #544c3e; }}
     }}
   </style>
 </head>
@@ -203,6 +206,20 @@ def dashboard_html(payload: dict[str, Any]) -> str:
       </details>
     </section>
   </main>
+  <script>
+    document.querySelectorAll('[data-copy]').forEach((button) => {{
+      button.addEventListener('click', async () => {{
+        const value = button.getAttribute('data-copy') || '';
+        try {{
+          await navigator.clipboard.writeText(value);
+          button.textContent = 'copied';
+          setTimeout(() => {{ button.textContent = 'copy'; }}, 1200);
+        }} catch (_) {{
+          button.textContent = 'select';
+        }}
+      }});
+    }});
+  </script>
 </body>
 </html>
 """
@@ -224,7 +241,7 @@ def _suggested_next_steps(
                 {
                     'priority': 'high',
                     'reason': f'Run {run_id} is {status}.',
-                    'command': f'easy-agent runs triage {run_id} -c easy-agent.yml',
+                    'command': f'easy-agent runs inspect {run_id} -c easy-agent.yml',
                 }
             )
     for item in pending[:2]:
@@ -408,21 +425,23 @@ def _report_card(name: str, item: dict[str, Any]) -> str:
 
 def _suggestion_row(item: dict[str, Any]) -> str:
     priority = str(item.get('priority') or 'info')
+    command = str(item.get('command') or '-')
     return (
         '<tr>'
         f'<td><span class="pill {escape(priority)}">{escape(priority)}</span></td>'
         f'<td>{escape(str(item.get("reason") or "-"))}</td>'
-        f'<td><code>{escape(str(item.get("command") or "-"))}</code></td>'
+        f'<td>{_command_html(command)}</td>'
         '</tr>'
     )
 
 
 def _recommendation_row(item: dict[str, Any]) -> str:
+    command = str(item.get('command') or '-')
     return (
         '<tr>'
         f'<td><code>{escape(str(item.get("name") or "-"))}</code></td>'
         f'<td>{escape(str(item.get("reason") or "-"))}</td>'
-        f'<td><code>{escape(str(item.get("command") or "-"))}</code></td>'
+        f'<td>{_command_html(command)}</td>'
         '</tr>'
     )
 
@@ -468,7 +487,8 @@ def _attention_row(item: dict[str, Any]) -> str:
     run_id = str(item.get('run_id') or '-')
     status = str(item.get('status') or 'unknown')
     commands = [
-        f'easy-agent runs explain {run_id} -c easy-agent.yml',
+        f'easy-agent runs inspect {run_id} -c easy-agent.yml',
+        f'easy-agent runs bundle {run_id} -c easy-agent.yml --output run-bundle-{_html_token(run_id)}',
         f'easy-agent runs fix {run_id} -c easy-agent.yml --format html --output fix-{_html_token(run_id)}.html',
         f'easy-agent traces open {run_id} -c easy-agent.yml --no-browser',
     ]
@@ -477,7 +497,7 @@ def _attention_row(item: dict[str, Any]) -> str:
         f'<td>{escape(run_id)}</td>'
         f'<td><span class="pill {escape(status)}">{escape(status)}</span></td>'
         f'<td>{escape(str(item.get("created_at") or "-"))}</td>'
-        f'<td>{"<br>".join(f"<code>{escape(command)}</code>" for command in commands)}</td>'
+        f'<td>{"<br>".join(_command_html(command) for command in commands)}</td>'
         '</tr>'
     )
 
@@ -492,7 +512,7 @@ def _approval_row(item: dict[str, Any]) -> str:
         f'<td>{escape(request_id)}</td>'
         f'<td>{escape(run_id)}</td>'
         f'<td><span class="pill {escape(status)}">{escape(status)}</span></td>'
-        f'<td><code>{escape(command)}</code></td>'
+        f'<td>{_command_html(command)}</td>'
         '</tr>'
     )
 
@@ -507,7 +527,7 @@ def _browser_section(browser: dict[str, Any]) -> str:
     artifact_rows = ''.join(_browser_artifact_row(item if isinstance(item, dict) else {}) for item in items[:8])
     status = 'ok' if doctor.get('enabled') and doctor.get('npx_available') else 'warn'
     command_rows = ''.join(
-        f'<li><code>{escape(command)}</code></li>'
+        f'<li>{_command_html(command)}</li>'
         for command in [
             'easy-agent browser doctor -c easy-agent.yml',
             'easy-agent browser artifacts -c easy-agent.yml',
@@ -545,6 +565,15 @@ def _browser_artifact_row(item: dict[str, Any]) -> str:
         f'<td>{escape(str(item.get("relative_path") or item.get("path") or "-"))}</td>'
         f'<td>{escape(str(item.get("size_bytes") or 0))}</td>'
         '</tr>'
+    )
+
+
+def _command_html(command: str) -> str:
+    return (
+        '<span class="cmd">'
+        f'<code>{escape(command)}</code>'
+        f'<button class="copy" type="button" data-copy="{escape(command, quote=True)}">copy</button>'
+        '</span>'
     )
 
 

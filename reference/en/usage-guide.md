@@ -37,6 +37,9 @@ uv run easy-agent new browser-agent <target-dir>
 uv run easy-agent new web-monitor-agent
 uv run easy-agent new seo-agent
 uv run easy-agent new competitor-research-agent
+uv run easy-agent new github-issue-agent
+uv run easy-agent new website-audit-agent
+uv run easy-agent new daily-report-agent
 uv run easy-agent new meeting-notes-agent
 uv run easy-agent new content-pipeline-agent
 uv run easy-agent new customer-support-agent
@@ -59,8 +62,10 @@ uv run easy-agent runs list -c easy-agent.yml
 uv run easy-agent runs show <run_id> -c easy-agent.yml
 uv run easy-agent runs explain <run_id> -c easy-agent.yml
 uv run easy-agent runs triage <run_id> -c easy-agent.yml
+uv run easy-agent runs inspect <run_id> -c easy-agent.yml
 uv run easy-agent runs fix <run_id> -c easy-agent.yml --format markdown --output fix.md
 uv run easy-agent runs fix <run_id> -c easy-agent.yml --format html --output fix.html
+uv run easy-agent runs bundle <run_id> -c easy-agent.yml --output run-bundle
 uv run easy-agent traces export <run_id> -c easy-agent.yml
 uv run easy-agent traces export <run_id> -c easy-agent.yml --html --output trace.html
 uv run easy-agent traces open <run_id> -c easy-agent.yml --no-browser
@@ -77,11 +82,16 @@ uv run easy-agent browser doctor -c easy-agent.yml
 uv run easy-agent browser smoke https://example.com -c easy-agent.yml
 uv run easy-agent browser snapshot https://example.com -c easy-agent.yml
 uv run easy-agent browser audit https://example.com -c easy-agent.yml
+uv run easy-agent browser seo https://example.com -c easy-agent.yml
+uv run easy-agent browser a11y https://example.com -c easy-agent.yml
+uv run easy-agent browser links https://example.com -c easy-agent.yml
 uv run easy-agent browser report <run_id> -c easy-agent.yml
 uv run easy-agent browser artifacts -c easy-agent.yml
 uv run easy-agent workflow list
 uv run easy-agent workflow init browser-audit --output workflow.yml --context "Audit the home page"
 uv run easy-agent workflow show browser-qa
+uv run easy-agent workflow doctor workflow.yml -c easy-agent.yml
+uv run easy-agent workflow plan workflow.yml -c easy-agent.yml
 uv run easy-agent workflow run workflow.yml -c easy-agent.yml --dry-run
 uv run easy-agent workflow run browser-qa -c easy-agent.yml --dry-run --context "Check the home page"
 uv run easy-agent task list
@@ -126,6 +136,9 @@ Use the `mock` provider when you want to verify the runtime, tools, storage, and
 - `template create web-monitor-agent <target-dir>` creates an MCP-first page-monitoring starter for page-change checks, browser snapshots, and uptime-style evidence.
 - `template create seo-agent <target-dir>` creates an SEO audit starter with browser evidence and `official_source_search` for source-first page and content analysis.
 - `template create competitor-research-agent <target-dir>` creates a public web competitor-research starter with browser-backed evidence and official-source search.
+- `template create github-issue-agent <target-dir>` creates an issue-triage starter for reproduction notes, scoped fixes, tests, and evidence bundles.
+- `template create website-audit-agent <target-dir>` creates an MCP-first website audit starter for SEO, accessibility, link checks, and browser evidence.
+- `template create daily-report-agent <target-dir>` creates a daily metrics/reporting starter for observed changes, blockers, owners, and next actions.
 - `template create meeting-notes-agent <target-dir>` creates a meeting summary, decision, owner, and follow-up starter.
 - `template create content-pipeline-agent <target-dir>` creates a content brief, draft, review, and publishing-checklist starter.
 - `template create customer-support-agent <target-dir>` creates a support triage and response-drafting starter.
@@ -147,6 +160,7 @@ Durable run inspection now has two layers:
 - `runs show <run_id>` returns a run summary with event, node, checkpoint, approval, and child-run counts.
 - `runs explain <run_id>` classifies common failure causes such as missing provider credentials, schema validation failures, guardrail blocks, MCP failures, iteration loops, and known Windows cleanup warnings.
 - `runs triage <run_id>` wraps `runs explain` and the repair-package classifier into one advice-only operator view. It returns severity, actionability, selected task pack, approval/browser flags, retry advice, evidence count, and next commands without mutating files or rerunning the agent.
+- `runs inspect <run_id>` is the unified read-only diagnosis entrypoint. It combines run summary, explanation, triage, fix-package summary, trace counts, browser readiness/artifacts, bundle command, and next commands. Pass `--bundle` only when you explicitly want it to write an evidence bundle.
 - `runs fix <run_id>` creates an advice-only repair package. It reuses the stored run explanation, selects a built-in task pack such as `bug-fix`, `release-check`, or `browser-qa`, lists safe next commands, and can write JSON, Markdown, or standalone HTML without mutating files or rerunning the agent.
 - `runs bundle <run_id>` writes an advice-only evidence directory with run summary, triage JSON, fix Markdown/HTML, trace-tree JSON/HTML, browser artifact inventory, copied browser artifacts when available, and a local README. It is designed for handoff/debugging rather than automatic remediation.
 - `traces export <run_id>` returns a structured trace tree by default.
@@ -168,7 +182,7 @@ If a report file is absent, the command marks that surface as `missing` and stil
 
 Use `report latest --html --output report.html` when the terminal table is too dense. The exported file is standalone and includes the same benchmark, public-eval, real-network, recent-run, and raw JSON evidence.
 
-Use `dashboard -c easy-agent.yml --output dashboard.html` for a broader static local dashboard that combines latest reports, report trend, connector readiness, suggested next steps, workflow recommendations, template recommendations, failed or waiting runs, pending approvals, browser readiness, browser artifacts, and raw JSON into one read-only HTML file.
+Use `dashboard -c easy-agent.yml --output dashboard.html` for a broader static local dashboard that combines latest reports, report trend, connector readiness, suggested next steps, workflow recommendations, template recommendations, failed or waiting runs, pending approvals, browser readiness, browser artifacts, copyable `runs inspect` / `runs bundle` commands, and raw JSON into one read-only HTML file.
 
 `report trend` compares local report artifacts in a directory and shows the latest score, previous score, and score delta for benchmark, public-eval, and real-network reports. Use `--html --output trend.html` for a standalone trend page.
 
@@ -184,9 +198,10 @@ Trace-tree spans are derived from the existing runtime event envelope and includ
 - `browser smoke <url>` builds a browser QA plan for a target URL and checks Playwright MCP readiness. By default it is plan-only; pass `--run` to send the generated MCP-first prompt through the configured runtime.
 - `browser snapshot <url>` builds a snapshot-first browser plan that asks for Playwright MCP snapshot or accessibility-tree evidence before screenshots. By default it is plan-only; pass `--run` for live runtime execution.
 - `browser audit <url>` builds a page-quality and SEO audit plan that checks title, meta description, canonical signals, headings, visible content, links, accessibility basics, and artifacts from Playwright MCP evidence. By default it is plan-only; pass `--run` for live runtime execution.
+- `browser seo <url>`, `browser a11y <url>`, and `browser links <url>` are narrower audit plans for page metadata/content, accessibility-tree risks, and link quality. They remain Playwright MCP-first and plan-only unless `--run` is passed.
 - `browser report <run_id>` combines run triage, browser doctor, and browser artifact evidence for a browser-related run.
 - `browser artifacts` lists the current browser artifact directory without starting Playwright MCP. It classifies screenshots, snapshots, videos, archives, network captures, logs, and other files so browser failures can be inspected before reruns.
-- `workflow list|show|init|run` exposes task packs as guided workflow packs. `workflow init <pack> --output workflow.yml` writes a minimal versioned workflow file with `pack`, `context`, `approval_mode`, and `bundle_on_completion`. `workflow run workflow.yml --dry-run` prints the prompt, acceptance criteria, preflight checks, and next commands before any model-backed execution.
+- `workflow list|show|init|doctor|plan|run` exposes task packs as guided workflow packs. `workflow init <pack> --output workflow.yml` writes a minimal versioned workflow file with `pack`, `context`, `approval_mode`, and `bundle_on_completion`. `workflow doctor workflow.yml` performs static YAML and connector checks, `workflow plan workflow.yml` renders the prompt and acceptance criteria without execution, and `workflow run workflow.yml --dry-run` keeps the same prompt/preflight review path before any model-backed execution.
 - `task list` shows built-in task packs.
 - `task show <pack>` prints the prompt template, recommended scenario, and acceptance criteria.
 - `task run <pack>` renders and runs the task through the configured entrypoint. Use `--dry-run` to inspect the prompt before execution.
@@ -204,8 +219,11 @@ app = AgentApp.from_config("easy-agent.yml")
 try:
     result = app.run("Summarize this task")
     task_result = app.run_task("repo-review", context="Focus on tests")
+    workflow = app.workflow_plan("workflow.yml")
+    browser_plan = app.browser_audit("https://example.com", kind="seo")
     report = app.report()
     trace = app.trace(str(result["run_id"]))
+    bundle = app.run_bundle(str(result["run_id"]), output_dir="run-bundle")
 finally:
     app.close()
 ```
